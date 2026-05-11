@@ -75,18 +75,22 @@ gh pr create --title "<conv-commits-style title>" --body "<see template below>"
 
 ### Reviewing
 
-- **Now (until slice 7):** human (you) reviews every PR by reading the diff in GitHub UI.
-- **After slice 7:** the `reviewer` subagent leaves a comment (`LGTM` or `Changes requested: ...`). It BLOCKS on hard rules (scope drift, missing tests, YAGNI violations) and RECOMMENDS on subjective items. Human is always the final merge gate.
+Per [ADR-0002](decisions/0002-autonomous-merge-policy.md), the review and merge gate is the `reviewer` subagent (not the human). Human checkpoint moves to PRD level via the `qa-plan` skill.
+
+- **Until slice 3.1 ships:** human reviews every PR by reading the diff in GitHub UI.
+- **After slice 3.1 ships (slice 4 onward):** the `reviewer` subagent reviews every PR. It posts a structured verdict comment via `gh pr comment` and either:
+  - **APPROVE** → auto-merges with `gh pr merge --squash --delete-branch`. No human action.
+  - **BLOCK** → returns the PR to the implementer subagent for fixes. After max-N rounds (initial N=3), escalates to the human via `@vojtech-stas` mention.
 
 ### Merging
 
-- ONLY the human clicks merge in GitHub UI.
-- Merge style: **squash-and-merge** by default (cleaner `main` history). Use a Conventional Commits message in the squash commit.
-- After merge:
+- **Until slice 3.1 ships:** human clicks merge in GitHub UI (legacy policy from ADR-0001 D9).
+- **After slice 3.1 ships:** the `reviewer` subagent merges with `gh pr merge --squash --delete-branch` on APPROVE only (per ADR-0002). Never on BLOCK.
+- Merge style: **squash-and-merge** always — one commit per slice on `main`, clean history.
+- After merge (`--delete-branch` auto-deletes the remote branch):
   ```bash
   git checkout main
   git pull --ff-only origin main
-  git branch -d slice-N-<short-name>
   ```
 
 ### What NOT to do
@@ -126,25 +130,26 @@ Will be a `researcher` subagent with restricted tools (read + WebFetch only). Re
 ### How to prototype — ⏳ slice 5+
 Will be N parallel `prototyper` subagents, each trying a different approach in isolation. Main agent picks the winner.
 
-### How to write a PRD — ⏳ slice 3
-Will be the `to-prd` skill (Matt's). Output: `docs/prds/NNNN-<slug>.md`.
+### How to write a PRD — ✓ available (slice 3)
+See [`.claude/skills/to-prd/SKILL.md`](.claude/skills/to-prd/SKILL.md). Matt Pocock's skill, verbatim. Output: PRD as a GitHub Issue with `ready-for-agent` label.
 
-### How to create tasks/issues from a PRD — ⏳ slice 3
-Will be the `to-issues` skill (Matt's). Output: GitHub Issues via `gh issue create`.
+### How to create tasks/issues from a PRD — ✓ available (slice 3)
+See [`.claude/skills/to-issues/SKILL.md`](.claude/skills/to-issues/SKILL.md). Matt Pocock's skill, verbatim. Output: GitHub Issues (one per vertical slice) via `gh issue create`.
 
 ### How to implement (TDD red → green → refactor) — ⏳ slice 5+
 Will be the `tdd` skill (Matt's) + `implementer` subagent (cheap model, isolated context per issue).
 
-### How to review a PR — ⏳ slice 7
-Will be the `reviewer` subagent (stronger model, read + comment tools only). Blocks on hard rules, recommends on subjective.
+### How to review a PR — ✓ available (slice 3.1)
+See [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md). Invoked via `Agent` tool with `subagent_type: "reviewer"`. Reads PR body + diff + CLAUDE.md + ADRs + linked issues. Posts a structured verdict comment. On APPROVE → auto-merges via `gh pr merge --squash --delete-branch`. On BLOCK → returns PR to the implementer. Per ADR-0002.
 
-### How to write a QA plan — ⏳ later
-Emerges in a later slice. Human runs the QA plan; AI generates it from the PRD + the merged code.
+### How to write a QA plan — ✓ available (slice 3.1)
+See [`.claude/skills/qa-plan/SKILL.md`](.claude/skills/qa-plan/SKILL.md). Invoke when all GitHub issues for a PRD have been merged. Generates a structured acceptance-test checklist as a comment on the PRD issue. The human runs the tests and marks pass/fail. **This is the human handoff point** in the autonomous pipeline per ADR-0002.
 
 ---
 
 ## Where to look for more
 
 - Full design rationale: [`decisions/0001-foundational-design.md`](decisions/0001-foundational-design.md)
+- Autonomous merge policy revision: [`decisions/0002-autonomous-merge-policy.md`](decisions/0002-autonomous-merge-policy.md)
 - Slice planning files: `~/.claude/plans/*.md`
 - Matt Pocock's upstream skills: https://github.com/mattpocock/skills

@@ -1,0 +1,58 @@
+# OS
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# Python (practical default for this project)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Node (in case any future stack module needs it)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (never commit secrets)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Logs
+*.log
+logs/
+
+# Claude Code local-only state (if any tool drops it)
+.claude/.local*

@@ -54,5 +54,6 @@ build/
 *.log
 logs/
 
-# Claude Code local-only state (if any tool drops it)
+# Claude Code local-only state (personal allowlists, machine-specific settings)
+**/settings.local.json
 .claude/.local*

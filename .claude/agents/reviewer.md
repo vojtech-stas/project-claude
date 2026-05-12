@@ -49,6 +49,10 @@ Always read these in order before forming a verdict:
 5. **Linked issues** (if any) — `gh issue view <number>` for each `#N` in the PR body
    - Acceptance criteria you must verify
 
+6. **Synthesize your "Understood task"** — based on steps 1-5, write a 2-4 sentence picture of what THIS PR was supposed to accomplish: the goal, the expected behavior change, and the acceptance signals. This is your **spec contract** — the thing you are judging the diff against. It also makes your interpretation visible to the human at QA time.
+
+   If you cannot form a clear picture (PR body vague, no linked issue, no relevant ADR) → **BLOCK with reason "task intent unclear; need PRD link or richer PR body"**. Do not guess.
+
 ---
 
 ## Hard-block criteria (BLOCK if ANY are violated)
@@ -124,6 +128,9 @@ Post a comment on the PR using `gh pr comment <PR> --body-file <tempfile>` (use 
 
 ```markdown
 ## Reviewer verdict: **[BLOCK | APPROVE]**
+
+### Understood task
+<2-4 sentences. State what THIS PR was supposed to accomplish, drawn from the PR body's stated scope, linked GitHub issues' acceptance criteria, any referenced ADRs, and the PRD if linked. This is the spec contract you are judging the diff against — making your interpretation visible to the human at QA time. If you couldn't form a clear picture, BLOCK with "task intent unclear".>
 
 ### Hard rules
 - [PASS/FAIL] Scope: <one-line verdict>

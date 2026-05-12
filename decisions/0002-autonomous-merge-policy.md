@@ -121,6 +121,42 @@ Rejected as too complex for v0.1. If the reviewer's verdict is bad enough to nee
 | Whether the orchestrating agent pages the human on escalation via `@vojtech-stas` mention vs. another channel | Slice 7 |
 | Whether `qa-plan` should be invoked auto on PRD-close or only manually | Decide after first PRD ships |
 | Whether GitHub Actions runs reviewer in CI vs. only Claude Code session | Slice 7 |
+| Multi-reviewer ensemble (Opus + Sonnet + other) for higher-confidence approvals | After single reviewer is dogfooded for 3+ slices (see Future direction below) |
+
+---
+
+## Future direction: multi-reviewer ensemble (post-MVP)
+
+After the single-reviewer flow has been dogfooded for several slices and tuned, we may evolve to an **ensemble** pattern for higher-confidence approvals — the project owner flagged this during slice 3.1:
+
+> *"We could have in future multiple agents with different models to check the PR before merging so that we have clarity that it is really good."*
+
+**Pattern sketch:**
+
+- Multiple `reviewer-*` subagents run in PARALLEL on the same PR (`reviewer-opus`, `reviewer-sonnet`, possibly `reviewer-haiku` for cost), each with the same system prompt but a different model
+- A simple aggregator (e.g., a thin `review-aggregator` subagent or a deterministic rule) produces the final verdict:
+  - **Unanimous APPROVE → auto-merge** (highest confidence)
+  - **Unanimous BLOCK → return to implementer** (high confidence in the reject)
+  - **Split (e.g., 2 APPROVE, 1 BLOCK) → escalate to human** via `@vojtech-stas` mention with each reviewer's verdict shown
+- Each reviewer's individual verdict is posted as a separate PR comment for full audit trail; the aggregator posts a "final verdict" comment summarizing them
+
+**Why this might be worth building:**
+- A single reviewer can be wrong. Different models trained on different data have different blind spots. Ensemble reduces single-model-bias risk.
+- For high-stakes PRs (security-sensitive code, breaking API changes), unanimous-required-with-N-reviewers is conservative but powerful.
+- Cheap insurance: if ensemble + auto-merge produces ZERO bad merges over a quarter, owner trust in the autonomous pipeline grows fast.
+
+**Why we are NOT building it now:**
+- Walking-skeleton: validate the single-reviewer flow first.
+- Significant orchestration complexity (parallel spawning, output aggregation, comment threading).
+- Cost: N reviewers per PR is N× the reviewer cost. Worth it for high-stakes PRs, overkill for routine ones.
+- Risk of "split-verdict paralysis" if the aggregator policy isn't well-tuned.
+
+**Trigger to revisit:**
+- If single-reviewer auto-merges produce ≥2 reverted PRs in production within a quarter, OR
+- If the owner explicitly requests it after slice 4 dogfood evidence, OR
+- If we encounter a high-stakes PRD (e.g., one touching the reviewer itself, or branch-protection setup) where unanimous-required feels appropriate
+
+The pattern is also composable with **selective application** — routine PRs go through single reviewer (cheap, fast); flagged high-stakes PRs go through ensemble (expensive, conservative). A label like `requires-ensemble-review` on the GitHub issue would trigger the ensemble path.
 
 ---
 

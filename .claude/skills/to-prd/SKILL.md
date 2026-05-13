@@ -3,7 +3,7 @@ name: to-prd
 description: Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
 ---
 
-This skill takes the current conversation context and codebase understanding and produces a PRD using the **6-section template** defined below. It invokes the `prd-critic` subagent in a ≤3-round APPROVE/BLOCK loop before posting, and drafts any warranted macro-ADRs alongside the PRD per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D8.
+This skill takes the current conversation context and codebase understanding and produces a PRD using the **6-section template** defined below. It invokes the `prd-critic` subagent in a ≤3-round APPROVE/BLOCK loop before posting. When a macro-ADR is drafted alongside the PRD per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D8, the `adr-critic` subagent runs in parallel under a **shared round counter** and BOTH critics must APPROVE in the same round before the skill publishes (per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1).
 
 Do NOT interview the user — synthesize what you already know from the grill session and the repo.
 
@@ -22,17 +22,22 @@ Do NOT interview the user — synthesize what you already know from the grill se
 
 3. **Draft the PRD** using the 6-section template below.
 
-4. **Invoke the `prd-critic` subagent** with the draft PRD (and any drafted ADRs) inline. State the round number explicitly (start at round 1).
+4. **Invoke the critic(s).** State the round number explicitly (start at round 1).
+   - **Always:** invoke `prd-critic` with the draft PRD (and any drafted ADRs) inline.
+   - **When a macro-ADR was drafted in step 2 (per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D8):** ALSO invoke `adr-critic` in parallel, passing the drafted ADR(s) — `adr-critic`'s `When invoked` contract accepts inline markdown or a path. Each drafted ADR gets its own `adr-critic` invocation; if multiple ADRs are drafted, invoke `adr-critic` once per ADR in the same round. Per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1, `adr-critic`'s verdict gates ADR publication exactly the way `prd-critic`'s verdict gates PRD publication.
 
-5. **Critic loop (≤3 rounds):**
-   - On **APPROVE** → proceed to step 6.
-   - On **BLOCK** with `ROUND < 3` → apply each finding in the critic's itemized list, increment the round, re-invoke `prd-critic`. Do not invent fixes the critic didn't request; do not skip any finding.
-   - On **BLOCK** with `ROUND == 3` (or `ESCALATE: needs-human` in the verdict) → STOP. Do not post. Surface the verdict back to the calling agent / user and recommend the grill session be re-opened. The pipeline does not silently publish a thrice-blocked PRD.
+5. **Critic loop (≤3 rounds, joint-APPROVE gate):**
 
-6. **Publish** to the project issue tracker:
+   **Round counter convention (locked decision — Option A, shared round counter).** When both `prd-critic` and `adr-critic` are invoked, they share a single round number. If either returns BLOCK on round N, the loop revises and re-invokes BOTH critics on round N+1 (even if one already APPROVED on round N — the re-revision may have invalidated its prior verdict). Round-3 escalation triggers when EITHER critic returns BLOCK on round 3. **Rationale:** simpler invariant; conservative; one counter to reason about; matches the existing `prd-critic` semantics byte-for-byte for the PRD-only case (no ADR drafted → `adr-critic` is not invoked → behavior is unchanged).
+
+   - On **joint APPROVE** (both critics return APPROVE in the same round, OR `prd-critic` returns APPROVE and no ADR was drafted) → proceed to step 6.
+   - On **BLOCK from either critic** with `ROUND < 3` → apply each finding from each blocking critic's itemized list (PRD findings revise the PRD draft; ADR findings revise the ADR draft), increment the shared round, re-invoke BOTH critics. Do not invent fixes the critic didn't request; do not skip any finding; do not split the round counters.
+   - On **BLOCK from either critic** with `ROUND == 3` (or `ESCALATE: needs-human` in either verdict) → STOP. Do not post the PRD. Do not commit the ADR. Surface both verdicts back to the calling agent / user. Per I5 escalation: apply the `needs-human` label to the draft tracking artifact (or to the posted PRD issue if already posted) and post a summary comment on the parent grill-session / PRD context with both verdicts attached. The pipeline does not silently publish a thrice-blocked PRD or ADR.
+
+6. **Publish** to the project issue tracker (only after joint APPROVE):
    - PRD → `gh issue create` with label `prd`. Title format: `PRD: <one-line feature summary>`.
    - Any drafted ADR(s) → write to `decisions/NNNN-<slug>.md`. These ship as part of slice 1's PR per ADR-0003 D8; they are NOT separately posted as issues.
-   - Append a one-line `> **Pipeline metadata** — Approved by prd-critic round <N>/3.` footer to the PRD body so the audit trail is visible.
+   - Append a one-line `> **Pipeline metadata** — Approved by prd-critic round <N>/3` footer to the PRD body so the audit trail is visible. When an ADR was drafted and reviewed, extend the footer to `> **Pipeline metadata** — Approved by prd-critic round <N>/3; adr-critic round <N>/3 (ADR-NNNN).` The round numbers match by construction (shared counter per step 5).
 
 ## The 6-section PRD template (canonical definition)
 
@@ -68,7 +73,7 @@ Two sub-sections:
 
 </prd-template>
 
-## Rubric self-check (before invoking the critic)
+## Rubric self-check (before invoking the critic[s])
 
 These mirror `prd-critic`'s rubric. A quick self-pass shortens the loop:
 
@@ -82,16 +87,28 @@ These mirror `prd-critic`'s rubric. A quick self-pass shortens the loop:
 8. Solution sketch stays within the stated feature.
 9. Slice-1 guidance is a thin end-to-end vertical, not a horizontal layer.
 
+**Additional ADR self-check (when a macro-ADR was drafted in step 2 — mirrors `adr-critic`'s rubric):**
+
+10. ADR has all required sections (Status, Date, Context, Decisions, Consequences, Alternatives considered) — non-empty.
+11. ADR does not silently contradict an accepted ADR; any conflict carries an explicit `Supersedes:` header citing the specific D-ID being overridden.
+12. `Supersedes:` header cites accurate D-IDs — each cited `ADR-NNNN D-X` exists in the named ADR file AND the substance matches what this ADR claims it says (the exact defect ADR-0003 had against ADR-0001 D3; `adr-critic` rule 3 catches this).
+13. Every Decision in the ADR serves the ADR's stated theme — no "while we're here" scope creep into a separate concern.
+14. If the ADR introduces a new enforcement mechanism (hook, branch protection rule, critic, gate subagent, mandatory loop), it explicitly cites ADR-0004 D2's bootstrap-mode policy OR includes its own bootstrap-mode acknowledgment naming which slices it binds.
+15. ADR does NOT propose edits to existing ADR files. Corrections to prior ADRs ship as new ADRs with explicit `Supersedes:` headers per `decisions/README.md` immutability.
+
 ## What this skill deliberately does NOT do
 
 - It does NOT interview the user (that's `/grill-me`).
 - It does NOT enumerate the slice list (that's `slicer` + `to-issues`).
 - It does NOT enforce the PRD template via JSON schema or YAML frontmatter — `prd-critic` checks section presence by prompt. (PRD #3 §6 rabbit-hole.)
-- It does NOT spawn a separate `/to-adr` skill. ADR drafting happens inline here. (PRD #3 §5 locked-in decision.)
+- It does NOT spawn a separate `/to-adr` skill. ADR drafting happens inline here. (PRD #3 §5 and PRD #15 §3 locked-in decision.)
+- It does NOT post a PRD or commit an ADR until BOTH `prd-critic` AND (if a macro-ADR was drafted) `adr-critic` APPROVE in the same round. Either-BLOCK loops the generator under the shared round counter (Option A); both-APPROVE on the same round → publish. Round-3 BLOCK on either critic → I5 escalation; no silent publish.
 
 ## References
 
-- [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (critic loop pattern), D6 (skill vs subagent), D8 (ADR placement).
-- [`.claude/agents/prd-critic.md`](../../agents/prd-critic.md) — the critic this skill invokes.
+- [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (critic loop pattern), D6 (skill vs subagent), D8 (ADR placement — macro-ADRs drafted alongside the PRD; this is what makes the dual-critic dance necessary).
+- [ADR-0004](../../../decisions/0004-bypass-prevention.md) — D1 (adr-critic exists; mirror of prd-critic's contract); D2 (bootstrap-mode policy).
+- [`.claude/agents/prd-critic.md`](../../agents/prd-critic.md) — the PRD critic this skill invokes (always).
+- [`.claude/agents/adr-critic.md`](../../agents/adr-critic.md) — the ADR critic this skill invokes (only when a macro-ADR is drafted in step 2).
 - [`decisions/README.md`](../../../decisions/README.md) — ADR conventions and the "When to write an ADR" heuristic.
 - Sibling: [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) — orchestrator that chains this skill into the autonomous pipeline.

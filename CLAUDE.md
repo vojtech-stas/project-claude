@@ -20,6 +20,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 7. **Practices are colocated.** Skills/subagents embody their own practice in their own body. No separate `docs/practices/` folder. Cross-cutting rules (this list) live HERE.
 8. **One thing at a time.** One in-progress todo. One in-flight PR per slice.
 9. **DRY for docs.** Don't duplicate info. Link/point to where the canonical version lives.
+10. **Main-agent meta-output discipline.** Main agent never hand-authors tracked files. All edits to `decisions/`, `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, or `README.md` flow through the PRD/slice/PR pipeline — via `/to-prd`, `/to-issues`, `/ship`, or an implementer Agent invocation.
 
 ---
 
@@ -59,6 +60,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | Pipeline skills | `.claude/skills/<name>/SKILL.md` | `ls .claude/skills/` |
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | `cat .claude/skills/ship/SKILL.md` |
 | Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
+| adr-critic subagent (gates ADR drafts) | `.claude/agents/adr-critic.md` | `cat .claude/agents/adr-critic.md` |
 | Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
@@ -168,6 +170,9 @@ See [`.claude/skills/ship/SKILL.md`](.claude/skills/ship/SKILL.md). Invoked via 
 
 ### How to write a PRD — ✓ available
 See [`.claude/skills/to-prd/SKILL.md`](.claude/skills/to-prd/SKILL.md) — **canonical home of the 6-section PRD template** (Problem / Goal / Non-goals / Appetite / Solution sketch / Rabbit-holes & Open questions). The skill invokes [`.claude/agents/prd-critic.md`](.claude/agents/prd-critic.md) in a ≤3-round APPROVE/BLOCK loop before posting, and drafts any warranted macro-ADRs alongside the PRD per ADR-0003 D8. Normally invoked indirectly via `/ship`.
+
+### How to critique an ADR draft — ✓ available
+See [`.claude/agents/adr-critic.md`](.claude/agents/adr-critic.md). Invoked by `/to-prd` in parallel with `prd-critic` whenever a macro-ADR is drafted alongside a PRD (per ADR-0004 D1). Mirrors `prd-critic`'s ≤3-round APPROVE/BLOCK loop and I5 escalation surface; rubric is ADR-specific (convention compliance, cross-ADR consistency, supersession explicit by D-ID, bootstrap-mode policy acknowledged, immutability respected). Both critics must APPROVE before `/to-prd` posts.
 
 ### How to create slices/issues from a PRD — ✓ available
 See [`.claude/skills/to-issues/SKILL.md`](.claude/skills/to-issues/SKILL.md). Thin wrapper that delegates to [`.claude/agents/slicer.md`](.claude/agents/slicer.md) (produces N=3 alternative decompositions per ADR-0003 D3) and [`.claude/agents/slicer-critic.md`](.claude/agents/slicer-critic.md) (picks best of N, then single revision loop). Invocation shape `/to-issues` preserved; new internals. Output: GitHub Issues (one per vertical slice) with the `slice` label and sub-issue link to the parent PRD.

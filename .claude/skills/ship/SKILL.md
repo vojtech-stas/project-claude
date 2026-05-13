@@ -25,8 +25,8 @@ to-prd ----------------- stage 2: PRD authoring
    |
    v
 <prd-critic-hook>        stage 2.5: PRD adversarial critic
-   |                       (slice 1: pass-through no-op)
-   |                       (filled by a future slice — see "Hooks" below)
+   |                       (FILLED slice #6: prd-critic loop runs inside to-prd;
+   |                        /ship verifies APPROVE before proceeding)
    v
 gh issue create (PRD)    side-effect: PRD posted with label `prd`
    |
@@ -60,8 +60,9 @@ When the user invokes `/ship`:
    - Let `to-prd` synthesize the PRD from conversation context and publish it as a GitHub Issue. Capture the issue number.
 
 3. **Stage 2.5 — `<prd-critic-hook>`.**
-   - **Slice 1 behaviour: pass-through no-op.** Do nothing; proceed to stage 3.
-   - Future slice will: invoke a `prd-critic` subagent against the PRD; on BLOCK loop back to `to-prd` for revision (max 3 rounds); on APPROVE proceed. Do not implement that logic in this slice.
+   - The `to-prd` skill now runs the `prd-critic` loop **internally** (≤3 rounds, APPROVE/BLOCK) before posting the PRD — see [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md) and [`.claude/agents/prd-critic.md`](../../agents/prd-critic.md).
+   - At this stage, verify that `to-prd` reported an APPROVE verdict (the posted PRD body should end with `> **Pipeline metadata** — Approved by prd-critic round <N>/3.`). If `to-prd` returned a round-3 BLOCK or `ESCALATE: needs-human`, STOP the pipeline — do NOT proceed to stage 3. Surface the critic's findings back to the user and recommend re-grilling.
+   - Note: macro-ADRs drafted by `to-prd` ship as files alongside the PRD; they are NOT separately posted as issues. They will be committed in slice 1's PR by the implementer.
 
 4. **Stage 3 — run `/to-issues` against the PRD issue.**
    - Invoke the existing `to-issues` skill at `.claude/skills/to-issues/SKILL.md` unchanged, passing the PRD issue number from step 2 as input.
@@ -88,11 +89,11 @@ The hook names below are stable contracts. A future slice can fill a hook by nam
 
 | Hook name              | Slice that fills it | Replaces no-op with                                              |
 |------------------------|---------------------|------------------------------------------------------------------|
-| `<prd-critic-hook>`    | future PRD-critic slice | `prd-critic` subagent loop (≤3 rounds, APPROVE/BLOCK) on the draft PRD before posting |
-| `<slicer-hook>`        | slice #5 (filled)   | `slicer` subagent producing N=3 alternative decompositions       |
-| `<slicer-critic-hook>` | slice #5 (filled)   | `slicer-critic` subagent picking best-of-N + single revision loop |
+| `<prd-critic-hook>`    | **FILLED (slice #6)** | `prd-critic` subagent loop runs inside `to-prd` (≤3 rounds, APPROVE/BLOCK); `/ship` verifies APPROVE before stage 3 |
+| `<slicer-hook>`        | **FILLED (slice #5)** | `slicer` subagent producing N=3 alternative decompositions       |
+| `<slicer-critic-hook>` | **FILLED (slice #5)** | `slicer-critic` subagent picking best-of-N + single revision loop |
 
-Slice 1 left all three as pass-through to validate the chain end-to-end before any critic logic was introduced (walking-skeleton discipline from CLAUDE.md rule #2). Slice #5 filled the two slicer hooks; the prd-critic hook is the only remaining no-op and is owned by a separate slice.
+Slice 1 left all three as pass-through to validate the chain end-to-end before any critic logic was introduced (walking-skeleton discipline from CLAUDE.md rule #2). Slice #5 filled the two slicer hooks and slice #6 filled the prd-critic hook — all three hooks are now live.
 
 ## What this slice deliberately does NOT do
 

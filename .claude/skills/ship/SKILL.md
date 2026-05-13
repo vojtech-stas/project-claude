@@ -25,8 +25,8 @@ to-prd ----------------- stage 2: PRD authoring
    |
    v
 <prd-critic-hook>        stage 2.5: PRD adversarial critic
-   |                       (FILLED slice #6: prd-critic loop runs inside to-prd;
-   |                        /ship verifies APPROVE before proceeding)
+   |                       (FILLED slice #6: prd-critic + adr-critic (if ADR drafted)
+   |                        loop inside to-prd; /ship verifies APPROVE before proceeding)
    v
 gh issue create (PRD)    side-effect: PRD posted with label `prd`
    |

@@ -50,4 +50,5 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 |---|---|---|
 | [0001](0001-foundational-design.md) | Foundational design | Accepted (D3 and D6 partially superseded by 0003; D9 superseded by 0002) |
 | [0002](0002-autonomous-merge-policy.md) | Autonomous merge policy with QA-level human checkpoint | Accepted |
-| [0003](0003-autonomous-pipeline-with-critics.md) | Autonomous multi-stage pipeline with adversarial critics | Accepted |
+| [0003](0003-autonomous-pipeline-with-critics.md) | Autonomous multi-stage pipeline with adversarial critics | Accepted (supersession-header D-ID error, D4/D6 contradiction on `to-prd` semantics, missing bootstrap-mode policy, and undocumented implementer-stage incremental rollout corrected by [ADR-0004](0004-bypass-prevention.md) D5) |
+| [0004](0004-bypass-prevention.md) | Bypass prevention — workflow enforcement, adr-critic, and meta-output discipline | Accepted |

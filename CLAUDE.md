@@ -60,6 +60,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | `cat .claude/skills/ship/SKILL.md` |
 | Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
 | Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
+| Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | `ls docs/prds/` (created when first PRD lands there; current PRDs live on GitHub Issues per ADR-0003 D1) |
 | Current work in flight | GitHub Issues + branches | `gh issue list` ; `git branch` |

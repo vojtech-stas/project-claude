@@ -35,13 +35,12 @@ to-issues --------------- stage 3: slice decomposition
    |
    v
 <slicer-hook>            stage 3.5: alternative-decomposition generator
-   |                       (slice 1: pass-through no-op — to-issues already
-   |                        produces one decomposition; future slice swaps in
-   |                        N=3 alternatives via the slicer subagent)
+   |                       (slice #5: filled — `slicer` subagent produces
+   |                        N=3 alternatives per ADR-0003 D3)
    v
 <slicer-critic-hook>     stage 3.6: slice-quality critic
-   |                       (slice 1: pass-through no-op)
-   |                       (filled by a future slice — see "Hooks" below)
+   |                       (slice #5: filled — `slicer-critic` picks best-of-N
+   |                        with single revision loop per ADR-0003 D3)
    v
 gh issue create (slices) side-effect: one sub-issue per slice with label `slice`
 ```
@@ -68,13 +67,16 @@ When the user invokes `/ship`:
    - Invoke the existing `to-issues` skill at `.claude/skills/to-issues/SKILL.md` unchanged, passing the PRD issue number from step 2 as input.
    - Let `to-issues` produce the vertical-slice decomposition and publish one GitHub Issue per slice. Capture the slice issue numbers.
 
-5. **Stage 3.5 — `<slicer-hook>`.**
-   - **Slice 1 behaviour: pass-through no-op.** `to-issues` is the slicer for this slice; do nothing extra.
-   - Future slice will: replace this hook with a `slicer` subagent that produces N=3 alternative decompositions before posting (per ADR-0003 D3). Do not implement that logic in this slice.
+5. **Stage 3.5 — `<slicer-hook>` (filled by slice #5).**
+   - Invoke the `slicer` subagent (file: `.claude/agents/slicer.md`) with the PRD issue number from step 2.
+   - The subagent returns the "Slicer output for PRD #N" block — N=3 alternative decompositions per ADR-0003 D3. Pass this block forward to stage 3.6 without posting issues yet.
+   - This stage is now invoked by `/to-issues` internally (per slice #5's rewrite); when `/ship` calls `/to-issues` at stage 3, this hook fires as part of that call. The hook name remains stable so future re-wiring can swap the implementation without re-shaping the orchestrator.
 
-6. **Stage 3.6 — `<slicer-critic-hook>`.**
-   - **Slice 1 behaviour: pass-through no-op.** Do nothing; the chain ends here.
-   - Future slice will: invoke a `slicer-critic` subagent against the N decompositions, pick the best with rationale, run a single revision loop, then post the chosen slices. Do not implement that logic in this slice.
+6. **Stage 3.6 — `<slicer-critic-hook>` (filled by slice #5).**
+   - Invoke the `slicer-critic` subagent (file: `.claude/agents/slicer-critic.md`) with the PRD and the slicer's N=3 block from stage 3.5.
+   - The critic scores all three decompositions, picks one with explicit tiebreak rationale, and runs **at most one** revision loop on the chosen decomposition (per ADR-0003 D3 — no re-sampling N=3 mid-loop).
+   - On APPROVE: hand the `Final approved decomposition` to `/to-issues` for posting (one `gh issue create` per slice, labelled `slice`, in dependency order).
+   - On BLOCK: surface the critic's blocking reasons to the user. Do NOT post slices. The autonomous pipeline halts here for this run; re-running `/ship` re-grills the slicer pair.
 
 7. **Report back to the user.**
    - Print the PRD issue URL and the list of slice issue URLs.
@@ -87,10 +89,10 @@ The hook names below are stable contracts. A future slice can fill a hook by nam
 | Hook name              | Slice that fills it | Replaces no-op with                                              |
 |------------------------|---------------------|------------------------------------------------------------------|
 | `<prd-critic-hook>`    | future PRD-critic slice | `prd-critic` subagent loop (≤3 rounds, APPROVE/BLOCK) on the draft PRD before posting |
-| `<slicer-hook>`        | future slicer slice | `slicer` subagent producing N=3 alternative decompositions       |
-| `<slicer-critic-hook>` | future slicer-critic slice | `slicer-critic` subagent picking best-of-N + single revision loop |
+| `<slicer-hook>`        | slice #5 (filled)   | `slicer` subagent producing N=3 alternative decompositions       |
+| `<slicer-critic-hook>` | slice #5 (filled)   | `slicer-critic` subagent picking best-of-N + single revision loop |
 
-Slice 1 deliberately leaves all three as pass-through so the chain is observable end-to-end before any critic logic is introduced. This is the walking-skeleton discipline from CLAUDE.md rule #2.
+Slice 1 left all three as pass-through to validate the chain end-to-end before any critic logic was introduced (walking-skeleton discipline from CLAUDE.md rule #2). Slice #5 filled the two slicer hooks; the prd-critic hook is the only remaining no-op and is owned by a separate slice.
 
 ## What this slice deliberately does NOT do
 

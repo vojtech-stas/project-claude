@@ -1,0 +1,66 @@
+#!/bin/sh
+# .githooks/pre-commit
+#
+# Purpose:
+#   Local-side workflow enforcement for project-claude. Layer 1 of the
+#   three-layer bypass-prevention stack defined in ADR-0004 D3.
+#
+# When it runs:
+#   Before every `git commit` in any clone that has run `.githooks/install.sh`
+#   (which sets `git config core.hooksPath .githooks`).
+#
+# What it blocks:
+#   1. Commits while HEAD is the `main` branch — direct commits to main are
+#      banned per CLAUDE.md cross-cutting rule #4.
+#   2. Commits on a branch whose name does NOT match the regex
+#        ^(feat|fix|chore|refactor|docs|test|perf|style|build|ci|hotfix)/[0-9]+-[a-z0-9-]+$
+#      i.e. <conventional-type>/<issue-number>-<kebab-slug>.
+#
+# Fail-open policy (per PRD #15 §6 OQ#2):
+#   On detached HEAD, initial-commit-with-no-branch, or any branch-name
+#   detection failure, this hook prints a warning to stderr and exits 0.
+#   Rationale: false negatives on legitimate edge cases (bisect, worktree
+#   setup, rebase in progress) are cheaper than blocking real workflows.
+#   Server-side enforcement (branch protection) and PR-time review
+#   (reviewer subagent) catch what slips through here.
+#
+# Bypass note:
+#   `git commit --no-verify` skips this hook. That is accepted per ADR-0004
+#   Consequences — the higher layers exist precisely for that case.
+#
+# See:
+#   - decisions/0004-bypass-prevention.md (D3 layer 1)
+#   - .githooks/install.sh
+
+set -u
+
+# Detect current branch. `git symbolic-ref --short HEAD` returns the branch
+# name on success and prints to stderr + non-zero exit on detached HEAD.
+branch=$(git symbolic-ref --short HEAD 2>/dev/null) || branch=""
+
+if [ -z "$branch" ]; then
+    echo "pre-commit: warning: could not determine branch name (detached HEAD, initial commit, or rebase in progress); allowing commit per fail-open policy. See ADR-0004 D3." >&2
+    exit 0
+fi
+
+if [ "$branch" = "main" ]; then
+    echo "pre-commit: ERROR: direct commits to 'main' are not allowed." >&2
+    echo "pre-commit: Use a feature branch matching <type>/<issue#>-<slug> instead, e.g.:" >&2
+    echo "pre-commit:   git checkout -b feat/42-add-something" >&2
+    echo "pre-commit: See CLAUDE.md cross-cutting rule #4 and ADR-0004 D3." >&2
+    exit 1
+fi
+
+# POSIX-compatible regex match via `expr`. The pattern below mirrors the
+# canonical regex in ADR-0004 D3 and PRD #15 §2.
+pattern='^\(feat\|fix\|chore\|refactor\|docs\|test\|perf\|style\|build\|ci\|hotfix\)/[0-9][0-9]*-[a-z0-9-][a-z0-9-]*$'
+if ! expr "$branch" : "$pattern" >/dev/null 2>&1; then
+    echo "pre-commit: ERROR: branch name '$branch' does not match the required pattern." >&2
+    echo "pre-commit: Expected: <type>/<issue#>-<kebab-slug>" >&2
+    echo "pre-commit: Regex:    ^(feat|fix|chore|refactor|docs|test|perf|style|build|ci|hotfix)/[0-9]+-[a-z0-9-]+\$" >&2
+    echo "pre-commit: Examples: feat/16-pre-commit-hook   docs/8-claude-md-rollup   hotfix/42-typo-fix" >&2
+    echo "pre-commit: See CLAUDE.md 'Operational git workflow' and ADR-0004 D3." >&2
+    exit 1
+fi
+
+exit 0

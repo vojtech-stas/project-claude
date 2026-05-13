@@ -144,6 +144,83 @@ If any of those checks fail → BLOCK with one of:
 
 **Exemptions:** Trivial-lane PRs labeled `trivial` and PRD PRs labeled `prd` may use `Closes #<n>` against issues of the corresponding label tier instead. If the PR is unlabeled and clearly fits the slice tier (modifies `.claude/agents/` or `.claude/skills/`), apply R-CLOSES.
 
+### 11. R-META — new ADR additions must show subagent provenance
+
+**Policy source:** [ADR-0004 D4](../../decisions/0004-bypass-prevention.md) — main-agent meta-output discipline. The main agent must not hand-author tracked files; all edits to `decisions/`, `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, or `README.md` flow through the PRD/slice/PR pipeline. R-META is the heuristic mechanical enforcement at PR time for the narrowest, highest-signal slice of that policy: NEW files in `decisions/`.
+
+**Rule:** A PR that *adds* a new ADR file matching `decisions/[0-9]+-*.md` must show provenance evidence in the PR body or commit chain. If none is present → BLOCK with reason `META-OUTPUT-PROVENANCE`.
+
+**Provenance signals (layered defense — EITHER alone suffices for APPROVE on R-META):**
+
+- **Signal A — `Closes #<N>` referencing a `slice`- or `prd`-labeled issue.** The PR body contains a GitHub closing keyword pointing to an issue whose labels include `slice` or `prd`. This proves the ADR addition flowed through the PRD→slice→PR pipeline.
+- **Signal B — `Co-Authored-By: Claude` trailer in any commit on the PR head.** Case-insensitive substring match `co-authored-by: claude` in any commit message body. This proves an implementer Agent (subagent) participated in authoring.
+
+Either signal alone passes R-META. Both absent → BLOCK.
+
+**Scope (CRITICAL — DO NOT WIDEN):**
+
+- R-META applies ONLY to NEW files (git status `A` — additions-only, zero deletions) matching the regex `^decisions/[0-9]+-.*\.md$`. The leading `[0-9]+-` discriminator means the rule fires for ADR files (e.g., `decisions/0005-foo.md`) and never for `decisions/README.md` or `decisions/branch-protection-config.json`.
+- R-META does NOT apply to *edits* of existing ADR files. Existing ADRs are immutable per `decisions/README.md`; any change to a pre-existing `decisions/NNNN-*.md` is already blocked by the immutability convention plus rule 1 (Scope drift) and rule 8 (ADR conflict).
+- R-META does NOT apply to additions in `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, `README.md`, or anywhere else. Those paths are covered by R-LOC and R-CLOSES.
+
+**How to check:**
+
+1. List NEW ADR files added in the PR (additions-only, ADR pattern):
+
+   ```bash
+   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^decisions/[0-9]+-.*\\.md$")) | select(.additions > 0 and .deletions == 0) | .path'
+   ```
+
+   If the output is empty → R-META is `[PASS]` trivially (rule does not fire). Move on.
+
+2. Check Signal A — `Closes #N` referencing a `slice`- or `prd`-labeled issue:
+
+   ```bash
+   gh pr view <PR> --json body --jq '.body' | grep -i -E '(closes|fixes|resolves) #[0-9]+'
+   ```
+
+   For each `#N` extracted, verify the label:
+
+   ```bash
+   gh issue view <N> --json labels --jq '.labels[].name' | grep -E '^(slice|prd)$'
+   ```
+
+   If any referenced issue carries `slice` or `prd` → Signal A satisfied.
+
+3. Check Signal B — `Co-Authored-By: Claude` trailer in any commit:
+
+   ```bash
+   gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-authored-by: claude'
+   ```
+
+   Any hit → Signal B satisfied.
+
+4. **Verdict:**
+   - Signal A OR Signal B → R-META `[PASS]`.
+   - Neither Signal A nor Signal B → BLOCK with: "R-META: PR adds new ADR file(s) `<list-of-paths>` but the PR body lacks a `Closes #N` reference to a `slice`/`prd`-labeled issue AND no commit carries a `Co-Authored-By: Claude` trailer. New ADRs must flow through the PRD/slice/PR pipeline per ADR-0004 D4."
+
+**R-META-OVERRIDE recovery (false-positive escape hatch):**
+
+A contributor whose PR legitimately adds a new ADR but trips R-META (e.g., a one-time bootstrap, an externally-authored ADR being absorbed, a hand-fix where provenance was inadvertently lost) MAY add a single line to the PR body:
+
+```
+R-META-OVERRIDE: <one-line rationale>
+```
+
+**Detection:**
+
+```bash
+gh pr view <PR> --json body --jq '.body' | grep -i -E '^R-META-OVERRIDE: .+'
+```
+
+When the override line is present AND has a non-empty rationale on the same line:
+
+- R-META is recorded as `[OVERRIDE]` (NOT `[PASS]`, NOT `[FAIL]`) in the rule checklist.
+- The override does NOT change the verdict for any OTHER rule. If another hard rule fails, the PR is still BLOCK'd — R-META-OVERRIDE relaxes R-META specifically and nothing else.
+- The verdict comment MUST include a clearly-labeled `### R-META override notice` section quoting the override rationale verbatim and naming the new ADR file(s) it covers, so the human sees the override in QA review and at PRD-level qa-plan handoff.
+
+The override is a soft-pass, not a silent bypass: it costs the contributor one visible line in the PR body and one visible section in the reviewer comment. That visibility is the point.
+
 ---
 
 ## Recommend-only criteria (do NOT block; mention in comment)
@@ -181,6 +258,10 @@ Post a comment on the PR using `gh pr comment <PR> --body-file <tempfile>` (use 
 - [PASS/FAIL] No ADR conflicts: <one-line verdict>
 - [PASS/FAIL] R-LOC (≤300 LoC runtime-artifact diff): <one-line verdict, include the counted N>
 - [PASS/FAIL] R-CLOSES (`Closes #<n>` references a valid slice-labeled issue): <one-line verdict>
+- [PASS/FAIL/OVERRIDE] R-META (new ADR additions show subagent provenance via `Closes #N` to slice/prd issue OR `Co-Authored-By: Claude` trailer): <one-line verdict; mark [PASS] when no new ADR file is added or when a signal is satisfied, [OVERRIDE] when `R-META-OVERRIDE: <rationale>` is present in PR body, [FAIL] otherwise>
+
+### R-META override notice (only if R-META is `[OVERRIDE]`)
+<Quote the `R-META-OVERRIDE: <rationale>` line verbatim and list the new ADR file paths it covers. Omit this section entirely if R-META is `[PASS]` or `[FAIL]`.>
 
 ### Blocking issues (if any)
 <For each blocked rule: explain in 1-3 sentences with file:line references. Be specific.>

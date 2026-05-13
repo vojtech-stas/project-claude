@@ -106,6 +106,44 @@ Per CLAUDE.md, every PR body MUST include: **Scope**, **Out-of-scope**, **Verifi
 ### 8. ADR conflict
 If the PR's changes contradict a decision recorded in an existing ADR, and there's no new ADR superseding the old one in the PR → BLOCK with "ADR conflict: PR contradicts decision <ADR-NNNN> but no superseding ADR is included".
 
+### 9. R-LOC — slice PR exceeds runtime-artifact LoC cap
+
+**Rule:** Slice PR diff exceeds **300 LoC of runtime-artifact code** → BLOCK.
+
+**Canonical definition of "runtime artifact"** (this file is the canonical source; CLAUDE.md cross-references it):
+
+- **Runtime artifact** = any file under `.claude/agents/` or `.claude/skills/`. These are read and executed by the agent at runtime; their size directly affects agent behavior and context budget.
+- **Non-runtime (uncapped)** = `decisions/*.md`, `README.md`, `CLAUDE.md`, anything under `docs/`. Documentation edits are uncapped.
+
+**How to check:**
+
+```bash
+gh pr diff <PR> --patch | <count added/removed lines under .claude/agents/ and .claude/skills/ only>
+```
+
+A practical recipe: run `gh pr view <PR> --json files --jq '.files[] | select(.path | startswith(".claude/agents/") or startswith(".claude/skills/")) | .additions + .deletions'` and sum. Count ONLY runtime-artifact paths; ignore non-runtime paths entirely (do not count them, do not blend them).
+
+If the total exceeds 300 → BLOCK with "R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 300. Split the slice or move non-runtime content out of `.claude/`".
+
+**Exemptions:** Trivial-lane PRs labeled `trivial` (≤10 LoC runtime diff, no behavior change) are not subject to this cap; they fast-path independently. PRs labeled `prd` (PRD itself, not a slice) are docs-only and exempt.
+
+### 10. R-CLOSES — PR body must close a valid slice issue
+
+**Rule:** PR body does not contain a `Closes #<n>` line referencing a valid slice-labeled issue → BLOCK.
+
+**How to check:**
+
+1. Grep PR body for `Closes #<n>` (case-insensitive; also accept `Fixes #<n>` / `Resolves #<n>` per GitHub's keyword set).
+2. The referenced issue must exist: `gh issue view <n> --json number,labels` returns a real issue.
+3. The issue's labels must include `slice` (verify in the JSON output).
+
+If any of those checks fail → BLOCK with one of:
+- "R-CLOSES: PR body missing `Closes #<n>` line; every slice PR must close exactly one slice-labeled issue."
+- "R-CLOSES: referenced issue #<n> does not exist."
+- "R-CLOSES: referenced issue #<n> is not labeled `slice` (labels: <list>); slice PRs must close a slice-labeled issue."
+
+**Exemptions:** Trivial-lane PRs labeled `trivial` and PRD PRs labeled `prd` may use `Closes #<n>` against issues of the corresponding label tier instead. If the PR is unlabeled and clearly fits the slice tier (modifies `.claude/agents/` or `.claude/skills/`), apply R-CLOSES.
+
 ---
 
 ## Recommend-only criteria (do NOT block; mention in comment)
@@ -141,6 +179,8 @@ Post a comment on the PR using `gh pr comment <PR> --body-file <tempfile>` (use 
 - [PASS/FAIL] No secrets: <one-line verdict>
 - [PASS/FAIL] PR body complete (scope/out-of-scope/verification): <one-line verdict>
 - [PASS/FAIL] No ADR conflicts: <one-line verdict>
+- [PASS/FAIL] R-LOC (≤300 LoC runtime-artifact diff): <one-line verdict, include the counted N>
+- [PASS/FAIL] R-CLOSES (`Closes #<n>` references a valid slice-labeled issue): <one-line verdict>
 
 ### Blocking issues (if any)
 <For each blocked rule: explain in 1-3 sentences with file:line references. Be specific.>
@@ -198,6 +238,50 @@ ROUND: <which review round this is on this PR — 1, 2, 3, ...>
 
 **Loop cap (max-N rounds, initial N=3):** count YOUR blocks across this PR via `gh pr view <PR> --comments` — look for previous `Reviewer verdict: BLOCK` headers. If this would be the 3rd BLOCK on the same PR, include a clear recommendation to escalate to the human in your verdict comment (a `@vojtech-stas` mention). The orchestrating agent will then page the human rather than re-spawning the implementer.
 
+### Round-3 BLOCK escalation surface (I5)
+
+When the loop cap above is reached — i.e. this is the **3rd BLOCK on the same PR** — perform these two concrete actions IN ADDITION to posting the verdict comment. This is the canonical human escalation surface per ADR-0003 D4 and PRD §4 (Workflow improvement I5):
+
+1. **Apply the `needs-human` label to the PR:**
+
+   ```bash
+   gh pr edit <PR> --add-label needs-human
+   ```
+
+   The human runs `gh pr list --label needs-human` at session start to find stuck PRs.
+
+2. **Post a summary comment on the parent PRD issue.** Find the parent PRD by:
+   - Reading the slice issue body that this PR `Closes` — look for a `Parent:` or `PRD:` reference (e.g., `PRD #3` or `Parent: #3`).
+   - If absent, query the slice issue's sub-issue parent via `gh issue view <slice-issue> --json parent` (GitHub sub-issues API), falling back to `gh issue list --label prd` cross-referenced with the slice issue's body.
+   - If the parent PRD cannot be determined, post the summary on the slice issue itself instead and note "parent PRD not auto-discoverable; please link manually" — do not skip the escalation.
+
+   Then:
+
+   ```bash
+   gh issue comment <parent-prd-number> --body-file <tempfile>
+   ```
+
+   The comment body MUST include:
+
+   ```markdown
+   ## Stuck slice — human attention requested
+
+   - **Stuck slice issue:** #<slice-issue-number>
+   - **Stuck PR:** <PR URL>
+   - **Round-3 BLOCK reason:** <one-paragraph summary of the last BLOCK's blocking rules and core issue>
+   - **Verdict comment:** <URL of the verdict comment you just posted>
+
+   Per ADR-0003 D4, this PR has hit the 3-round critic-loop cap and needs human judgment. The implementer has been BLOCK'd thrice on this same PR; further auto-iteration is unlikely to converge. `@vojtech-stas`
+   ```
+
+If either action fails (label apply or parent-PRD comment post), do NOT retry the loop — include the failure in your return value to the orchestrating agent so the human is paged via fallback means.
+
+Augment your return value with the escalation status:
+
+```
+ESCALATION: applied (PR labeled needs-human; parent PRD #<n> commented) | failed: <error>
+```
+
 ---
 
 ## Tool boundaries
@@ -210,11 +294,13 @@ You ARE authorized to execute these specific shell commands:
 - `gh issue view`, `gh issue list` — read-only issue queries
 - `gh pr comment <PR> --body-file <tempfile>` — post your verdict
 - `gh pr merge <PR> --squash --delete-branch` — ONLY when your own verdict is APPROVE; ONLY `--squash`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002)
+- `gh pr edit <PR> --add-label needs-human` — ONLY on round-3 BLOCK escalation (per ADR-0003 D4 / I5); ONLY the `needs-human` label; never any other label
+- `gh issue comment <parent-prd-number> --body-file <tempfile>` — ONLY on round-3 BLOCK escalation, ONLY on the parent PRD issue, ONLY with the escalation summary template (per ADR-0003 D4 / I5)
 
 You may NOT execute (even though `Bash` is unrestricted):
 - `git commit`, `git push`, `git merge` (manually), `git rebase`, `git reset`, `git revert`
-- `gh pr close`, `gh pr edit` (except commenting), `gh pr review --approve`, `gh pr ready`
-- `gh issue close`, `gh issue edit`, `gh issue comment` (you only comment on PRs, not issues)
+- `gh pr close`, `gh pr edit` (except `--add-label needs-human` on round-3 escalation), `gh pr review --approve`, `gh pr ready`
+- `gh issue close`, `gh issue edit`, `gh issue comment` (except the round-3 escalation comment on the parent PRD issue)
 - Any `Edit`, `Write`, or file mutation — you do not have those tools
 
 If you find yourself wanting any mutating tool not listed above as authorized, that is a signal to STOP and explain in your comment what you would want changed.

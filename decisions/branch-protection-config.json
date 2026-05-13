@@ -1,0 +1,8 @@
+{
+  "required_pull_request_reviews": null,
+  "enforce_admins": false,
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_status_checks": null
+}

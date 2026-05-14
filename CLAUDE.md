@@ -21,6 +21,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 8. **One thing at a time.** One in-progress todo. One in-flight PR per slice.
 9. **DRY for docs.** Don't duplicate info. Link/point to where the canonical version lives.
 10. **Main-agent meta-output discipline.** Main agent never hand-authors tracked files. All edits to `decisions/`, `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, or `README.md` flow through the PRD/slice/PR pipeline — via `/to-prd`, `/to-issues`, `/ship`, or an implementer Agent invocation.
+11. **Surface deferred work as backlog issues.** Per [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4, any agent that surfaces deferred or follow-up work should append a `backlog`-labeled issue to capture it (discretionary, not mandatory).
 
 ---
 
@@ -67,6 +68,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | `ls docs/prds/` (created when first PRD lands there; current PRDs live on GitHub Issues per ADR-0003 D1) |
 | Current work in flight | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Recent activity | git history | `git log --oneline -20` |
+| Forward-looking work queue (backlog) | `gh issue list --label backlog` + Backlog column on project board #2 | — |
 
 ---
 
@@ -252,6 +254,25 @@ See [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md). Invoked via `Age
 
 ### How to write a QA plan — ✓ available
 See [`.claude/skills/qa-plan/SKILL.md`](.claude/skills/qa-plan/SKILL.md). Invoke when all GitHub issues for a PRD have been merged. Generates a structured acceptance-test checklist as a comment on the PRD issue. The human runs the tests and marks pass/fail. **This is the terminal human checkpoint** in the autonomous pipeline per ADR-0003 D4.
+
+### Session continuity — how new sessions resume
+
+No formal handoff document. New Claude Code sessions reconstruct state from **live state** per [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D2:
+
+- `git log --oneline -10` — recent commits / branch state
+- `gh issue list --state open --label slice` — in-flight slices
+- `gh pr list --state open` — in-flight PRs (work under review)
+- `gh issue list --label backlog` — forward queue (queued for future PRDs)
+- Project board #2 column states — visual progress of in-flight work
+
+The natural pipeline milestones (end of `/grill-me`, `/ship`, `/qa-plan`) always leave a new session in a state where live reconstruction is sufficient. Mid-task interruption (mid-grill or mid-slice) loses conversational context regardless of mechanism; this is an accepted trade-off per ADR-0006 D2.
+
+### Promotion: backlog → PRD
+
+When a `backlog`-labeled issue is ready for full grilling:
+1. `gh issue edit <N> --remove-label backlog --add-label prd`
+2. `/grill-me #<N>` to refine the body into a 6-section PRD (per ADR-0005 D1)
+3. After grill, `/ship` continues the autonomous pipeline as usual
 
 ---
 

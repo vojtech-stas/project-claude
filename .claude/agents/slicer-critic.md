@@ -37,6 +37,7 @@ Score each decomposition on every criterion. Each criterion is PASS / FAIL / WAR
 6. **Dependency ordering correct.** `Depends on` edges form a DAG (no cycles); every dependency listed is a real prerequisite (not arbitrary serialization); walking-skeleton slice depends on `None`. Any violation → FAIL.
 7. **Slice count and per-slice LoC fit the PRD §4 appetite.** Slice count within budget; every per-slice LoC estimate ≤ cap. Any violation → FAIL.
 8. **Risk front-loading.** The biggest risk identified across slices lands in slice 1 or 2. If the riskiest mechanic is buried at the end → WARN (not FAIL — defensible in some PRDs).
+9. **Cascade-docs identified and covered.** Each decomposition must explicitly identify cascade-docs that should be updated to reflect the new feature even when not strictly in the PRD's §2 acceptance criteria (README, CLAUDE.md Map rows, ADR index rows, downstream skill/subagent bodies referencing the changed area), and cover each identified cascade-doc via a slice (new or merged into an existing slice). Per `slicer.md` "Cascade-doc check" and [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D3. **FAIL** if a load-bearing cascade-doc (README, CLAUDE.md, ADR index `decisions/README.md`) is missed. **WARN** if a minor cascade-doc is missed (downstream skill body, peripheral reference). **PASS** if cascade-docs are identified and each is covered by a slice, OR if the decomposition explicitly states "no cascade-docs identified" with a one-line justification (e.g., "feature is internal-only — no user-facing surface changes").
 
 A decomposition is **viable** if it has zero FAILs. WARNs are acceptable; the count of WARNs is a tiebreaker among viable decompositions (fewer WARNs wins).
 
@@ -91,6 +92,7 @@ You get exactly one revision. The decision is locked in by ADR-0003 D3.
 | 6. Dependency ordering | … | … | … |
 | 7. Slice count & LoC fit | … | … | … |
 | 8. Risk front-loading | … | … | … |
+| 9. Cascade-docs identified & covered | … | … | … |
 | **Viable?** | yes/no | yes/no | yes/no |
 | **WARN count** | <int> | <int> | <int> |
 

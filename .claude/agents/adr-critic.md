@@ -94,14 +94,16 @@ The ADR must never propose edits to existing ADR files. Corrections to prior ADR
 
 ## Output format
 
+Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and CLAUDE.md "Output-shape standard for subagents and output-emitting skills". 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
+
 Post your verdict either:
 - as a comment on the ADR-tracking issue (if one exists) via `gh issue comment <N> --body-file <tempfile>`, OR
 - back to the calling agent inline if the ADR is still a draft.
 
 ```markdown
-## adr-critic verdict: **[BLOCK | APPROVE]** (round <N>/3)
+## adr-critic verdict: **[APPROVE | BLOCK]** (round <N>/3)
 
-### Understood ADR intent
+### Subject of review
 <2-4 sentences. What is this ADR trying to decide? Drawn from the title, Context, and Decisions. This is the spec contract you are judging against.>
 
 ### Rubric
@@ -112,55 +114,55 @@ Post your verdict either:
 - [PASS/FAIL] 5. Bootstrap-mode policy acknowledged when introducing enforcement
 - [PASS/FAIL] 6. Immutability respected
 
-### Findings (if BLOCK)
-<Numbered list. Each item: rule number + section reference + 1-2 sentence diagnosis + concrete fix. The generator must be able to mechanically apply each fix without re-asking the critic.>
-
-### Recommendations (non-blocking)
-<Optional. ≤5 bullets.>
+### Findings
+<On BLOCK: numbered list. Each item: rule number + section reference + 1-2 sentence diagnosis + concrete fix. The generator must be able to mechanically apply each fix without re-asking the critic.
+On APPROVE: "None.">
 
 ### Summary
 <One paragraph. If APPROVE: state the ADR is publishable; the generator commits it. If BLOCK: name the top reason and what to revise.>
+
+### Recommendations (non-blocking)
+<Optional. ≤5 bullets. Permitted critic-specific extension per ADR-0005 D1; appears after Summary, before the trailer.>
+
+<CRITIC trailer — see below>
 ```
 
 `[PASS/FAIL]` is placeholder syntax — write literal `[PASS]` or `[FAIL]` for each line in the actual verdict.
 
 ---
 
-## After posting the verdict
+## After posting the verdict — CRITIC trailer
 
-### If APPROVE
-Return to the calling agent:
+The trailer is the canonical CRITIC trailer per ADR-0005 D1b. Append as a fenced code block immediately after the verdict body.
+
+### On APPROVE
 ```
 VERDICT: APPROVE
 REASON: <one sentence>
-ROUND: <N>
+ROUND: <N>/3
 ```
 The generator commits the ADR (and any companion PRD).
 
-### If BLOCK
-Return:
+### On BLOCK
 ```
 VERDICT: BLOCK
 REASON: <one sentence>
+ROUND: <N>/3
 FAILED_RULES: <comma-separated rule numbers, e.g. "2,3,5">
-ROUND: <N>
 FINDINGS_COUNT: <integer>
 ```
 
-**Round-3 escalation surface (I5).** If this is round 3 and you would still BLOCK, perform the escalation pattern verbatim per `prd-critic` and [`reviewer`](reviewer.md) — this is the canonical human handoff per ADR-0003 D4 and PRD #3 I5:
-
-1. Include a clear `@vojtech-stas` mention in your verdict.
-2. Include the literal line `ESCALATE: needs-human` in your verdict.
-3. The calling agent applies the `needs-human` label to the draft-tracking issue (or to the posted ADR-tracking issue if already posted) and posts a summary comment on the parent grill-session / PRD context.
-
-Augment your return value with:
-
+### On round-max BLOCK (round 3 BLOCK)
+Add an `ESCALATE` line to the BLOCK trailer:
 ```
+VERDICT: BLOCK
+REASON: <one sentence>
+ROUND: 3/3
+FAILED_RULES: <comma-separated rule numbers>
+FINDINGS_COUNT: <integer>
 ESCALATE: needs-human
-@vojtech-stas
 ```
-
-This matches the escalation surface used by `prd-critic`, `slicer-critic`, and `reviewer` byte-for-byte at the contract level (label name, mention target, return-value lines).
+Also include a clear `@vojtech-stas` mention in the verdict body. The calling agent applies the `needs-human` label to the draft-tracking issue (or to the posted ADR-tracking issue if already posted) and posts a summary comment on the parent grill-session / PRD context. This matches the escalation surface used by `prd-critic`, `slicer-critic`, and `reviewer` byte-for-byte at the contract level (label name, mention target, return-value lines).
 
 ---
 

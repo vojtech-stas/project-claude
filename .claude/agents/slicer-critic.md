@@ -77,10 +77,35 @@ You get exactly one revision. The decision is locked in by ADR-0003 D3.
 
 ## Output format
 
-```markdown
-## Slicer-critic verdict: **[APPROVE | BLOCK]**
+Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and CLAUDE.md "Output-shape standard for subagents and output-emitting skills". 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. The header omits the `(round N/3)` counter — `slicer-critic` runs a single revision loop per ADR-0003 D3, not a 3-round loop. Scoring matrix, Chosen decomposition, Revision round, and Final approved decomposition are permitted critic-specific extensions per ADR-0005 D1, appended after Summary and before the CRITIC trailer.
 
-### Scoring matrix
+```markdown
+## slicer-critic verdict: **[APPROVE | BLOCK]**
+
+### Subject of review
+<2-4 sentences. What is being judged: the N=3 alternative decompositions of PRD #N produced by the slicer. State the PRD's stated theme and per-slice cap so the rubric is anchored against a concrete spec contract.>
+
+### Rubric
+Each of the 9 criteria below is scored per decomposition (A / B / C) as PASS / FAIL / WARN; details in the Scoring matrix extension below.
+
+- 1. INVEST per slice
+- 2. Walking-skeleton-first
+- 3. SPIDR splitability
+- 4. No §3 non-goal violations
+- 5. No §6 rabbit-hole chases
+- 6. Dependency ordering
+- 7. Slice count & LoC fit
+- 8. Risk front-loading
+- 9. Cascade-docs identified & covered
+
+### Findings
+<On BLOCK: numbered list. For each blocking failure: which decomposition (A/B/C) + which criterion + 1-2 sentence diagnosis + the concrete defect (slice number / cascade-doc name / rule cited). Mechanically actionable. If ALL three decompositions are non-viable (≥1 FAIL each), state that and require regeneration.
+On APPROVE: "None.">
+
+### Summary
+<One paragraph. If APPROVE: name the chosen decomposition, the tiebreak path that produced it, and confirm the Final approved decomposition below is publishable. If BLOCK: name the top reason and whether escalation to human is recommended.>
+
+### Scoring matrix (permitted extension)
 
 | Criterion | A | B | C |
 |---|---|---|---|
@@ -96,23 +121,46 @@ You get exactly one revision. The decision is locked in by ADR-0003 D3.
 | **Viable?** | yes/no | yes/no | yes/no |
 | **WARN count** | <int> | <int> | <int> |
 
-### Chosen decomposition: <A | B | C>
+### Chosen decomposition (permitted extension): <A | B | C>
 **Tiebreak path:** <which rule decided it>
 **Rationale:** <2–4 sentences naming the strengths that won>
 
-### Revision round (if any)
+### Revision round (permitted extension)
 - Round invoked: <yes / no — skipped because zero WARNs>
 - Requested fixes: <bulleted list, ≤5 items>
 - Post-revision verdict: <viable / not viable>
 
-### Final approved decomposition
+### Final approved decomposition (permitted extension; only on APPROVE)
 <Reproduce the chosen decomposition's slice table verbatim, with any revision applied. This is the artifact the calling agent posts to GitHub.>
 
-### Blocking reasons (only if BLOCK)
-<List which decompositions failed which criteria. State whether escalation to human is recommended (`@vojtech-stas`).>
+<CRITIC trailer — see below>
 ```
 
 Return only the block above to the calling agent. On APPROVE, the calling agent (the `/to-issues` skill or `/ship` orchestrator) takes the **Final approved decomposition** and posts one GitHub issue per slice.
+
+---
+
+## After posting the verdict — CRITIC trailer
+
+The trailer is the canonical CRITIC trailer per ADR-0005 D1b. Append as a fenced code block immediately after the verdict body. `slicer-critic` runs a single revision loop per ADR-0003 D3; `ROUND: 1` when no revision was invoked, `ROUND: 2` when the single revision was applied. There is no round-3 case (no `ESCALATE: needs-human` line on standard BLOCK — see the all-three-non-viable note below).
+
+### On APPROVE
+```
+VERDICT: APPROVE
+REASON: <one sentence>
+ROUND: 1 | 2
+```
+
+### On BLOCK
+```
+VERDICT: BLOCK
+REASON: <one sentence>
+ROUND: 1 | 2
+FAILED_RULES: <comma-separated criterion numbers across all non-viable decompositions, e.g. "2,4,9">
+FINDINGS_COUNT: <integer>
+```
+
+**Escalation.** If all three decompositions are non-viable OR the single-revision attempt leaves the chosen decomposition non-viable, include a clear `@vojtech-stas` mention in the verdict body and append `ESCALATE: needs-human` to the BLOCK trailer. This matches the escalation surface used by `prd-critic`, `adr-critic`, and `reviewer` (label name `needs-human`, mention target `@vojtech-stas`).
 
 ---
 

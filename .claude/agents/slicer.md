@@ -61,6 +61,43 @@ Do NOT vary by inventing scope the PRD doesn't ask for. Every slice across every
 
 ---
 
+## Methodology checks (apply during generation)
+
+The slicing methodology overview lives in [`CLAUDE.md`](../../CLAUDE.md) "Slicing logic" section (canonical home, per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D2). The actionable application below is what you apply each time you generate.
+
+### Hamburger-vertical check for slice 1
+
+When generating slice 1 of any decomposition, verify it cuts through every layer end-to-end (schema / logic / UI / test, or domain-equivalent layers — for agent-workflow PRDs the layers are typically spec → ADR → agent prompt → exemplar invocation). Slice 1 may touch each layer crudely, but it MUST touch each layer.
+
+Horizontal layering — "build all the modules first, wire them up later" — is the explicit anti-pattern (CLAUDE.md cross-cutting rule #2). Reject any candidate slice 1 that builds a single layer in isolation; replace it with a thinner end-to-end slice that exercises every layer, however crudely. Apply this check before emitting your three decompositions, not after.
+
+### SPIDR vocabulary for split-fallback hints
+
+For any slice that approaches the LoC cap defined in the PRD's §4 appetite, name a SPIDR-style split-fallback hint in that slice's `Risk` field or in the cross-decomposition summary. SPIDR (Mike Cohn) provides five splitting techniques:
+
+- **S — Spike.** Research-only slice that resolves an unknown before the implementation slice that depends on it.
+- **I — Interface.** Split by interface / API / CLI boundary (e.g., "land the section-renames first, trailer-field-renames next").
+- **R — Rules.** Split by business-rule variants (e.g., split a multi-rule critic check into one slice per rule).
+
+Path and Data are also SPIDR techniques but rarely apply to our agent-workflow domain — skip them unless the PRD has end-user workflow paths or rich data variation. Per the "Slicing logic" section in CLAUDE.md and ADR-0005 D2.
+
+A split-fallback hint is NOT a commitment to split; it is a precomputed answer to "if this slice overruns the cap, how would we split it?" The slicer-critic checks for the presence of such a hint on near-cap slices.
+
+### Cascade-doc check (generation responsibility, per ADR-0005 D3)
+
+For each candidate decomposition, identify files that should be updated to reflect the new feature even when not strictly required by the PRD's §2 acceptance criteria. Examples of cascade-docs:
+
+- `README.md` — if the feature changes the user-facing workflow or surface area.
+- `CLAUDE.md` Map rows — if the feature adds a new artifact (subagent, skill, ADR, top-level doc).
+- `decisions/README.md` ADR index rows — if the feature adds a new ADR.
+- Downstream skill or subagent bodies that reference the changed area — if the feature changes a contract or invocation shape they rely on.
+
+**Add a slice (or merge into an existing slice) to cover each identified cascade-doc.** A cascade-doc slice is a legitimate vertical slice — it ships observable value (no drift between code and docs) and is traceable to the spirit of §2 even when not literally listed there.
+
+When no cascade-docs are identified for a decomposition, state so explicitly in the cross-decomposition summary (e.g., `Cascade-docs: none identified — feature is internal-only`). The `slicer-critic` rubric includes a matching "Cascade-docs identified and covered" criterion; missing this check is a WARN or FAIL depending on the cascade-doc's load-bearing weight.
+
+---
+
 ## Output format
 
 Print the following structure literally. Do not add commentary outside the fenced regions. The downstream critic parses this output by header.
@@ -106,9 +143,25 @@ Print the following structure literally. Do not add commentary outside the fence
 | Slice count | <int> | <int> | <int> |
 | Total LoC | <sum> | <sum> | <sum> |
 | Biggest risk front-loaded? | yes/no | yes/no | yes/no |
+| Cascade-docs identified | <list or "none — <reason>"> | <…> | <…> |
+| Cascade-docs covered by slice(s) | <slice refs or "n/a"> | <…> | <…> |
 ```
 
-Return to the calling agent only the block above. The critic reads it directly.
+Then emit the GENERATOR trailer (canonical schema per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c and CLAUDE.md "Output-shape standard") as a fenced code block immediately after the decomposition block:
+
+```
+RESULT: SUCCESS | STOPPED | INVALID_INPUT
+REASON: <one sentence>
+ARTIFACTS: <N=3 alternative decompositions presented above>
+DECOMPOSITION_COUNT: 3
+```
+
+- `RESULT: SUCCESS` when three decompositions were produced and emitted.
+- `RESULT: INVALID_INPUT` on a malformed PRD (missing §2/§3/§4/§5) — emitted alongside `INVALID_PRD: <reason>` per the mandatory-reading section. `ARTIFACTS` may be empty.
+- `RESULT: STOPPED` if you halted mid-generation for any other reason (e.g., contradictory ADR, missing PRD reference). `ARTIFACTS` may be empty.
+- `DECOMPOSITION_COUNT` is a per-agent extension after `ARTIFACTS`, always `3` on SUCCESS (N is fixed per ADR-0003 D3); absent or `0` on INVALID_INPUT / STOPPED.
+
+Return to the calling agent only the decomposition block above plus the trailer. The critic reads them directly.
 
 ---
 

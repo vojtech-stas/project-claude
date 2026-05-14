@@ -82,6 +82,17 @@ When the user invokes `/ship`:
 7. **Report back to the user.**
    - Print the PRD issue URL and the list of slice issue URLs.
    - Tell the user the slices are now ready for the implementer-reviewer loop (one slice per PR), and that `qa-plan` is the next human-facing step once all slices merge.
+   - The free-form narrative above (chain diagram update if relevant, slice URL list, "ready for implementer-reviewer loop" pointer) stays domain-shaped per PRD #28 §6 OQ#2 — `/ship`'s report body is **not** itself a canonical template.
+   - End the terminal report with the canonical **GENERATOR trailer** (per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c and the "Output-shape standard" section of CLAUDE.md), as a fenced code block:
+
+   ```
+   RESULT: SUCCESS | STOPPED | INVALID_INPUT
+   REASON: <one sentence — e.g., "PRD posted with N slice sub-issues" or "prd-critic round-3 BLOCK; pipeline halted" or "no grilled context to ship">
+   ARTIFACTS: <PRD URL>, <slice URLs comma-separated>
+   SLICE_COUNT: <N>
+   ```
+
+   `SLICE_COUNT` is a **per-agent extension** appended after `ARTIFACTS`; consumers of `/ship`'s return (future orchestrators, post-ship audits) read it to know how many sub-issues were posted without re-parsing `ARTIFACTS`. On `RESULT: STOPPED` or `RESULT: INVALID_INPUT`, `ARTIFACTS` may be partial (e.g., just the PRD URL if `/to-issues` halted) or empty (e.g., no grilled context), and `SLICE_COUNT` is `0`.
 
 ## Hooks — what future slices fill in
 

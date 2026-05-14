@@ -148,10 +148,17 @@ List the PRD's revision history (from issue edit history if available) and flag 
 
 ## Output format for the calling agent
 
-After publishing the comment, return:
+After publishing the comment, return the canonical **GENERATOR trailer** (per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c and the "Output-shape standard" section of CLAUDE.md), as a fenced code block at the end of the terminal report:
 
 ```
-QA_PLAN_URL: <URL of the QA plan comment>
+RESULT: SUCCESS | STOPPED | INVALID_INPUT
+REASON: <one sentence — e.g., "ready-for-human-qa — all acceptance criteria covered" or "needs-more-implementation — 2 user stories lack matching closed issues">
+ARTIFACTS: <URL of the posted QA plan comment>
 COVERAGE_GAPS: <count of user stories without acceptance tests>
-RECOMMENDATION: ready-for-human-qa | needs-more-implementation
 ```
+
+**Canonical mapping note (for future maintainers).** This trailer replaces the prior `QA_PLAN_URL / COVERAGE_GAPS / RECOMMENDATION` shape with semantic content preserved:
+
+- `QA_PLAN_URL` → **`ARTIFACTS`** (the URL is the canonical "artifact this skill produced").
+- `RECOMMENDATION` (`ready-for-human-qa` / `needs-more-implementation`) **collapses into `REASON`** — on `RESULT: SUCCESS`, the REASON value begins with the prior RECOMMENDATION token followed by a short justification (e.g., `ready-for-human-qa — all 11 acceptance criteria covered`). On `RESULT: STOPPED` (e.g., implementation incomplete) or `RESULT: INVALID_INPUT` (e.g., PRD has no acceptance criteria), REASON describes the halt cause directly.
+- `COVERAGE_GAPS` is preserved as a **permitted per-agent extension** (appended after `ARTIFACTS`) — its semantic (how many user stories lack acceptance tests) is unique to `qa-plan` and `/ship` or future orchestrators may consume it; collapsing it into `ARTIFACTS` or `REASON` would lose that signal.

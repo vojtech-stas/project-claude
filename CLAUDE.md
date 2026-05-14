@@ -156,6 +156,67 @@ A good slice is:
 
 If a planned slice feels too big → split it. If it's a one-liner (typo) → use the trivial lane (I3) and skip the ceremony.
 
+**Methodology depth** (canonical home of the slicing methodology overview, per [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D2):
+
+- **Hamburger method (Gojko Adzic).** A good slice is *vertical* — it cuts through every layer (schema, logic, UI, test) even if crudely. **Slice 1 of any PRD must satisfy this.** Horizontal layering ("build all the modules first, wire them up later") is the anti-pattern; reject it at slicing time.
+- **SPIDR vocabulary (Mike Cohn)** for split-fallback hints when a slice approaches the LoC cap: **S**pike (research/learning slice), **P**ath (different user paths), **I**nterface (split by interface/CLI/API), **D**ata (different data variations), **R**ules (different business rules). For our agent-workflow domain, **S, I, R** are most applicable (no end-user paths; no rich data variation). Path and Data rarely fit; deferred per ADR-0005 D2.
+- **Lawrence's story-splitting flowchart.** Full decision tree at https://www.humanizingwork.com/the-humanizing-work-guide-to-splitting-user-stories/ — referenced externally; not inlined in `slicer.md` (per ADR-0005 Alt-G rejection).
+- **Cascade-doc check** (slicer responsibility, per [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3). For each candidate decomposition, identify files that *should* be updated to reflect the new feature even when not strictly required by acceptance criteria — `README.md`, `CLAUDE.md` Map rows, ADR index rows, downstream docs. Add a slice (or merge into an existing slice) to cover each identified cascade-doc. The `slicer-critic`'s rubric includes a matching "Cascade-docs identified and covered" criterion.
+
+The actionable application of hamburger + SPIDR + cascade-doc check lives in [`.claude/agents/slicer.md`](.claude/agents/slicer.md) (operational); the overview above is the cross-agent reference (per ADR-0005 D2).
+
+---
+
+## Output-shape standard for subagents and output-emitting skills
+
+Per [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1 (canonical home), subagents and output-emitting skills conform to canonical output shapes so cross-agent consumers (`/ship`, future orchestrators) can parse returns via a shared schema and so critic verdict bodies converge across the four critics.
+
+**Scope.** The 4 critics — `reviewer`, `prd-critic`, `adr-critic`, `slicer-critic` — emit the verdict template + CRITIC trailer below. The output-emitting generators — `slicer`, `qa-plan`, `ship` (and the "Final approved decomposition" output of `slicer-critic`) — emit the GENERATOR trailer below; their bodies remain domain-shaped (per ADR-0005 D1c).
+
+### Verdict template (required for the 4 critics)
+
+The critic's emitted output body has **5 required sections, in order**:
+
+1. **Header** — `## <critic-name> verdict: [APPROVE | BLOCK] (round N/3)`
+2. **Subject of review** — 2–4 sentences. What is being judged. The critic's restated spec contract.
+3. **Rubric** — each criterion: PASS/FAIL + reason. Per-rule line items; numbered.
+4. **Findings** — on BLOCK: numbered itemized list, mechanically-actionable (rule + section + diagnosis + concrete fix). On APPROVE: `None.`
+5. **Summary** — one paragraph. The synthesis the human reads first.
+
+Then the **CRITIC trailer** (below).
+
+**Permitted critic-specific extensions**, appended *after* Summary, *before* the trailer: Recommendations (non-blocking), Scoring matrix (`slicer-critic`), Tiebreak path, Final approved decomposition (`slicer-critic`), Merge status (`reviewer`). Extensions are named in the critic's own body file; this section does not enumerate them.
+
+### CRITIC trailer field schema
+
+Fenced code block at the end of the verdict output:
+
+```
+VERDICT: APPROVE | BLOCK
+REASON: <one sentence>
+ROUND: <N>/<max>
+# On BLOCK additionally:
+FAILED_RULES: <comma-separated rule IDs>
+FINDINGS_COUNT: <integer>
+# On round-max BLOCK additionally:
+ESCALATE: needs-human
+```
+
+### GENERATOR trailer field schema
+
+Fenced code block at the end of the generator output:
+
+```
+RESULT: SUCCESS | STOPPED | INVALID_INPUT
+REASON: <one sentence>
+ARTIFACTS: <URLs or paths, comma-separated>
+# Per-agent extensions follow (e.g., COVERAGE_GAPS, MERGE_STATUS, SLICE_COUNT)
+```
+
+**Rule.** Generator output **bodies are NOT standardized** (per ADR-0005 D1c) — each generator's body shape serves its domain (decompositions for `slicer`, test plans for `qa-plan`, chain reports for `ship`). Only the trailer is canonical.
+
+See [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1 for the canonical specification and rationale; D4 records the bootstrap-mode rollout (each subagent/skill file becomes canonical at the moment its alignment slice merges).
+
 ---
 
 ## Pipeline operational logic

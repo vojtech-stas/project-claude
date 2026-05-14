@@ -78,14 +78,16 @@ The Solution sketch's slice-1 guidance (or the slice ordering implied) is a thin
 
 ## Output format
 
+Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and CLAUDE.md "Output-shape standard for subagents and output-emitting skills". 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
+
 Post your verdict either:
 - as a comment on the PRD issue via `gh pr comment` / `gh issue comment` if the PRD is already posted, OR
 - back to the calling agent inline if the PRD is still a draft.
 
 ```markdown
-## prd-critic verdict: **[BLOCK | APPROVE]** (round <N>/3)
+## prd-critic verdict: **[APPROVE | BLOCK]** (round <N>/3)
 
-### Understood PRD intent
+### Subject of review
 <2-4 sentences. What is this PRD trying to ship? Drawn from Problem + Goal + Solution sketch. This is the spec contract you are judging against.>
 
 ### Rubric
@@ -99,40 +101,53 @@ Post your verdict either:
 - [PASS/FAIL] 8. Scope discipline
 - [PASS/FAIL] 9. Walking-skeleton coherence
 
-### Findings (if BLOCK)
-<Numbered list. Each item: rule number + section reference + 1-2 sentence diagnosis + concrete fix. The generator must be able to mechanically apply each fix without re-asking the critic.>
-
-### Recommendations (non-blocking)
-<Optional. ≤5 bullets.>
+### Findings
+<On BLOCK: numbered list. Each item: rule number + section reference + 1-2 sentence diagnosis + concrete fix. The generator must be able to mechanically apply each fix without re-asking the critic.
+On APPROVE: "None.">
 
 ### Summary
 <One paragraph. If APPROVE: state PRD is publishable; the generator posts it. If BLOCK: name the top reason and what to revise.>
+
+### Recommendations (non-blocking)
+<Optional. ≤5 bullets. Permitted critic-specific extension per ADR-0005 D1; appears after Summary, before the trailer.>
+
+<CRITIC trailer — see below>
 ```
 
 ---
 
-## After posting the verdict
+## After posting the verdict — CRITIC trailer
 
-### If APPROVE
-Return to the calling agent:
+The trailer is the canonical CRITIC trailer per ADR-0005 D1b. Append as a fenced code block immediately after the verdict body.
+
+### On APPROVE
 ```
 VERDICT: APPROVE
 REASON: <one sentence>
-ROUND: <N>
+ROUND: <N>/3
 ```
 The generator publishes the PRD (and any drafted ADRs).
 
-### If BLOCK
-Return:
+### On BLOCK
 ```
 VERDICT: BLOCK
 REASON: <one sentence>
+ROUND: <N>/3
 FAILED_RULES: <comma-separated rule numbers, e.g. "2,5,7">
-ROUND: <N>
 FINDINGS_COUNT: <integer>
 ```
 
-**Round-3 escalation.** If this is round 3 and you would still BLOCK, include in your verdict a clear `@vojtech-stas` mention and the line `ESCALATE: needs-human`. The calling agent applies the `needs-human` label to the draft (or to the posted PRD issue if already posted) and posts a summary comment on the parent grill-session context per PRD #3 I5. This matches the escalation surface used by `slicer-critic` and `reviewer`.
+### On round-max BLOCK (round 3 BLOCK)
+Add an `ESCALATE` line to the BLOCK trailer:
+```
+VERDICT: BLOCK
+REASON: <one sentence>
+ROUND: 3/3
+FAILED_RULES: <comma-separated rule numbers>
+FINDINGS_COUNT: <integer>
+ESCALATE: needs-human
+```
+Also include a clear `@vojtech-stas` mention in the verdict body. The calling agent applies the `needs-human` label to the draft (or to the posted PRD issue if already posted) and posts a summary comment on the parent grill-session context per PRD #3 I5. This matches the escalation surface used by `slicer-critic` and `reviewer`.
 
 ---
 

@@ -124,6 +124,8 @@ On APPROVE: "None.">
 ### Recommendations (non-blocking)
 <Optional. ≤5 bullets. Permitted critic-specific extension per ADR-0005 D1; appears after Summary, before the trailer.>
 
+**ADR Open-question → backlog issue recommendation (per ADR-0006 D4).** When ADR Open questions surface during review that warrant future-PRD tracking, recommend creating a `backlog`-labeled GitHub Issue. Non-blocking.
+
 <CRITIC trailer — see below>
 ```
 

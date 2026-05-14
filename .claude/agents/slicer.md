@@ -96,6 +96,10 @@ For each candidate decomposition, identify files that should be updated to refle
 
 When no cascade-docs are identified for a decomposition, state so explicitly in the cross-decomposition summary (e.g., `Cascade-docs: none identified — feature is internal-only`). The `slicer-critic` rubric includes a matching "Cascade-docs identified and covered" criterion; missing this check is a WARN or FAIL depending on the cascade-doc's load-bearing weight.
 
+### Deferred-item → backlog issue (per ADR-0006 D4)
+
+When a decomposition explicitly defers an item to a future PRD (e.g., "Item X deferred"), create a `backlog`-labeled GitHub Issue capturing the item, the PRD context where it surfaced, and optionally a link to a motivating ADR section. Avoid double-write: if the deferred item is already recorded in an ADR Future-direction section, the backlog issue may simply link back rather than duplicate the rationale.
+
 ---
 
 ## Output format

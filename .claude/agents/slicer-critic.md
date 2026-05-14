@@ -73,6 +73,10 @@ The slicer (or calling agent) returns a revised version of the SAME decompositio
 
 You get exactly one revision. The decision is locked in by ADR-0003 D3.
 
+### Recommendations (non-blocking)
+
+**WARN-flagged → backlog issue recommendation (per ADR-0006 D4).** When WARN-flagging an item for follow-up (criterion 9 cascade-doc check or any other WARN), the critic recommends a `backlog`-labeled issue be created if the follow-up isn't already tracked. The recommendation is **non-blocking** — it informs the human or the next agent; it does not gate APPROVE.
+
 ---
 
 ## Output format

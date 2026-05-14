@@ -106,6 +106,8 @@ The PRD listed these as out-of-scope. Confirm they are NOT in the shipped code:
 
 [List of user stories from the PRD that lack a clear acceptance test, OR closed issues whose acceptance criteria you couldn't map to a runnable test. If none, write "No coverage gaps."]
 
+**PRD-close backlog sweep (per [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D4).** At PRD close, the qa-plan skill reviews the QA plan's "Coverage gaps" and "Recommendation" sections for items that warrant `backlog`-labeled GitHub Issues. Coverage gaps that look like deferred work, or recommendations that point to future PRD candidates, are good backlog candidates. Create `gh issue create --label backlog --title "..." --body "..."` for each. **Discretionary**, not mandatory.
+
 ## Reviewer subagent verdict history
 
 [Brief summary: how many PRs were reviewed for this PRD, how many BLOCK rounds occurred, any patterns worth surfacing to the human.]

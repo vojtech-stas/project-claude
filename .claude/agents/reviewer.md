@@ -235,6 +235,8 @@ Subjective items. Leave a recommendation in your comment but APPROVE the PR.
 - Performance optimizations that aren't critical
 - Spelling, grammar in non-user-facing text
 
+**Non-blocking follow-ups → backlog issue (per [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4).** When non-blocking recommendations during a PR review represent meaningful follow-ups (not just nitpicks or style preferences), the reviewer may capture them as `backlog`-labeled GitHub Issues (`gh issue create --label backlog --title "..." --body "..."`). **Discretionary**, not a hard-block rule. Lives in the Recommendations section of the verdict comment; surfaced for human/orchestrator awareness but does not gate APPROVE.
+
 ---
 
 ## Output format

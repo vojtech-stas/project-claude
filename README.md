@@ -29,12 +29,13 @@ No `feature` label, no `slice-N-foo` branch names. Branches use Conventional Com
 
 ## Adversarial critics
 
-Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. Four critics ship today:
+Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. Five critics ship today:
 
 - **`prd-critic`** — gates PRD drafts.
 - **`adr-critic`** — gates ADR drafts. Per [ADR-0004](decisions/0004-bypass-prevention.md) D1, when a macro-ADR is drafted alongside a PRD, `prd-critic` and `adr-critic` run as a **joint-APPROVE gate** — both must APPROVE before `/to-prd` posts.
 - **`slicer-critic`** — picks best of N=3 slicer decompositions, then iterates.
 - **`reviewer`** — gates every PR; auto-merges on APPROVE, returns to implementer on BLOCK, escalates with `needs-human` on round-3 BLOCK.
+- **`glossary-critic`** — gates additions to the two-tier glossary (see "Shared vocabulary" below). Added per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5.
 
 The loop convention (generator proposes → critic challenges against explicit rubric → generator revises → ≤3 rounds → APPROVE or escalate) is the canonical pattern from [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2.
 
@@ -50,7 +51,7 @@ The workflow is no longer "discipline-only convention" — these three layers en
 
 ## Output-shape standard
 
-The four critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform to a canonical output shape defined in [CLAUDE.md](CLAUDE.md) — see the **"Output-shape standard for subagents and output-emitting skills"** section there for the canonical verdict template and the CRITIC / GENERATOR trailer schemas. Templates are not restated here (DRY per [CLAUDE.md](CLAUDE.md) rule #9). Rationale lives in [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1.
+The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform to a canonical output shape defined in [CLAUDE.md](CLAUDE.md) — see the **"Output-shape standard for subagents and output-emitting skills"** section there for the canonical verdict template and the CRITIC / GENERATOR trailer schemas. Templates are not restated here (DRY per [CLAUDE.md](CLAUDE.md) rule #9). Rationale lives in [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1.
 
 ## Use it
 
@@ -67,9 +68,18 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 
 - **[CLAUDE.md](CLAUDE.md)** — project rules, auto-loaded by Claude Code every session. Canonical home for the cross-cutting rules, hierarchy, slicing methodology overview, and output-shape standard.
 - **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
-- **[`decisions/`](decisions/)** — Architecture Decision Records. Five ADRs ship today; see [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
+- **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
+
+## Shared vocabulary
+
+Per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md), the project anchors load-bearing terms (e.g., *slice*, *critic*, *trivial*, *PRD*) in a **two-tier glossary** so agents and humans share the same definitions:
+
+- **Key-zone** — `## Glossary (key terms)` inside [CLAUDE.md](CLAUDE.md), auto-loaded by Claude Code on every session. Capped at ~25 entries.
+- **Long-tail** — [`GLOSSARY.md`](GLOSSARY.md) at repo root, read on-demand for less-frequent terms.
+
+To add a term, run **`/glossary-add`** — it interviews you for the entry shape (definition, scope category, authority) and gates the addition through the `glossary-critic` subagent before opening a trivial-lane PR.
 
 ## Status
 

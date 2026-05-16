@@ -86,6 +86,86 @@ Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary
   - *Scope:* (b) external standard adopted
   - *Authority:* [`GLOSSARY.md`](GLOSSARY.md)
   - *See also:* SPIDR; walking-skeleton
+- **ADR** — an Architecture Decision Record stored as `decisions/NNNN-<slug>.md`, immutable after acceptance and superseded by a new ADR rather than edited in place.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D8
+  - *See also:* supersession; bootstrap-mode
+- **backlog** — the forward-looking work queue of `backlog`-labeled GitHub Issues plus the Backlog column on project board #2, holding queued ideas not yet ready for full PRD grilling.
+  - *Scope:* (c) common word with narrowed meaning here
+  - *Authority:* [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D1
+  - *See also:* PRD; session
+- **bootstrap-mode** — the policy that new conventions bind FORWARD from the slice that ships them, with no retroactive sweep across pre-existing artifacts.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D2
+  - *See also:* ADR
+- **cascade-doc check** — the slicer's responsibility to identify docs (README, CLAUDE.md Map rows, ADR index rows) that *should* update to reflect a new feature even when not strictly required by acceptance criteria, and add or fold a slice to cover them.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3
+  - *See also:* slice
+- **Conventional Commits** — the `<type>(<optional scope>): <subject>` commit-message format (types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`) applied here with a lowercase subject, ≤72-char cap, and a `Co-authored-by:` trailer on agent commits.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* https://www.conventionalcommits.org/en/v1.0.0/
+  - *See also:* trivial lane
+- **critic** — a subagent whose sole job is adversarial scope/quality audit of another stage's output, emitting an APPROVE/BLOCK verdict in the canonical 5-section template; never edits artifacts directly.
+  - *Scope:* (c) common word with narrowed meaning here
+  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2
+  - *See also:* subagent; joint-APPROVE gate; CRITIC trailer
+- **CRITIC trailer** — the canonical fenced field-schema block (`VERDICT`, `REASON`, `ROUND`, optional `FAILED_RULES`/`FINDINGS_COUNT`/`ESCALATE`) appended at the end of every critic verdict so consumers can parse it programmatically.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
+  - *See also:* GENERATOR trailer; critic
+- **GENERATOR trailer** — the canonical fenced field-schema block (`RESULT`, `REASON`, `ARTIFACTS`, plus per-agent extensions) appended at the end of every output-emitting generator's output (`slicer`, `qa-plan`, `ship`).
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
+  - *See also:* CRITIC trailer
+- **INVEST** — Bill Wake's six-property check for a well-formed user story (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the shape criterion for a slice.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
+  - *See also:* slice; SPIDR
+- **joint-APPROVE gate** — the rule that when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts anything.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D1
+  - *See also:* critic; ADR
+- **R-CLOSES** — the reviewer rule that every slice PR's body must contain a `Closes #<n>` line pointing to a valid `slice`-labeled issue (with exemptions for `trivial`/`prd` PRs against issues of the matching tier).
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) rule 10
+  - *See also:* R-LOC; R-META; slice
+- **R-LOC** — the reviewer rule that caps a slice PR's diff at ≤300 LoC of runtime-artifact code (canonical definition of "runtime artifact" lives in `reviewer.md`).
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) rule 9
+  - *See also:* R-CLOSES; R-META; slice
+- **R-META** — the reviewer rule that NEW ADR files (`decisions/NNNN-*.md`) must show subagent provenance via a `Closes #N` link to a `slice`/`prd` issue OR a `Co-Authored-By: Claude` commit trailer, enforcing main-agent meta-output discipline.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D4
+  - *See also:* R-LOC; R-CLOSES; ADR
+- **session** — a single Claude Code conversation in this repo (auto-loaded with `CLAUDE.md` on start), reconstructed by new sessions from live state — `git log`, `gh issue list`, project board — rather than a formal handoff document.
+  - *Scope:* (c) common word with narrowed meaning here
+  - *Authority:* [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D2
+  - *See also:* backlog
+- **slice** — a single INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), completable in one PR with ≤300 LoC runtime-artifact diff; the middle tier of the PRD → Slice → PR hierarchy.
+  - *Scope:* (c) common word with narrowed meaning here
+  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
+  - *See also:* PRD; INVEST; trivial lane; R-LOC
+- **SPIDR** — Mike Cohn's five split-fallback techniques (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules) used here as split hints when a slice approaches the LoC cap, with S/I/R most applicable to this agent-workflow domain.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D2
+  - *See also:* slice; hamburger method; INVEST
+- **subagent** — a specialist agent invoked via the `Agent` tool with its own model, restricted tool set, and isolated context window, defined under `.claude/agents/<name>.md`.
+  - *Scope:* (c) common word with narrowed meaning here
+  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D6
+  - *See also:* critic; skill
+- **trivial lane** — the fast-path workflow (I3) for PRs ≤10 LoC of runtime-artifact diff with no behavior change: branch `hotfix/<short-summary>`, label `trivial`, no PRD/slice ceremony.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
+  - *See also:* slice; Conventional Commits
+- **walking-skeleton** — the practice of shipping the smallest possible end-to-end version of the whole pipeline first and then iterating on the weakest stage, rather than perfecting each primitive in isolation.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D10
+  - *See also:* YAGNI; hamburger method
+- **YAGNI** — "You Aren't Gonna Need It"; the rule #1 cross-cutting practice that no code is added outside the current slice's scope, enforced by the reviewer.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D12
+  - *See also:* slice; walking-skeleton
 
 ---
 

@@ -40,6 +40,17 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 **Milestones** are reserved for **Releases** (groups of merged PRDs). Not in use yet — left empty until the first release ships.
 
+### Issue-title naming convention
+
+Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D5:
+
+- **Posted PRDs** follow the canonical `PRD: <one-line feature summary>` form (every issue from #3 onward).
+- **Backlog issue titles** are descriptive only — a short noun phrase that names what the item IS. No codename prefixes (`PRD-C —`), no topical classifiers (`PRD-qa-automation:`).
+- **Session codenames** (PRD-A, PRD-B, PRD-C, PRD-D, …) are conversation/transcript shortcuts only; they never appear in tracked artifact titles.
+- On promotion `backlog` → `prd`, the title is rewritten into the canonical `PRD:` form.
+
+Rationale: codename-prefixed titles in `backlog` pre-bias candidate selection (they read as "this WILL be next" rather than "this is a candidate"). The backlog must function as a neutral pool from which `/grill-me` picks based on current priorities. Binds forward per ADR-0008 D8; no retroactive sweep beyond the 2026-05-16 cleanup of #47 and #57.
+
 ---
 
 ## Workflow improvements I1–I5
@@ -52,6 +63,10 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 - **I4 — Slice size cap & staleness.** Slice PRs cap at **≤300 LoC of runtime-artifact diff**. The canonical definition of "runtime artifact" lives in [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) (rule R-LOC) — do not restate it here. A slice issue open >7 days is marked stale by the reviewer.
 - **I5 — Escalation surface.** On round-3 BLOCK, the reviewer applies the `needs-human` label to the PR AND posts a comment on the parent PRD issue summarizing the stuck slice. Humans run `gh pr list --label needs-human` at session start to find what's waiting on them.
 
+### Meta-rule: critic count cap
+
+Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the project currently runs **6 critics** (`reviewer`, `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic`). Promoting a **7th critic requires a new ADR that explicitly justifies why an existing critic's rubric cannot absorb the concern**. The default disposition for future critic-shaped problems is "extend an existing critic"; net-new subagents are the exception, not the rule.
+
 ---
 
 ## Map — where things live
@@ -62,6 +77,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | `cat .claude/skills/ship/SKILL.md` |
 | Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
 | adr-critic subagent (gates ADR drafts) | `.claude/agents/adr-critic.md` | `cat .claude/agents/adr-critic.md` |
+| Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |

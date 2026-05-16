@@ -15,6 +15,8 @@ The middle is glued together by one command: **`/ship`**. After `/grill-me`, you
 
 **Forward queue.** Future-PRD ideas live as `backlog`-labeled GitHub Issues + a "Backlog" column on the project board (per [ADR-0006](decisions/0006-backlog-and-session-continuity.md)). Browse with `gh issue list --label backlog`. Promotion to a PRD: `gh issue edit <N> --remove-label backlog --add-label prd` + `/grill-me #<N>`.
 
+**Captured → backlog autopilot.** Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md), any agent that surfaces a deferred-work idea writes it as a `captured`-labeled issue and invokes the [`/promote-to-backlog`](.claude/skills/promote-to-backlog/SKILL.md) skill inline. The [`backlog-critic`](.claude/agents/backlog-critic.md) subagent gates the promotion against a 4-criterion rubric (actionable / scoped / not duplicate / clear); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier as a graveyard for lazy human review (default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4).
+
 **Session continuity.** New Claude Code sessions reconstruct state from live state (`git log`, `gh issue list`, `gh pr list`, project board) — no formal handoff document. See the "Session continuity" section in [CLAUDE.md](CLAUDE.md) for the canonical procedure.
 
 ## Hierarchy — PRD → Slice → PR
@@ -58,9 +60,11 @@ The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform
 ```bash
 git clone https://github.com/vojtech-stas/project-claude my-new-project
 cd my-new-project
-.githooks/install.sh   # one-time: enable the pre-commit hook
+./bootstrap.sh         # one-time: labels, git hooks, branch protection (idempotent)
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented
 ```
+
+[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6: it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, and applies branch protection R1+R2 to `main`. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
 
 Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous pipeline, `/qa-plan` to verify when the last slice merges.
 
@@ -69,6 +73,7 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 - **[CLAUDE.md](CLAUDE.md)** — project rules, auto-loaded by Claude Code every session. Canonical home for the cross-cutting rules, hierarchy, slicing methodology overview, and output-shape standard.
 - **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
 - **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
+- **[`bootstrap.sh`](bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
 

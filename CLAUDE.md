@@ -69,6 +69,22 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | Current work in flight | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Recent activity | git history | `git log --oneline -20` |
 | Forward-looking work queue (backlog) | `gh issue list --label backlog` + Backlog column on project board #2 | — |
+| Long-tail glossary (on-demand) | [`GLOSSARY.md`](GLOSSARY.md) at repo root | `cat GLOSSARY.md` |
+
+---
+
+## Glossary (key terms)
+
+Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D1. Capped at ~25 entries; the long-tail lives in [`GLOSSARY.md`](GLOSSARY.md) and is read on-demand. Each entry follows the canonical shape from [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 (term + one-sentence definition + authority + see-also). To add a term, run `/glossary-add`; [`glossary-critic`](.claude/agents/glossary-critic.md) gates each addition.
+
+- **PRD** — a feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`, with the 6-section template (Problem / Goal / Non-goals / Appetite / Solution sketch / Rabbit-holes & Open questions); the top tier of the PRD → Slice → PR hierarchy.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
+  - *See also:* slice; PR
+- **hamburger method** — see [`GLOSSARY.md`](GLOSSARY.md) for the long-tail entry (vertical-slicing technique attributed to Gojko Adzic).
+  - *Scope:* (b) external standard adopted
+  - *Authority:* [`GLOSSARY.md`](GLOSSARY.md)
+  - *See also:* SPIDR; walking-skeleton
 
 ---
 

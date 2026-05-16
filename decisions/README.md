@@ -54,3 +54,4 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0004](0004-bypass-prevention.md) | Bypass prevention — workflow enforcement, adr-critic, and meta-output discipline | Accepted |
 | [0005](0005-output-shape-and-slicing-methodology.md) | Output-shape standard for subagents + slicing methodology depth | Accepted |
 | [0006](0006-backlog-and-session-continuity.md) | Backlog queue + session continuity (live-state reconstruction, no formal handoff) | Accepted |
+| [0007](0007-vocabulary-glossary-and-grill-me-extension.md) | Universal vocabulary mechanism — two-tier glossary + /grill-me extension | Accepted |

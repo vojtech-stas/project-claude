@@ -69,6 +69,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 | Current work in flight | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Recent activity | git history | `git log --oneline -20` |
 | Forward-looking work queue (backlog) | `gh issue list --label backlog` + Backlog column on project board #2 | — |
+| Captured tier (autopilot pre-backlog) | `gh issue list --label captured` + Captured column on project board #2 | — |
 | Long-tail glossary (on-demand) | [`GLOSSARY.md`](GLOSSARY.md) at repo root | `cat GLOSSARY.md` |
 
 ---
@@ -270,6 +271,9 @@ See [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md). Invoked via `Age
 
 ### How to write a QA plan — ✓ available
 See [`.claude/skills/qa-plan/SKILL.md`](.claude/skills/qa-plan/SKILL.md). Invoke when all GitHub issues for a PRD have been merged. Generates a structured acceptance-test checklist as a comment on the PRD issue. The human runs the tests and marks pass/fail. **This is the terminal human checkpoint** in the autonomous pipeline per ADR-0003 D4.
+
+### How to promote a captured item to the curated backlog — ✓ available
+See [`.claude/skills/promote-to-backlog/SKILL.md`](.claude/skills/promote-to-backlog/SKILL.md) and the [`backlog-critic`](.claude/agents/backlog-critic.md) subagent. Invoked inline by whatever agent just ran `gh issue create --label captured` (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3). `backlog-critic` evaluates the captured item against the 4-criterion rubric (actionable / scoped / not duplicate / clear, default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier for lazy user review. Critic fires **once** per item — no ≤3-round loop and no `needs-human` escalation in autopilot mode (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2).
 
 ### Session continuity — how new sessions resume
 

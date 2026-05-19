@@ -77,6 +77,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | `cat .claude/skills/ship/SKILL.md` |
 | Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
 | adr-critic subagent (gates ADR drafts) | `.claude/agents/adr-critic.md` | `cat .claude/agents/adr-critic.md` |
+| implementer subagent (slice → PR; auto-invoked by `/ship` stage 4) | `.claude/agents/implementer.md` | `cat .claude/agents/implementer.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
@@ -342,7 +343,7 @@ The HOW for each pipeline stage. Per [ADR-0003](decisions/0003-autonomous-pipeli
 See [`.claude/skills/grill-me/SKILL.md`](.claude/skills/grill-me/SKILL.md). Invoked via `/grill-me` or natural-language match. Interviews user one question at a time, recommends an answer for each, walks the decision tree.
 
 ### How to ship a PRD end-to-end — ✓ available
-See [`.claude/skills/ship/SKILL.md`](.claude/skills/ship/SKILL.md). Invoked via `/ship` after `/grill-me`. The orchestrator chains `to-prd → prd-critic → slicer → slicer-critic → gh issue create` for PRD and sub-issues. Single human command per feature after the grill session.
+See [`.claude/skills/ship/SKILL.md`](.claude/skills/ship/SKILL.md). Invoked via `/ship` after `/grill-me`. The orchestrator chains `to-prd → prd-critic → slicer → slicer-critic → gh issue create` for PRD and sub-issues, then auto-dispatches `implementer → reviewer → auto-merge` per slice in DAG-aware parallel batches at stage 4 (per [ADR-0010](decisions/0010-implementer-subagent-auto-pipeline.md) D2/D3). Single human command per feature after the grill session; `/qa-plan` is the only remaining human checkpoint.
 
 ### How to write a PRD — ✓ available
 See [`.claude/skills/to-prd/SKILL.md`](.claude/skills/to-prd/SKILL.md) — **canonical home of the 6-section PRD template** (Problem / Goal / Non-goals / Appetite / Solution sketch / Rabbit-holes & Open questions). The skill invokes [`.claude/agents/prd-critic.md`](.claude/agents/prd-critic.md) in a ≤3-round APPROVE/BLOCK loop before posting, and drafts any warranted macro-ADRs alongside the PRD per ADR-0003 D8. Normally invoked indirectly via `/ship`.
@@ -359,8 +360,8 @@ Will be a `researcher` subagent with restricted tools (read + WebFetch only). Re
 ### How to prototype — ⏳ future
 Will be N parallel `prototyper` subagents, each trying a different approach in isolation. Main agent picks the winner.
 
-### How to implement (TDD red → green → refactor) — ⏳ future
-Will be the `tdd` skill (Matt's) + `implementer` subagent (cheap model, isolated context per issue).
+### How to implement a slice — ✓ available
+See [`.claude/agents/implementer.md`](.claude/agents/implementer.md). Auto-invoked by the `/ship` orchestrator at stage 4 once `slicer-critic` has posted the slice sub-issues (per [ADR-0010](decisions/0010-implementer-subagent-auto-pipeline.md) D2). For each slice, `implementer` reads the slice body + parent PRD + relevant ADRs, claims the slice (I2), creates a branch per CLAUDE.md naming, implements within scope, commits per Conventional Commits, and opens a PR with `Closes #<slice>`; `reviewer` (per ADR-0010 D8) is its adversarial critic and auto-merges on APPROVE per [ADR-0002](decisions/0002-autonomous-merge-policy.md). `/ship` dispatches ready slices in DAG-aware parallel batches (per ADR-0010 D3); forward-block failure handling per ADR-0010 D4. Tool boundaries per ADR-0010 D6 (Read/Edit/Write/Bash/Glob/Grep; NOT Agent). TDD (Matt's `tdd` skill) is a future enhancement layered atop this subagent.
 
 ### How to review a PR — ✓ available
 See [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md). Invoked via `Agent` tool with `subagent_type: "reviewer"`. Reads PR body + diff + CLAUDE.md + ADRs + linked issues. Posts a structured verdict comment. On APPROVE → auto-merges via `gh pr merge --squash --delete-branch`. On BLOCK → returns PR to the implementer. Enforces I4 (LoC cap), I5 (escalation), and `Closes #<slice-issue>` per ADR-0002 / ADR-0003.

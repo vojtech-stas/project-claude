@@ -33,17 +33,20 @@ No arguments. The skill globs `.claude/agents/*.md`, applies the rubric per file
 
 Each entry: `ID | scope | check | literal grep pattern`. The grep pattern is what the skill executes (case-sensitive, extended-regex where `-E` is shown). When a pattern fails to match in the target file → FAIL for that check; when it matches → PASS.
 
+**Optional `excludes:` schema field (per-check allowlist).** A check declaration MAY include an optional `excludes:` field whose value is a comma-separated list of subagent filenames (e.g., `excludes: backlog-critic.md`). When the audit runner processes a check whose `excludes:` list contains the current subagent's filename, the result for that `(subagent, check)` pair is rendered as `N/A (excluded per rubric)` in the report instead of `FAIL`/`PASS`, and the pair is omitted from the FAIL enumeration in the Summary section. Backward-compatible: checks without an `excludes:` field behave exactly as today. Each `excludes:` entry MUST be accompanied by a brief inline rationale citing the authoritative ADR/source so a future reader understands WHY the exception exists (not just THAT it exists). Per-check allowlist is the principled mechanism for the narrow class of subagents whose domain semantics legitimately conflict with an otherwise-correct mechanical check (e.g., `backlog-critic.md` legitimately mentioning the `backlog` label because its domain IS the backlog tier).
+
 - **ALL-1** — `scope: all` — Frontmatter present (`name`, `description`, `tools`, `model` fields in the leading YAML block).
   Pattern: `grep -cE "^(name|description|tools|model):" <file>` ≥ `4` → PASS. Source: ADR-0001 D6.
 
 - **ALL-2** — `scope: all` — "Tool boundaries" section heading present.
   Pattern: `grep -cE "^#+\s*Tool boundaries" <file>` ≥ `1` → PASS. Source: ADR-0001 D6.
 
-- **ALL-3** — `scope: all` — "References" section heading present.
-  Pattern: `grep -cE "^#+\s*References" <file>` ≥ `1` → PASS. Source: convention across 8 subagents.
+- **ALL-3** — `scope: all` — "References" / "Related" / "See also" / "Cross-refs" section heading present (case-insensitive; any of these enumerated heading variants satisfies the check).
+  Pattern: `grep -ciE "^#+\s*.*(References|Related|See also|Cross-refs)" <file>` ≥ `1` → PASS. Source: convention across 8 subagents. (Pattern broadened from the original literal `^#+\s*References` after PR #96 dogfood showed 7/8 subagents FAILing because the convention is "any heading-shaped cross-link section", not the exact word "References".)
 
 - **ALL-4** — `scope: all` — Surfacing-convention prose uses `captured`-label, NOT `backlog`-label (the #93 drift detector).
   Pattern: file contains the surfacing-drift idiom — either ``\`backlog\`-labeled`` prose or `--label backlog` literal → FAIL (drift detected); absent → PASS. Equivalently: ``grep -cE "(\\\`backlog\\\`-labeled|--label backlog)" <file>`` == `0` → PASS. Source: ADR-0008 D8 + ADR-0009 D2. (Default-conservative per skill prompt: if a match appears anywhere in the file — including inside example/quoted blocks — FAIL; the cost of a spurious FAIL is one user-glance; the cost of a missed real drift is the #93 failure mode itself.)
+  `excludes: backlog-critic.md` — rationale: `backlog-critic.md`'s domain IS the backlog tier per ADR-0008 D2, so it legitimately mentions ``\`backlog\`-labeled`` in prose without being the drift idiom this check detects. The mechanical grep has no way to distinguish "this file's subject IS the backlog label" from "this file is using the backlog label as the surfacing idiom (the drift)".
 
 - **ALL-5** — `scope: all` — "Mandatory reading order" OR "When invoked" section heading present.
   Pattern: `grep -cE "^#+\s*(Mandatory reading order|When invoked)" <file>` ≥ `1` → PASS. Source: convention across 8 subagents.
@@ -53,6 +56,7 @@ Each entry: `ID | scope | check | literal grep pattern`. The grep pattern is wha
 
 - **CRIT-2** — `scope: critic` — Adversarial mindset block present ("paranoid" OR "Adversarial mindset" literal string).
   Pattern: `grep -cE "(paranoid|Adversarial mindset)" <file>` ≥ `1` → PASS. Source: ADR-0009 D4.
+  `excludes: backlog-critic.md` — rationale: ADR-0009 D4 deliberately excluded `backlog-critic` from the mindset rollout because its single-fire autopilot semantics (per ADR-0008 D2) differ from the ≤3-round critics that received the mindset block. Codifying the exception here matches the ADR-0009 D4 table; flagging `backlog-critic.md` as a CRIT-2 FAIL would contradict the explicit ADR decision.
 
 - **CRIT-3** — `scope: critic` — CRITIC trailer spec present (`VERDICT:`, `REASON:`, `ROUND:` fields in a fenced block).
   Pattern: all three of `grep -cF "VERDICT:" <file>` ≥ `1` AND `grep -cF "REASON:" <file>` ≥ `1` AND `grep -cF "ROUND:" <file>` ≥ `1` → PASS. Source: ADR-0005 D1b.
@@ -63,11 +67,18 @@ Each entry: `ID | scope | check | literal grep pattern`. The grep pattern is wha
 - **GEN-1** — `scope: generator` — GENERATOR trailer spec present (`RESULT:`, `REASON:`, `ARTIFACTS:` fields in a fenced block).
   Pattern: all three of `grep -cF "RESULT:" <file>` ≥ `1` AND `grep -cF "REASON:" <file>` ≥ `1` AND `grep -cF "ARTIFACTS:" <file>` ≥ `1` → PASS. Source: ADR-0005 D1c.
 
-**Coverage arithmetic** (per ADR-0011 D4): 5 scope-`all` × 8 subagents + 4 scope-`critic` × 6 critics + 1 scope-`generator` × 2 generators = 40 + 24 + 2 = **66 check evaluations** per audit run.
+**Coverage arithmetic** (per ADR-0011 D4): 5 scope-`all` × 8 subagents + 4 scope-`critic` × 6 critics + 1 scope-`generator` × 2 generators = 40 + 24 + 2 = baseline 66 evaluations; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`. (The 2 excluded pairs render as `N/A (excluded per rubric)` and are omitted from FAIL counts.)
 
 ## Report template
 
-Print one Markdown H2 per subagent, then a per-file table whose columns are exactly the applicable check IDs. Use `PASS` / `FAIL` / `—` (em-dash for not-applicable). End with a Summary section enumerating every FAIL by `(file, check ID)`.
+Print one Markdown H2 per subagent, then a per-file table whose columns are exactly the applicable check IDs. Use one of three rendering tokens per cell:
+
+- `PASS` — grep pattern matched (or, for ALL-4, did NOT match the drift idiom).
+- `FAIL` — check failed against the file.
+- `N/A (excluded per rubric)` — the check's `excludes:` list contains this subagent's filename; the runner skips evaluation and renders this token instead of PASS/FAIL. Per-check exclusions are codified in the Rubric section above (currently: CRIT-2 and ALL-4 both exclude `backlog-critic.md`).
+- `—` — em-dash for scope-not-applicable (e.g., critic-only checks against a generator file).
+
+End with a Summary section enumerating every FAIL by `(file, check ID)`. Excluded pairs do NOT appear in the FAIL list; they are visible only in the per-subagent table as `N/A (excluded per rubric)`.
 
 ```
 # /audit-subagents report — <YYYY-MM-DD>
@@ -77,6 +88,12 @@ Print one Markdown H2 per subagent, then a per-file table whose columns are exac
 | ALL-1 | ALL-2 | ALL-3 | ALL-4 | ALL-5 | CRIT-1 | CRIT-2 | CRIT-3 | CRIT-4 | GEN-1 |
 |---|---|---|---|---|---|---|---|---|---|
 | PASS | PASS | PASS | FAIL | PASS | PASS | PASS | PASS | PASS | — |
+
+## backlog-critic.md (critic)
+
+| ALL-1 | ALL-2 | ALL-3 | ALL-4 | ALL-5 | CRIT-1 | CRIT-2 | CRIT-3 | CRIT-4 | GEN-1 |
+|---|---|---|---|---|---|---|---|---|---|
+| PASS | PASS | PASS | N/A (excluded per rubric) | PASS | PASS | N/A (excluded per rubric) | PASS | PASS | — |
 
 ## slicer.md (generator)
 
@@ -89,11 +106,11 @@ Print one Markdown H2 per subagent, then a per-file table whose columns are exac
 ## Summary
 
 - Total subagents audited: <N>
-- Total check evaluations: 66 (5 all × N_all + 4 critic × N_critic + 1 generator × N_generator)
+- Total check evaluations: baseline 66; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md` (the 2 excluded pairs render as `N/A (excluded per rubric)` and are omitted from FAIL counts).
 - FAILs:
   - `slicer.md` ALL-4
   - `adr-critic.md` ALL-4
-  - ... (one bullet per FAIL)
+  - ... (one bullet per FAIL; excluded pairs are NOT listed here)
 - Capture status of each FAIL: cross-reference to existing `gh issue list --label captured` / `--label backlog` results so the user can spot duplicates of known drift (e.g., backlog #93 owns the captured-vs-backlog drift family).
 ```
 
@@ -108,7 +125,7 @@ RESULT: SUCCESS | STOPPED | INVALID_INPUT
 REASON: <one sentence — e.g., "audited 8 subagents, 5 FAILs (all ALL-4, duplicates of backlog #93)">
 ARTIFACTS: <path to report if persisted, else "stdout">
 SUBAGENTS_AUDITED: <integer>
-CHECK_EVALUATIONS: <integer; expected 66 at slice-1 baseline>
+CHECK_EVALUATIONS: <integer; baseline 66, effective 64 with current CRIT-2 + ALL-4 exclusions of backlog-critic.md>
 FAIL_COUNT: <integer>
 ```
 

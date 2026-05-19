@@ -128,7 +128,7 @@ On APPROVE: "None.">
 ### Recommendations (non-blocking)
 <Optional. ≤5 bullets. Permitted critic-specific extension per ADR-0005 D1; appears after Summary, before the trailer.>
 
-**ADR Open-question → backlog issue recommendation (per ADR-0006 D4).** When ADR Open questions surface during review that warrant future-PRD tracking, recommend creating a `backlog`-labeled GitHub Issue. Non-blocking.
+**ADR Open-question → captured issue (per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../decisions/0009-discipline-tightening.md) D2, originating from [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4 write-convention pattern).** When ADR Open questions surface during review that warrant future-PRD tracking, you MUST create a `captured`-labeled GitHub Issue and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 inline-firing convention. Mandatory per CLAUDE.md rule #11.
 
 <CRITIC trailer — see below>
 ```

@@ -45,16 +45,17 @@ to-issues --------------- stage 3: slice decomposition
 gh issue create (slices) side-effect: one sub-issue per slice with label `slice`
    |
    v
-implementer (per slice) - stage 4a: slice → PR (FILLED slice 1 of PRD #80;
-   |                       sequential mode only; parallel/DAG is slice 2)
+implementer (per batch) - stage 4a: slice → PR (FILLED slices 1-2 of PRD #80;
+   |                       DAG-aware parallel batches for ≥2 slices,
+   |                       sequential fallback for single-slice PRDs)
    v
 reviewer (per slice) ---- stage 4b: PR audit + auto-merge on APPROVE
    |                       (existing flow per ADR-0002)
    v
-all slices merged
+all slices merged (or forward-blocked downstream of a needs-human slice)
 ```
 
-Stage 4 (implementer + reviewer per slice) is **filled** (in sequential mode) per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D2/D5. Stage 5 (`qa-plan`) remains the terminal human checkpoint per ADR-0003 D4 and is out of `/ship`'s scope.
+Stage 4 (implementer + reviewer per slice) is **filled** per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D2 (sequential, slice 1 of PRD #80) and D3/D4 (parallel/DAG batching + forward-block, slice 2 of PRD #80). Stage 5 (`qa-plan`) remains the terminal human checkpoint per ADR-0003 D4 and is out of `/ship`'s scope.
 
 ## Step-by-step procedure for the invoking agent
 
@@ -88,15 +89,29 @@ When the user invokes `/ship`:
    - On APPROVE: hand the `Final approved decomposition` to `/to-issues` for posting (one `gh issue create` per slice, labelled `slice`, in dependency order).
    - On BLOCK: surface the critic's blocking reasons to the user. Do NOT post slices. The autonomous pipeline halts here for this run; re-running `/ship` re-grills the slicer pair.
 
-7. **Stage 4 — implementer + reviewer (sequential per slice; FILLED slice 1 of PRD #80).**
-   - For each posted slice in **dependency order** (read each slice's `Depends on` field; topologically sort; ties broken by issue number ascending):
-     - Invoke the `implementer` subagent via the `Agent` tool with `subagent_type: "implementer"`, passing the slice issue number. (If the subagent isn't auto-discovered yet, fallback to `general-purpose` with the implementer prompt loaded inline from `.claude/agents/implementer.md`.)
-     - Wait for the implementer's GENERATOR trailer per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D7:
-       - **`RESULT: SUCCESS`** → PR is open with `Closes #<slice>`. Reviewer takes over per the existing ADR-0002 flow (reviewer is the gate; on APPROVE it auto-merges via `gh pr merge --squash --delete-branch`; on round-3 BLOCK it applies `needs-human` and surfaces). The orchestrator continues to the next slice once the merge lands (or once the reviewer's verdict comment is posted, for slices whose downstream peers don't depend on this one).
-       - **`RESULT: BLOCKED`** → apply the `needs-human` label to slice #<N>, comment the parent PRD with a one-paragraph stuck-slice summary (mirrors reviewer's I5 surface), and **skip downstream slices that depend on this slice** (forward-block — per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4 walking-skeleton mode is also forward-block; only the parallel-batch in-flight semantics defer to slice 2 of PRD #80). Slices with OTHER unmet deps proceed normally through their natural sequential turn.
-       - **`RESULT: INVALID_INPUT`** → same forward-block handling as BLOCKED; the slice is malformed and will not be retried.
-   - **Sequential only.** Parallel/DAG batching is slice 2 of PRD #80 per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D5. The walking-skeleton ships sequential to keep slice 1 under the R-LOC cap.
-   - Collect each `PR_URL` returned for the terminal report.
+7. **Stage 4 — implementer + reviewer (DAG-aware parallel batches; FILLED slices 1-2 of PRD #80).**
+
+   **7a. Build the dependency graph.** For each posted slice, parse its `## Depends on` section (slicer-critic-verified per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D3's DAG check). Extract referenced slice issue numbers; build a directed graph (slice → its deps). Topologically sort the graph; ties between same-rank slices are broken by issue number ascending. If the parse fails or the graph has a cycle (slicer-critic should have prevented this), STOP and surface to user as `RESULT: INVALID_INPUT` in the terminal trailer — do NOT invoke any implementers.
+
+   **7b. Dispatch loop (DAG batching per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D3).** Maintain four sets: `pending` (all posted slices), `in_flight` (implementer running or PR open under reviewer), `merged` (PR merged via reviewer APPROVE), `blocked` (slice itself failed via BLOCKED/INVALID_INPUT, OR an upstream dep is in `blocked`). Loop:
+     1. Compute the **ready batch**: every slice in `pending` whose `Depends on` set is a subset of `merged` (all deps merged) AND has no dep in `blocked`. Slices with a dep in `blocked` move from `pending` directly to `blocked` (forward-block — see 7d). Slices with deps still in `in_flight` stay in `pending`.
+     2. **Dispatch the ready batch in parallel.** For each slice in the ready batch, invoke the `implementer` subagent via the `Agent` tool with `subagent_type: "implementer"`, passing the slice issue number. (If the subagent isn't auto-discovered, fallback to `general-purpose` with the implementer prompt loaded inline from `.claude/agents/implementer.md`.) Move each to `in_flight`. **Single-slice PRDs trivially have batch size 1** — the parallel path reduces to the sequential path naturally; no separate code path needed.
+     3. **Await batch completion.** Collect each implementer's GENERATOR trailer per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D7 plus the reviewer's downstream verdict for each `RESULT: SUCCESS` PR. Handle each per 7c.
+     4. Loop until `pending` and `in_flight` are both empty.
+
+   **7c. Per-slice outcome handling.** For each slice that completes within a batch:
+     - **`RESULT: SUCCESS`** → PR is open with `Closes #<slice>`. Reviewer takes over per the existing ADR-0002 flow (reviewer is the gate; on APPROVE it auto-merges via `gh pr merge --squash --delete-branch`; on round-3 BLOCK it applies `needs-human` and surfaces). On reviewer APPROVE+merge → move slice from `in_flight` to `merged`. On reviewer round-3 BLOCK → treat as forward-block per 7d (the slice is now `needs-human`-labeled and its downstream must not proceed).
+     - **`RESULT: BLOCKED`** → forward-block per 7d.
+     - **`RESULT: INVALID_INPUT`** → forward-block per 7d. The slice is malformed and will not be retried.
+
+   **7d. Forward-block failure handling (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4).** When a slice fails (BLOCKED, INVALID_INPUT, or reviewer round-3 BLOCK):
+     1. Apply `needs-human` label to the failed slice: `gh issue edit <N> --add-label needs-human` (skip if reviewer already applied it on round-3 BLOCK — `gh` will no-op).
+     2. Compute the transitive downstream set: every slice in `pending` whose dep chain includes the failed slice. Move them all from `pending` to `blocked` (they stay open indefinitely — orchestrator does not retry, does not close).
+     3. Post a summary comment on the parent PRD issue (one comment per failure event, not per blocked slice): `gh issue comment <PRD-N> --body "slice #<N> blocked: <reason from trailer>; downstream slices blocked: [#<M>, #<L>, ...]"`. Mirrors reviewer's I5 surface.
+     4. **In-flight parallel siblings finish normally** — do NOT cancel them. The dispatch loop's next iteration awaits their completion; their PRs proceed to reviewer per the normal path. This honors ADR-0010 D4's "in-flight parallel slices finish normally" semantics.
+     5. **Slices with OTHER unmet deps proceed normally** through their natural batches once those deps merge. Failure is locally contained to the failed slice's downstream cone.
+
+   **7e. Collect terminal state.** For the terminal report (step 8), capture: each `PR_URL` from SUCCESS slices (whether merged or under-review), the `blocked` set (for `BLOCKED_SLICES`), and the snapshot of `in_flight` at the moment the FIRST failure was observed (for `IN_FLIGHT_AT_FAILURE` — empty if no failures occurred).
 
 8. **Report back to the user.**
    - Print the PRD issue URL, the list of slice issue URLs, and the list of merged-or-open implementation PR URLs.
@@ -106,13 +121,15 @@ When the user invokes `/ship`:
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT
-   REASON: <one sentence — e.g., "PRD posted with N slice sub-issues; M implementation PRs merged" or "prd-critic round-3 BLOCK; pipeline halted" or "no grilled context to ship">
+   REASON: <one sentence — e.g., "PRD posted with N slice sub-issues; M implementation PRs merged" or "prd-critic round-3 BLOCK; pipeline halted" or "no grilled context to ship" or "PRD posted; K slices merged, J slices forward-blocked by #N">
    ARTIFACTS: <PRD URL>, <slice URLs comma-separated>
    SLICE_COUNT: <N>
    IMPLEMENTATION_PRS: <comma-separated list of merged/open PR URLs returned by implementer invocations; empty if pipeline halted before stage 4>
+   BLOCKED_SLICES: <comma-separated list of slice numbers in the `blocked` set per step 7d — failed slices PLUS forward-blocked downstream; empty if no failures>
+   IN_FLIGHT_AT_FAILURE: <comma-separated list of slice numbers that were in `in_flight` at the moment the FIRST failure was observed per step 7e; empty if no failures>
    ```
 
-   `SLICE_COUNT` and `IMPLEMENTATION_PRS` are **per-agent extensions** appended after `ARTIFACTS`; consumers read them to know how many sub-issues were posted and which PRs the auto-invoked implementer produced, without re-parsing `ARTIFACTS`. On `RESULT: STOPPED` or `RESULT: INVALID_INPUT`, `ARTIFACTS` may be partial (e.g., just the PRD URL if `/to-issues` halted) or empty (e.g., no grilled context); `SLICE_COUNT` is `0`; `IMPLEMENTATION_PRS` is empty.
+   `SLICE_COUNT` and `IMPLEMENTATION_PRS` are **per-agent extensions** appended after `ARTIFACTS`; consumers read them to know how many sub-issues were posted and which PRs the auto-invoked implementer produced, without re-parsing `ARTIFACTS`. `BLOCKED_SLICES` and `IN_FLIGHT_AT_FAILURE` are **per-agent extensions added in slice 2 of PRD #80** (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4) so that human triage of forward-blocked work can find every stuck slice without crawling the PRD's sub-issue list, and so post-run audits can correlate which parallel siblings were running at the moment of failure. On `RESULT: STOPPED` or `RESULT: INVALID_INPUT`, `ARTIFACTS` may be partial (e.g., just the PRD URL if `/to-issues` halted) or empty (e.g., no grilled context); `SLICE_COUNT` is `0`; `IMPLEMENTATION_PRS` is empty; `BLOCKED_SLICES` and `IN_FLIGHT_AT_FAILURE` are empty (no implementer ever ran).
 
 ## Hooks — what future slices fill in
 
@@ -134,8 +151,11 @@ Listed here so future contributors don't sneak them in (CLAUDE.md rule #1, YAGNI
 - No edits to `to-prd` or `to-issues` skill bodies (separate slices).
 - No edits to `reviewer.md` (separate slice — adds I4/I5 enforcement and `Closes #N`).
 - No edits to `CLAUDE.md` (separate slice — 3-tier hierarchy, branch naming, PRD template).
-- No resumability from a failed stage. If a stage fails, the user re-runs `/ship` from scratch or invokes the failing stage's skill manually. (Rabbit-hole per PRD #3 §6.)
-- No PARALLEL/DAG batching of implementer invocations (that's slice 2 of PRD #80 per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D5). No CI-driven implementer invocation (PRD-CI future per backlog #63).
+- No resumability from a failed stage. If a stage fails (stages 2/2.5/3/3.5/3.6 — i.e., PRD authoring or slice decomposition), the user re-runs `/ship` from scratch or invokes the failing stage's skill manually. (Rabbit-hole per PRD #3 §6.) Stage 4 forward-block (per step 7d) is NOT a stage failure — it's per-slice failure handling within stage 4 and is fully autonomous.
+- No CI-driven implementer invocation (PRD-CI future per backlog #63).
+- No auto-rebase of merge conflicts between parallel sibling PRs in the same batch (deferred per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) Open Questions; slicer-critic INVEST Independence should make this rare).
+- No concurrency cap as a configurable parameter (YAGNI — default is unbounded; orchestrator dispatches all ready slices).
+- No cancellation of in-flight parallel siblings when one slice fails (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4 — in-flight siblings finish normally).
 - No daemon, no merge-queue integration. (PRD #3 §3 non-goals.)
 
 ## References
@@ -143,7 +163,7 @@ Listed here so future contributors don't sneak them in (CLAUDE.md rule #1, YAGNI
 - PRD #3 — *Autonomous multi-stage pipeline with adversarial critics* (the spec this skill implements).
 - This slice's issue: #4 — *slice 1: ship orchestrator skeleton (walking skeleton)*.
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (five-stage pipeline), D4 (no human gates between stages — closed end-to-end by ADR-0010), D6 (skills vs subagents), D7 (`/ship` orchestrator skill, lightweight v1).
-- [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) — D2 (/ship auto-invokes implementer), D4 (forward-block failure handling), D5 (sequential walking-skeleton; parallel in slice 2 of PRD #80).
+- [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) — D2 (/ship auto-invokes implementer), D3 (parallel-where-independent DAG batching — slice 2 of PRD #80, step 7a/7b), D4 (forward-block failure handling — step 7d), D5 (sequential walking-skeleton; parallel slice 2 — now both filled).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — the autonomous loop pattern this pipeline generalizes; reviewer's auto-merge on APPROVE is the handoff target after implementer SUCCESS.
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md).
 - Subagent invoked at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md) (auto-invoked by step 7 above per ADR-0010 D2).

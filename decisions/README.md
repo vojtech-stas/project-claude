@@ -56,3 +56,4 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0006](0006-backlog-and-session-continuity.md) | Backlog queue + session continuity (live-state reconstruction, no formal handoff) | Accepted |
 | [0007](0007-vocabulary-glossary-and-grill-me-extension.md) | Universal vocabulary mechanism — two-tier glossary + /grill-me extension | Accepted |
 | [0008](0008-workflow-autolog-bootstrap-and-naming.md) | Workflow polish — auto-log captured→backlog autopilot + bootstrap.sh + naming convention | Accepted |
+| [0010](0010-implementer-subagent-auto-pipeline.md) | Implementer subagent + /ship auto-invoke closes ADR-0003 D4's autonomy gap | Accepted |

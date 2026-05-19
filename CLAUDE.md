@@ -75,8 +75,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 |---|---|---|
 | Pipeline skills | `.claude/skills/<name>/SKILL.md` | `ls .claude/skills/` |
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | `cat .claude/skills/ship/SKILL.md` |
-| Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
-| adr-critic subagent (gates ADR drafts) | `.claude/agents/adr-critic.md` | `cat .claude/agents/adr-critic.md` |
+| Subagents (full list via `ls`) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
 | implementer subagent (slice → PR; auto-invoked by `/ship` stage 4) | `.claude/agents/implementer.md` | `cat .claude/agents/implementer.md` |
 | `/audit-subagents` skill (periodic subagent-prompt quality audit per [ADR-0011](decisions/0011-subagent-quality-framework.md)) | `.claude/skills/audit-subagents/SKILL.md` | `cat .claude/skills/audit-subagents/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |

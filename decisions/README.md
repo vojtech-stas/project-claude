@@ -55,5 +55,6 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0005](0005-output-shape-and-slicing-methodology.md) | Output-shape standard for subagents + slicing methodology depth | Accepted |
 | [0006](0006-backlog-and-session-continuity.md) | Backlog queue + session continuity (live-state reconstruction, no formal handoff) | Accepted |
 | [0007](0007-vocabulary-glossary-and-grill-me-extension.md) | Universal vocabulary mechanism — two-tier glossary + /grill-me extension | Accepted |
-| [0008](0008-workflow-autolog-bootstrap-and-naming.md) | Workflow polish — auto-log captured→backlog autopilot + bootstrap.sh + naming convention | Accepted |
+| [0008](0008-workflow-autolog-bootstrap-and-naming.md) | Workflow polish — auto-log captured→backlog autopilot + bootstrap.sh + naming convention | Accepted (D2 asymmetric-default-BLOCK generalized to all critics by [0009](0009-discipline-tightening.md) D3) |
+| [0009](0009-discipline-tightening.md) | Discipline tightening — universal rule #10, mandatory rule #11, asymmetric-default-BLOCK + distinct mindsets across all critics | Accepted (supersedes [0004](0004-bypass-prevention.md) D4 and [0006](0006-backlog-and-session-continuity.md) D4) |
 | [0010](0010-implementer-subagent-auto-pipeline.md) | Implementer subagent + /ship auto-invoke closes ADR-0003 D4's autonomy gap | Accepted |

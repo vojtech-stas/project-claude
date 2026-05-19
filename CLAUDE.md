@@ -78,6 +78,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | Subagents (reviewer, slicer, slicer-critic, prd-critic) | `.claude/agents/<name>.md` | `ls .claude/agents/` |
 | adr-critic subagent (gates ADR drafts) | `.claude/agents/adr-critic.md` | `cat .claude/agents/adr-critic.md` |
 | implementer subagent (slice → PR; auto-invoked by `/ship` stage 4) | `.claude/agents/implementer.md` | `cat .claude/agents/implementer.md` |
+| `/audit-subagents` skill (periodic subagent-prompt quality audit per [ADR-0011](decisions/0011-subagent-quality-framework.md)) | `.claude/skills/audit-subagents/SKILL.md` | `cat .claude/skills/audit-subagents/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
@@ -368,6 +369,9 @@ See [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md). Invoked via `Age
 
 ### How to write a QA plan — ✓ available
 See [`.claude/skills/qa-plan/SKILL.md`](.claude/skills/qa-plan/SKILL.md). Invoke when all GitHub issues for a PRD have been merged. Generates a structured acceptance-test checklist as a comment on the PRD issue. The human runs the tests and marks pass/fail. **This is the terminal human checkpoint** in the autonomous pipeline per ADR-0003 D4.
+
+### How to audit subagents — ✓ available
+See [`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md). Invoked via `/audit-subagents` (no-args). The skill globs `.claude/agents/*.md`, classifies each as critic (filename ends `-critic.md` OR is `reviewer.md`) or generator, and applies the 10-check `scope`-tagged grep rubric (ALL-1..5 + CRIT-1..4 + GEN-1 per [ADR-0011](decisions/0011-subagent-quality-framework.md) D4) — 66 check evaluations per run at the current 6-critic + 2-generator baseline. Emits a single Markdown PASS/FAIL report to stdout followed by the canonical GENERATOR trailer per ADR-0005 D1c. Advisory output only — no auto-capture, no PR opened, no critic gate; the user reads the report and captures real drift findings per CLAUDE.md rule #11. Non-recursive per [ADR-0011](decisions/0011-subagent-quality-framework.md) D8: the skill does not audit itself.
 
 ### How to promote a captured item to the curated backlog — ✓ available
 See [`.claude/skills/promote-to-backlog/SKILL.md`](.claude/skills/promote-to-backlog/SKILL.md) and the [`backlog-critic`](.claude/agents/backlog-critic.md) subagent. Invoked inline by whatever agent just ran `gh issue create --label captured` (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3). `backlog-critic` evaluates the captured item against the 4-criterion rubric (actionable / scoped / not duplicate / clear, default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier for lazy user review. Critic fires **once** per item — no ≤3-round loop and no `needs-human` escalation in autopilot mode (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2).

@@ -46,11 +46,14 @@ gh issue create (slices) side-effect: one sub-issue per slice with label `slice`
    |
    v
 implementer (per batch) - stage 4a: slice → PR (FILLED slices 1-2 of PRD #80;
-   |                       DAG-aware parallel batches for ≥2 slices,
-   |                       sequential fallback for single-slice PRDs)
+   |                       DAG-aware parallel batches for ≥2 independent slices,
+   |                       sequential fallback for single-slice PRDs or
+   |                       fully-chained dep graphs)
    v
 reviewer (per slice) ---- stage 4b: PR audit + auto-merge on APPROVE
-   |                       (existing flow per ADR-0002)
+   |                       (gh pr merge --squash --delete-branch per ADR-0002;
+   |                        round-3 BLOCK applies needs-human + forward-blocks
+   |                        downstream slices per ADR-0010 D4)
    v
 all slices merged (or forward-blocked downstream of a needs-human slice)
 ```

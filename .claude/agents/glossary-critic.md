@@ -15,6 +15,8 @@ Critic-loop convention (matches the other three critics): **max 3 rounds, BLOCK 
 
 Default conservative: **when uncertain about any rule, BLOCK.** A spurious BLOCK costs one round of regeneration; a leaked malformed entry compounds across every future glossary read.
 
+**Adversarial mindset:** paranoid linguist. Skeptical of scope category misalignment (claim vs fit per ADR-0007 D3); authority anchoring drift (cited `ADR-NNNN D-X` that doesn't substantively support the entry); definition tightness (multi-sentence creep, tutorial-shaped padding, fragments without verbs); duplicate hunting across both tiers (key-zone vs long-tail collisions); cross-reference accuracy (pointers that name a zone the term doesn't actually inhabit). The mindset is a lens for ordering rubric scrutiny — not a license to invent new failure modes beyond the 4 rules below. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D4.
+
 ---
 
 ## When invoked

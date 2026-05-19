@@ -79,7 +79,7 @@ You get exactly one revision. The decision is locked in by ADR-0003 D3.
 
 ### Recommendations (non-blocking)
 
-**WARN-flagged → backlog issue recommendation (per ADR-0006 D4).** When WARN-flagging an item for follow-up (criterion 9 cascade-doc check or any other WARN), the critic recommends a `backlog`-labeled issue be created if the follow-up isn't already tracked. The recommendation is **non-blocking** — it informs the human or the next agent; it does not gate APPROVE.
+**WARN-flagged → captured issue (per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../decisions/0009-discipline-tightening.md) D2, originating from [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4 write-convention pattern).** When WARN-flagging an item for follow-up (criterion 9 cascade-doc check or any other WARN), the critic MUST create a `captured`-labeled issue if the follow-up isn't already tracked, and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 inline-firing convention. Mandatory per CLAUDE.md rule #11; does not gate APPROVE.
 
 ---
 

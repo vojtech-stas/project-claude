@@ -241,7 +241,7 @@ Subjective items. Leave a recommendation in your comment but APPROVE the PR.
 - Performance optimizations that aren't critical
 - Spelling, grammar in non-user-facing text
 
-**Non-blocking follow-ups → backlog issue (per [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4).** When non-blocking recommendations during a PR review represent meaningful follow-ups (not just nitpicks or style preferences), the reviewer may capture them as `backlog`-labeled GitHub Issues (`gh issue create --label backlog --title "..." --body "..."`). **Discretionary**, not a hard-block rule. Lives in the Recommendations section of the verdict comment; surfaced for human/orchestrator awareness but does not gate APPROVE.
+**Non-blocking follow-ups → captured issue (per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../decisions/0009-discipline-tightening.md) D2, originating from [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4 write-convention pattern).** When non-blocking recommendations during a PR review represent meaningful follow-ups (not just nitpicks or style preferences), the reviewer MUST capture them as `captured`-labeled GitHub Issues (`gh issue create --label captured --title "..." --body "..."`) and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 inline-firing convention. **Mandatory** per CLAUDE.md rule #11; the autopilot's `backlog-critic` decides quality downstream, not the reviewer. Lives in the Recommendations section of the verdict comment; surfaced for human/orchestrator awareness but does not gate APPROVE.
 
 ---
 

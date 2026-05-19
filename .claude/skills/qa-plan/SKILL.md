@@ -106,7 +106,7 @@ The PRD listed these as out-of-scope. Confirm they are NOT in the shipped code:
 
 [List of user stories from the PRD that lack a clear acceptance test, OR closed issues whose acceptance criteria you couldn't map to a runnable test. If none, write "No coverage gaps."]
 
-**PRD-close backlog sweep (per [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D4).** At PRD close, the qa-plan skill reviews the QA plan's "Coverage gaps" and "Recommendation" sections for items that warrant `backlog`-labeled GitHub Issues. Coverage gaps that look like deferred work, or recommendations that point to future PRD candidates, are good backlog candidates. Create `gh issue create --label backlog --title "..." --body "..."` for each. **Discretionary**, not mandatory.
+**PRD-close captured sweep (per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../../decisions/0009-discipline-tightening.md) D2, originating from [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D4 write-convention pattern).** At PRD close, the qa-plan skill reviews the QA plan's "Coverage gaps" and "Recommendation" sections for items that warrant `captured`-labeled GitHub Issues. Coverage gaps that look like deferred work, or recommendations that point to future PRD candidates, MUST be captured. Create `gh issue create --label captured --title "..." --body "..."` for each, and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 inline-firing convention. **Mandatory** per CLAUDE.md rule #11; the autopilot's `backlog-critic` decides quality downstream.
 
 ## Reviewer subagent verdict history
 

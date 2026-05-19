@@ -77,6 +77,10 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
 
+## Subagent-quality maintenance
+
+Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies a 10-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (skill ownership, not a 7th critic). Invoke periodically or after merging a convention-changing ADR.
+
 ## Shared vocabulary
 
 Per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md), the project anchors load-bearing terms (e.g., *slice*, *critic*, *trivial*, *PRD*) in a **two-tier glossary** so agents and humans share the same definitions:

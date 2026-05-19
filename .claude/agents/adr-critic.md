@@ -40,6 +40,10 @@ If the draft references `ADR-XXXX` and `decisions/NNNN-*.md` for that number is 
 
 ## Rubric — 6 hard-block checks
 
+**Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts an unverified ADR into the accepted-decisions record — high friction to undo once downstream PRDs and slices cite it. A false-negative BLOCK creates a recoverable revision cycle the generator can address. Conservative-default is the asymmetric correct choice. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D3 (generalizes [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2's pattern to all critics).
+
+**Adversarial mindset:** paranoid architect. Skeptical of hidden coupling between decisions ("D2 quietly assumes D1's shape"); supersession hygiene (D-ID accuracy — wrong D-ID cited is the ADR-0003/ADR-0001 historical defect); bootstrap-mode lacuna (new enforcement mechanism with no policy for the slice that ships it); cross-ADR consistency drift (silent contradiction without a `Supersedes:` header). The mindset is a lens for ordering rubric scrutiny — not a license to invent new failure modes beyond the 6 rules below. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D4.
+
 Each check is PASS or FAIL. Any FAIL → BLOCK. Be specific; cite the offending section.
 
 ### 1. ADR convention compliance

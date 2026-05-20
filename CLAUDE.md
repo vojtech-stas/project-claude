@@ -87,22 +87,17 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | Recent activity | git history | `git log --oneline -20` |
 | Forward-looking work queue (backlog) | `gh issue list --label backlog` + Backlog column on project board #2 | — |
 | Captured tier (autopilot pre-backlog) | `gh issue list --label captured` + Captured column on project board #2 | — |
-| Long-tail glossary (on-demand) | [`GLOSSARY.md`](GLOSSARY.md) at repo root | `cat GLOSSARY.md` |
 
 ---
 
 ## Glossary (key terms)
 
-Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D1. Capped at ~25 entries; the long-tail lives in [`GLOSSARY.md`](GLOSSARY.md) and is read on-demand. Each entry follows the canonical shape from [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 (term + one-sentence definition + authority + see-also). To add a term, run `/glossary-add`; [`glossary-critic`](.claude/agents/glossary-critic.md) gates each addition.
+Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D1 (single-tier consolidation per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D1). Soft cap ~35 entries (per ADR-0012 D5). Each entry follows the canonical shape from [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 (term + one-sentence definition + authority + see-also). To add a term, run `/glossary-add`; [`glossary-critic`](.claude/agents/glossary-critic.md) gates each addition against the 5-rule rubric (including ADR-0012 D2's ≥3-citations-across-≥2-directories inclusion threshold).
 
 - **PRD** — a feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`, with the 6-section template (Problem / Goal / Non-goals / Appetite / Solution sketch / Rabbit-holes & Open questions); the top tier of the PRD → Slice → PR hierarchy.
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
   - *See also:* slice; PR
-- **hamburger method** — see [`GLOSSARY.md`](GLOSSARY.md) for the long-tail entry (vertical-slicing technique attributed to Gojko Adzic).
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [`GLOSSARY.md`](GLOSSARY.md)
-  - *See also:* SPIDR; walking-skeleton
 - **ADR** — an Architecture Decision Record stored as `decisions/NNNN-<slug>.md`, immutable after acceptance and superseded by a new ADR rather than edited in place.
   - *Scope:* (b) external standard adopted
   - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D8
@@ -135,6 +130,10 @@ Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
   - *See also:* CRITIC trailer
+- **hamburger method** — a vertical-slicing technique that decomposes a feature into thin end-to-end slices cutting through every layer (schema, logic, UI, test) rather than building one horizontal layer at a time.
+  - *Scope:* (b) external standard adopted
+  - *Authority:* https://gojko.net/2012/05/01/the-hamburger-method/
+  - *See also:* SPIDR; walking-skeleton; slice
 - **INVEST** — Bill Wake's six-property check for a well-formed user story (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the shape criterion for a slice.
   - *Scope:* (b) external standard adopted
   - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1

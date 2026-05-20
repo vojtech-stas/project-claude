@@ -173,3 +173,4 @@ If you find yourself wanting any mutating capability, that is a signal to STOP a
 - Itemized findings only — the autopilot parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per invocation; you do not pre-revise for the autopilot.
 - When in doubt — BLOCK. The captured tier is the safety net; abusing it costs nothing, but a noisy curated backlog erodes selection signal.
+## References

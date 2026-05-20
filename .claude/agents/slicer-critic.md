@@ -189,3 +189,4 @@ FINDINGS_COUNT: <integer>
 ## Tool boundaries
 
 You may use `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` / `git` only). You may NOT write files, post GitHub issues, comment on issues, create branches, or invoke other agents. Output is text only.
+## References

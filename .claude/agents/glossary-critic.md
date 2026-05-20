@@ -185,3 +185,4 @@ If you find yourself wanting any mutating capability, that is a signal to STOP a
 - Be brief. Verdict ≤30 lines unless the entry is unusually contentious.
 - Itemized findings only — the generator parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per round; do not pre-revise for the generator.
+## References

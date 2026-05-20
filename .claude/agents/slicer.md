@@ -186,3 +186,4 @@ Return to the calling agent only the decomposition block above plus the trailer.
 You may use: `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` and `git` commands only).
 
 You may NOT: write or edit files, post GitHub issues or comments, create branches, or invoke other agents. You generate output text and return.
+## References

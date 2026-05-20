@@ -110,7 +110,7 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every gen
 - **`adr-critic`** — gates ADR drafts. Per [ADR-0004](decisions/0004-bypass-prevention.md) D1, when a macro-ADR is drafted alongside a PRD, `prd-critic` and `adr-critic` run as a **joint-APPROVE gate** — both must APPROVE before `/to-prd` posts.
 - **`slicer-critic`** — picks best of N=3 slicer decompositions, then iterates.
 - **`reviewer`** — gates every PR; auto-merges on APPROVE, returns to implementer on BLOCK, escalates with `needs-human` on round-3 BLOCK.
-- **`glossary-critic`** — gates additions to the two-tier glossary (see "Shared vocabulary" below). Added per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5.
+- **`glossary-critic`** — gates additions to the consolidated CLAUDE.md glossary (see "Shared vocabulary" below). Added per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5; rubric updated to 5 rules per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D4.
 
 The loop convention (generator proposes → critic challenges against explicit rubric → generator revises → ≤3 rounds → APPROVE or escalate) is the canonical pattern from [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2.
 
@@ -156,12 +156,11 @@ Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts d
 
 ## Shared vocabulary
 
-Per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md), the project anchors load-bearing terms (e.g., *slice*, *critic*, *trivial*, *PRD*) in a **two-tier glossary** so agents and humans share the same definitions:
+Per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) (consolidated to single-tier per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D1), the project anchors load-bearing terms (e.g., *slice*, *critic*, *trivial*, *PRD*) in a **single-tier glossary** so agents and humans share the same definitions:
 
-- **Key-zone** — `## Glossary (key terms)` inside [CLAUDE.md](CLAUDE.md), auto-loaded by Claude Code on every session. Capped at ~25 entries.
-- **Long-tail** — [`GLOSSARY.md`](GLOSSARY.md) at repo root, read on-demand for less-frequent terms.
+- **`## Glossary` in [CLAUDE.md](CLAUDE.md)** — auto-loaded by Claude Code on every session. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5.
 
-To add a term, run **`/glossary-add`** — it interviews you for the entry shape (definition, scope category, authority) and gates the addition through the `glossary-critic` subagent before opening a trivial-lane PR.
+To add a term, run **`/glossary-add`** — it interviews you for the entry shape (definition, scope category, authority) and gates the addition through the `glossary-critic` subagent's 5-rule rubric (including ADR-0012 D2's ≥3-citations-across-≥2-directories inclusion threshold) before opening a trivial-lane PR.
 
 ## Status
 

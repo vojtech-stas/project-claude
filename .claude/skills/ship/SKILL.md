@@ -170,3 +170,13 @@ Listed here so future contributors don't sneak them in (CLAUDE.md rule #1, YAGNI
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — the autonomous loop pattern this pipeline generalizes; reviewer's auto-merge on APPROVE is the handoff target after implementer SUCCESS.
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md).
 - Subagent invoked at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md) (auto-invoked by step 7 above per ADR-0010 D2).
+
+## Local vocabulary
+
+Per [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) D1. Folded to CLAUDE.md by [`/glossary-fold`](../glossary-fold/SKILL.md) when entries pass the ADR-0012 D2 citation threshold and `glossary-critic` rubric.
+
+- **pipeline metadata footer** — the one-line `> **Pipeline metadata** — Approved by prd-critic round <N>/3...` audit trailer that `/to-prd` appends to every posted PRD body so `/ship` and downstream critics can mechanically verify upstream APPROVE without re-running the loop.
+  - *Scope:* (a) project jargon coined here
+  - *Authority:* `ADR-0003 D8`
+  - *See also:* `/to-prd`; `/ship`; prd-critic
+

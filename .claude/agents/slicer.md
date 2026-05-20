@@ -102,6 +102,18 @@ When a decomposition explicitly defers an item to a future PRD (e.g., "Item X de
 
 ---
 
+## Degenerate N detection (per [ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md) D1)
+
+**When N alternatives would produce bit-identical post-merge end-state** (same files, same LoC, same content — modulo commit ordering or trivial rewording), **declare N=1 with explicit rationale** citing the constraint that locks the decomposition (e.g., "PRD §4 locks 1 slice + fixed file list; only variation axis is commit-ordering, which `gh pr merge --squash` collapses").
+
+Three observed grounding examples: PRD #100 (single-file rubric calibration), PRD #103 (5-file mechanical swap), PRD #111 (6-file consolidation with new ADR) — all were degenerate-N=3 cases prior to this ADR.
+
+Slicer judgment is the mechanism, not a mechanical diff. You are the expert on whether your candidate alternatives would meaningfully differ. Bias toward N=3 unless certain the alternatives would have bit-identical end-state; the N=1 carveout is a precision tool, not a shortcut.
+
+When emitting N=1, the rationale field in your output must answer the three questions in ADR-0013 D3 (which PRD section locks the shape; what variation axis was rejected as non-meaningful; whether N=3 would have produced genuinely-different alternatives). The downstream `slicer-critic` verifies the rationale per D3.
+
+---
+
 ## Output format
 
 Print the following structure literally. Do not add commentary outside the fenced regions. The downstream critic parses this output by header.

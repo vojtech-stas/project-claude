@@ -50,7 +50,7 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 |---|---|---|
 | [0001](0001-foundational-design.md) | Foundational design | Accepted (D3 and D6 partially superseded by 0003; D9 superseded by 0002) |
 | [0002](0002-autonomous-merge-policy.md) | Autonomous merge policy with QA-level human checkpoint | Accepted |
-| [0003](0003-autonomous-pipeline-with-critics.md) | Autonomous multi-stage pipeline with adversarial critics | Accepted (supersession-header D-ID error, D4/D6 contradiction on `to-prd` semantics, missing bootstrap-mode policy, and undocumented implementer-stage incremental rollout corrected by [ADR-0004](0004-bypass-prevention.md) D5) |
+| [0003](0003-autonomous-pipeline-with-critics.md) | Autonomous multi-stage pipeline with adversarial critics | Accepted (supersession-header D-ID error, D4/D6 contradiction on `to-prd` semantics, missing bootstrap-mode policy, and undocumented implementer-stage incremental rollout corrected by [ADR-0004](0004-bypass-prevention.md) D5; D3 partially superseded by [ADR-0013](0013-slicer-n3-contract-refined.md) — N=3 default + N=1 degenerate-case carveout) |
 | [0004](0004-bypass-prevention.md) | Bypass prevention — workflow enforcement, adr-critic, and meta-output discipline | Accepted |
 | [0005](0005-output-shape-and-slicing-methodology.md) | Output-shape standard for subagents + slicing methodology depth | Accepted |
 | [0006](0006-backlog-and-session-continuity.md) | Backlog queue + session continuity (live-state reconstruction, no formal handoff) | Accepted |
@@ -60,3 +60,4 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0010](0010-implementer-subagent-auto-pipeline.md) | Implementer subagent + /ship auto-invoke closes ADR-0003 D4's autonomy gap | Accepted |
 | [0011](0011-subagent-quality-framework.md) | Subagent-quality framework — `/audit-subagents` skill + mechanical/grep rubric | Accepted |
 | [0012](0012-glossary-consolidation-single-tier.md) | Glossary consolidation — single-tier in CLAUDE.md (supersedes 0007 D1, partial 0007 D5) | Accepted |
+| [0013](0013-slicer-n3-contract-refined.md) | Slicer N=3 contract refined — N=1 reserved for degenerate end-state cases (partial supersession of [ADR-0003](0003-autonomous-pipeline-with-critics.md) D3) | Accepted |

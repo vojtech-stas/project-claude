@@ -19,6 +19,79 @@ The middle is glued together by one command: **`/ship`**. After `/grill-me`, you
 
 **Session continuity.** New Claude Code sessions reconstruct state from live state (`git log`, `gh issue list`, `gh pr list`, project board) — no formal handoff document. See the "Session continuity" section in [CLAUDE.md](CLAUDE.md) for the canonical procedure.
 
+## Pipeline diagram
+
+The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot) live in their own subgraph.
+
+```mermaid
+flowchart TD
+  subgraph S1["Stage 1: Idea capture"]
+    U1[User] --> GM["/grill-me"]
+    GM -->|settled design| SHIP["/ship"]
+  end
+  subgraph S2["Stage 2: PRD authoring"]
+    SHIP --> TOPRD["/to-prd"]
+    TOPRD --> PRDC[prd-critic]
+    TOPRD -.if ADR.-> ADRC[adr-critic]
+    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
+    ADRC -->|joint APPROVE| PRDISSUE
+    PRDC -.BLOCK ≤3 rounds.-> TOPRD
+    ADRC -.BLOCK ≤3 rounds.-> TOPRD
+  end
+  subgraph S3["Stage 3: Slice decomposition"]
+    PRDISSUE --> TOISSUES["/to-issues"]
+    TOISSUES --> SLICER[slicer]
+    SLICER -->|N=3 alternatives| SLICERC[slicer-critic]
+    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
+    SLICERC -.BLOCK ≤1 revision.-> SLICER
+  end
+  subgraph S4["Stage 4: Implementation"]
+    SLICEISSUES --> IMPL[implementer]
+    IMPL --> PR[(PR with Closes #N)]
+    PR --> REV[reviewer]
+    REV -->|APPROVE| MERGE[(merged on main)]
+    REV -.BLOCK ≤3 rounds.-> IMPL
+    REV -.round-3 BLOCK.-> NH[needs-human label]
+  end
+  subgraph S5["Stage 5: Acceptance"]
+    MERGE --> QA["/qa-plan"]
+    QA --> U2[User accepts PRD]
+  end
+  subgraph SS["Side workflows"]
+    AUTO["/audit-subagents"] -.periodic.- REV
+    GA["/glossary-add"] --> GC[glossary-critic]
+    GC -->|APPROVE| GAPR[(glossary PR)]
+    GAPR --> REV
+    CAP[captured issue] --> PTB["/promote-to-backlog"]
+    PTB --> BC[backlog-critic]
+    BC -->|APPROVE| BL[backlog label]
+    BC -->|BLOCK| CAPSTAY[stays in captured tier]
+  end
+  classDef human fill:#3b82f6,color:#fff
+  classDef skill fill:#14b8a6,color:#fff
+  classDef gen fill:#22c55e,color:#fff
+  classDef critic fill:#f97316,color:#fff
+  classDef reviewer fill:#ef4444,color:#fff
+  classDef artifact fill:#9ca3af,color:#fff
+  class U1,U2 human
+  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
+  class SLICER,IMPL gen
+  class PRDC,ADRC,SLICERC,GC,BC critic
+  class REV reviewer
+  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
+```
+
+### Legend
+
+| Color | Class | Node type | Examples in the diagram |
+|---|---|---|---|
+| 🟦 Blue | `human` | Human checkpoint | `User` (input at `/grill-me`, acceptance at `/qa-plan`) |
+| 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/audit-subagents`, `/promote-to-backlog`, `/glossary-add` |
+| 🟢 Green | `gen` | Generator subagent | `slicer` (N=3 decompositions), `implementer` (slice → PR) |
+| 🟧 Orange | `critic` | Adversarial critic (≤3-round loop) | `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic` |
+| 🟥 Red | `reviewer` | Auto-merge gate (per [ADR-0002](decisions/0002-autonomous-merge-policy.md)) | `reviewer` — the only critic that auto-merges on APPROVE |
+| ⬜ Gray | `artifact` | GitHub artifact | PRD issue, slice issues, PR, merged commit, `needs-human` / `backlog` labels |
+
 ## Hierarchy — PRD → Slice → PR
 
 Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-of-delivery hierarchy is exactly three tiers:

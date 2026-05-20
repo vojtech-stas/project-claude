@@ -25,6 +25,20 @@ You receive (1) the PRD (issue reference or inline body) and (2) the slicer's ou
 
 ---
 
+## N=1 acceptance (per [ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md) D2/D3)
+
+**N=1 with explicit rationale is a legal input** per ADR-0013 D1. Do NOT BLOCK on "didn't produce N=3" when the slicer has emitted a single alternative with rationale. Instead, verify the rationale answers:
+
+- What PRD section (typically §4 Appetite or §5 Solution sketch) locks the shape?
+- What variation axis was considered and rejected as non-meaningful (e.g., commit-ordering inside squash, trivial rewording)?
+- Would N=3 have produced genuinely-different alternatives, or only cosmetic variation?
+
+If the rationale is concrete on all three points, accept and score the single decomposition normally against the 9-criterion rubric below (criteria 1-9 apply identically to a single decomposition). If vague ("only one way to do it" with no PRD citation), **bias toward requesting one revision** asking for the explicit rationale before scoring (per prd-critic recommendation on PRD #116). Score-normally is a fallback for clearly-trivial single-decomposition cases only.
+
+When the slicer correctly emitted N=3 (the default for genuinely-open-shape PRDs per ADR-0003 D3 — the part not superseded by ADR-0013), score all three per the rubric below as usual.
+
+---
+
 ## Rubric — apply to EACH of the three decompositions
 
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts a flawed decomposition into the autonomous pipeline — high friction to undo after slice issues are posted and implementers grab them. A false-negative BLOCK creates a recoverable revision cycle the slicer can address. Conservative-default is the asymmetric correct choice. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D3 (generalizes [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2's pattern to all critics).

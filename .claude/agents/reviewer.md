@@ -463,3 +463,4 @@ If `gh pr merge` returns an error (status checks pending, merge conflict appeare
 - Be brief. Comments under ~30 lines unless the PR genuinely needs more.
 - Never editorialize. State the rule, the evidence, the verdict. No "I think" or "you might want to".
 - Trust the implementer's intent but verify against the rules.
+## References

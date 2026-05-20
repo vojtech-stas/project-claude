@@ -204,3 +204,4 @@ If you find yourself wanting any mutating capability, that is a signal to STOP a
 - Be brief. Verdict ≤40 lines unless the ADR is unusually long.
 - Itemized findings only — the generator parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per round; do not pre-revise for the generator.
+## References

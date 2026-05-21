@@ -124,6 +124,8 @@ Per [ADR-0004](decisions/0004-bypass-prevention.md) D3, three independent failur
 
 The workflow is no longer "discipline-only convention" — these three layers enforce it mechanically.
 
+The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). The first hook (PostToolUse on subagent edits) seeds the workflow event log substrate that PRD-β will extend.
+
 ## Output-shape standard
 
 The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform to a canonical output shape defined in [CLAUDE.md](CLAUDE.md) — see the **"Output-shape standard for subagents and output-emitting skills"** section there for the canonical verdict template and the CRITIC / GENERATOR trailer schemas. Templates are not restated here (DRY per [CLAUDE.md](CLAUDE.md) rule #9). Rationale lives in [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1.

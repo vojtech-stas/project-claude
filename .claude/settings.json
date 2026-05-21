@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then mkdir -p .claude/logs && echo \"$(date -Iseconds) $CLAUDE_FILE_PATH (edit detected; consider running /audit-subagents)\" >> .claude/logs/subagent-edits.log; fi"
+      }
+    ]
+  }
+}

@@ -22,6 +22,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 9. **DRY for docs.** Don't duplicate info. Link/point to where the canonical version lives.
 10. **Main-agent meta-output discipline.** Main agent never hand-authors ANY tracked file. All edits to tracked files flow through the PRD/slice/PR pipeline via `/to-prd`, `/to-issues`, `/ship`, an implementer Agent invocation, the trivial-lane (I3) workflow, or any other reviewer-gated PR channel. Per [ADR-0009](decisions/0009-discipline-tightening.md) D1 (supersedes [ADR-0004](decisions/0004-bypass-prevention.md) D4's enumerated-path scope).
 11. **Surface deferred work as captured issues.** Every agent MUST capture every deferred or follow-up item it encounters as a `captured`-labeled GitHub issue (per [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4 as amended forward by [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8). The autopilot's `backlog-critic` filters quality downstream per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2 — agents are not the bouncer. When in doubt about whether an item is worth capturing, capture it; the autopilot will BLOCK noise into the captured-tier graveyard where lazy human review can cull. Per [ADR-0009](decisions/0009-discipline-tightening.md) D2 (supersedes [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4's discretionary phrasing).
+12. **Claude Code hooks are logging/validation/notification only.** Per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md), Claude Code hooks are configured in `.claude/settings.json` and may log to local files, validate by exit code, or notify via stderr. Hooks may NOT auto-invoke skills or subagents (technically impossible), and they do NOT replace the `.githooks/pre-commit` server-side layer or the ADR-0008 D3 inline-firing convention — they are additive. See ADR-0015 for the scope policy.
 
 ---
 
@@ -80,7 +81,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | `/audit-subagents` skill (periodic subagent-prompt quality audit per [ADR-0011](decisions/0011-subagent-quality-framework.md)) | `.claude/skills/audit-subagents/SKILL.md` | `cat .claude/skills/audit-subagents/SKILL.md` |
 | glossary-fold skill (bulk auto-fold of skill-local vocab) | `.claude/skills/glossary-fold/SKILL.md` | `cat .claude/skills/glossary-fold/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
-| Settings, permissions, hooks | `.claude/settings.json` | `cat .claude/settings.json` (none yet) |
+| Settings, permissions, Claude Code hooks (per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md)) | `.claude/settings.json` | `cat .claude/settings.json` |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | `ls docs/prds/` (created when first PRD lands there; current PRDs live on GitHub Issues per ADR-0003 D1) |

@@ -9,6 +9,35 @@
             "command": "FILE_PATH=$(jq -r '.tool_input.file_path' </dev/stdin); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && echo \"$(date -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" >> \"$CLAUDE_PROJECT_DIR/.claude/logs/subagent-edits.log\"; fi"
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "STDIN=$(cat /dev/stdin); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"'); DESC=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' | cut -c1-100); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sub \"$SUB\" --arg desc \"$DESC\" '{ts: $ts, event: \"agent_complete\", subagent_type: $sub, description: $desc}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "STDIN=$(cat /dev/stdin); CMD=$(echo \"$STDIN\" | jq -r '.tool_input.command // \"\"' | cut -c1-200); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg cmd \"$CMD\" '{ts: $ts, event: \"bash_complete\", command: $cmd}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" '{ts: $ts, event: \"session_stop\"}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+          }
+        ]
       }
     ]
   }

@@ -87,6 +87,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | Workflow event log — JSONL of agent/bash/stop events (per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md)) | `.claude/logs/workflow-events.jsonl` (gitignored) | `tail -20 .claude/logs/workflow-events.jsonl` ; `grep '"event":"agent_complete"' .claude/logs/workflow-events.jsonl` |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
+| Best-practices KB (distilled external-content entries per [ADR-0019](decisions/0019-best-practices-kb-pattern.md)) | `docs/best-practices/<slug>-<video-id>.md` + raw `transcripts/<video-id>.vtt` | `ls docs/best-practices/` |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | `ls docs/prds/` (created when first PRD lands there; current PRDs live on GitHub Issues per ADR-0003 D1) |
 | Current work in flight | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Recent activity | git history | `git log --oneline -20` |
@@ -381,6 +382,9 @@ See [`.claude/skills/audit-meta/SKILL.md`](.claude/skills/audit-meta/SKILL.md). 
 
 ### How to fold skill-local vocabulary — ✓ available
 See [`.claude/skills/glossary-fold/SKILL.md`](.claude/skills/glossary-fold/SKILL.md). User-invokable bulk fold per [ADR-0014](decisions/0014-skill-local-vocabulary-and-auto-fold.md) D2. Scans `.claude/skills/*/SKILL.md` for `## Local vocabulary` H2 sections, runs each entry through `glossary-critic`, and opens a PR proposing qualifying entries to the consolidated CLAUDE.md glossary. Sibling skill to `/glossary-add` (single-entry interactive flow).
+
+### How to distill an authoritative video into the best-practices KB — ✓ available
+See [`.claude/skills/distill-video/SKILL.md`](.claude/skills/distill-video/SKILL.md). Invoked via `/distill-video <youtube-video-id>` per [ADR-0019](decisions/0019-best-practices-kb-pattern.md) (Phase 1 of backlog [#128](https://github.com/vojtech-stas/project-claude/issues/128)). Shells out to `yt-dlp` to fetch the raw `.vtt` into `docs/best-practices/transcripts/<id>.vtt`, then writes a distilled `.md` to `docs/best-practices/<slug>-<id>.md` with full citation back to the source. Re-runs overwrite both artifacts. Scope locked to `@claude` + `@anthropic-ai` channels per ADR-0019; no auto-cadence (manual only per ADR-0019 D6); quality validation is manual user review per ADR-0019 Alt-G (no `distill-critic` — honors [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap).
 
 ### How to promote a captured item to the curated backlog — ✓ available
 See [`.claude/skills/promote-to-backlog/SKILL.md`](.claude/skills/promote-to-backlog/SKILL.md) and the [`backlog-critic`](.claude/agents/backlog-critic.md) subagent. Invoked inline by whatever agent just ran `gh issue create --label captured` (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3). `backlog-critic` evaluates the captured item against the 4-criterion rubric (actionable / scoped / not duplicate / clear, default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier for lazy user review. Critic fires **once** per item — no ≤3-round loop and no `needs-human` escalation in autopilot mode (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2).

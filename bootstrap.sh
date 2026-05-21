@@ -282,6 +282,23 @@ else
     note "⚠ branch protection: skipped (gh not ready)"
 fi
 
+# ---- step 6: yt-dlp dep check (warn-only) ---------------------------------
+
+step 6 "yt-dlp dep check (warn-only)"
+
+# yt-dlp is required by the /distill-video skill (per ADR-0019 D3) to fetch
+# YouTube transcripts into docs/best-practices/transcripts/. We do NOT
+# auto-install it — cross-platform package-manager complexity (winget / brew /
+# pip / apt) is a rabbit-hole. Per ADR-0019 D3 + Alt-H rejection: warn-only.
+if command -v yt-dlp >/dev/null 2>&1; then
+    log "yt-dlp present: $(yt-dlp --version 2>/dev/null | head -1)"
+    note "✓ yt-dlp: present"
+else
+    warn "yt-dlp not on PATH. Required by /distill-video skill (ADR-0019 D3)."
+    warn "  Install: pip install yt-dlp  (or: winget install yt-dlp.yt-dlp on Windows; brew install yt-dlp on macOS)"
+    note "⚠ yt-dlp: missing (install for /distill-video; otherwise harmless)"
+fi
+
 # ---- end-of-run summary ---------------------------------------------------
 
 printf '\n%s ---- summary ----\n' "$TAG"

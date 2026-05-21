@@ -229,6 +229,40 @@ The override is a soft-pass, not a silent bypass: it costs the contributor one v
 
 ---
 
+## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
+
+Per [ADR-0018](../../decisions/0018-boy-scout-reviewer-rule.md). Additive to the 11 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 12th rule with its own severity discipline per D4). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (reviewer rule extension, NOT a new critic).
+
+### R-BOY-SCOUT — per-PR drift detection on audit-relevant files
+
+**Trigger:** the PR's diff touches any file matching the patterns in the table below.
+
+| Trigger pattern | Audit checks to apply |
+|---|---|
+| `.claude/agents/*.md` | /audit-subagents rubric (all 10 checks per [ADR-0011](../../decisions/0011-subagent-quality-framework.md) D4) applied to the touched files only |
+| `.claude/skills/*/SKILL.md` | /audit-meta `--structure` rubric STRUCT-1, STRUCT-2, STRUCT-7 + frontmatter shape (per [ADR-0017](../../decisions/0017-audit-meta-consolidation.md) D2) |
+| `decisions/*.md` | /audit-meta `--docs` rubric DOCS-1, DOCS-2, DOCS-7, DOCS-8 (cross-reference checks, per [ADR-0017](../../decisions/0017-audit-meta-consolidation.md) D3) |
+| `CLAUDE.md` | /audit-meta `--docs` rubric DOCS-3, DOCS-4, DOCS-5, DOCS-9, DOCS-10 |
+| `README.md` | /audit-meta `--docs` rubric DOCS-5, DOCS-6, DOCS-10 |
+
+Multiple matching paths in one PR → run all applicable rubrics; consolidate findings in the verdict's `Findings` section.
+
+**Inline-execution constraint (per ADR-0018 D3):** apply the rubric criteria INLINE using your own Bash + Grep tool access. Do NOT shell out to `/audit-subagents` or `/audit-meta` — they are session-interactive skills the reviewer cannot invoke. The rubrics are mechanical (grep-based per [ADR-0011](../../decisions/0011-subagent-quality-framework.md) D2) and self-contained; reading each touched file and running the relevant grep patterns is feasible directly.
+
+**Severity discretion (per ADR-0018 D4):** emit each R-BOY-SCOUT finding at one of two severities:
+
+- **BLOCK** when ALL of:
+  - The audit rule has zero documented false-positive cases against current main (currently *excludes* DOCS-5, DOCS-6, DOCS-7 from BLOCK eligibility per backlog [#142](https://github.com/vojtech-stas/project-claude/issues/142) calibration carve-out — those rules emit as Recommendation only until #142 ships).
+  - The fix is mechanical and small (one-line, hotfix-shape).
+  - The drift would materially impact future readers (e.g., a stale ADR D-ID reference, a known-bad pattern like `N=3` in narrative docs post-[ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md)).
+- **Recommendation** otherwise — surface in verdict but do NOT block merge; user/implementer fixes via trivial-lane post-merge.
+
+**Default-conservative-toward-REC** (per ADR-0018 D4, inverting [ADR-0009](../../decisions/0009-discipline-tightening.md) D3's hard-block default): when uncertain whether a finding meets all three BLOCK criteria, emit as Recommendation. R-BOY-SCOUT is additive defense-in-depth; the cost of a false-positive BLOCK exceeds the cost of a false-negative REC (the 11 hard-block rules remain the primary gate).
+
+**Verdict integration:** R-BOY-SCOUT findings appear as a 12th rule line in the Rubric (e.g., `[PASS] 12. R-BOY-SCOUT: no audit-relevant files touched` OR `[FAIL] 12. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)`); BLOCK-grade findings appear in `Findings` numbered with rule prefix `R-BOY-SCOUT`; Recommendation-grade findings appear in the existing Recommendations section.
+
+---
+
 ## Recommend-only criteria (do NOT block; mention in comment)
 
 Subjective items. Leave a recommendation in your comment but APPROVE the PR.

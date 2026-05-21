@@ -65,3 +65,4 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0015](0015-claude-code-hooks-adoption.md) | Claude Code hooks adoption + walking-skeleton PostToolUse logging hook | Accepted |
 | [0016](0016-workflow-event-log-jsonl.md) | Workflow event log — JSONL via hooks (3 events: agent/bash/stop; extends [ADR-0015](0015-claude-code-hooks-adoption.md)) | Accepted |
 | [0017](0017-audit-meta-consolidation.md) | Audit-meta consolidation — `/audit-meta` skill with subcommand architecture (sibling to `/audit-subagents`) | Accepted |
+| [0018](0018-boy-scout-reviewer-rule.md) | R-BOY-SCOUT reviewer rule — per-PR drift detection on audit-relevant files (extends [ADR-0002](0002-autonomous-merge-policy.md) reviewer rubric; consumes [ADR-0011](0011-subagent-quality-framework.md) + [ADR-0017](0017-audit-meta-consolidation.md) rubrics inline) | Accepted |

@@ -63,3 +63,4 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0013](0013-slicer-n3-contract-refined.md) | Slicer N=3 contract refined — N=1 reserved for degenerate end-state cases (partial supersession of [ADR-0003](0003-autonomous-pipeline-with-critics.md) D3) | Accepted |
 | [0014](0014-skill-local-vocabulary-and-auto-fold.md) | Skill-local vocabulary sections + `/glossary-fold` auto-fold (supersedes [ADR-0012](0012-glossary-consolidation-single-tier.md) D6 deferral) | Accepted |
 | [0015](0015-claude-code-hooks-adoption.md) | Claude Code hooks adoption + walking-skeleton PostToolUse logging hook | Accepted |
+| [0016](0016-workflow-event-log-jsonl.md) | Workflow event log — JSONL via hooks (3 events: agent/bash/stop; extends [ADR-0015](0015-claude-code-hooks-adoption.md)) | Accepted |

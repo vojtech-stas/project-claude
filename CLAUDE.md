@@ -82,6 +82,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | glossary-fold skill (bulk auto-fold of skill-local vocab) | `.claude/skills/glossary-fold/SKILL.md` | `cat .claude/skills/glossary-fold/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, Claude Code hooks (per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md)) | `.claude/settings.json` | `cat .claude/settings.json` |
+| Workflow event log — JSONL of agent/bash/stop events (per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md)) | `.claude/logs/workflow-events.jsonl` (gitignored) | `tail -20 .claude/logs/workflow-events.jsonl` ; `grep '"event":"agent_complete"' .claude/logs/workflow-events.jsonl` |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | `ls docs/prds/` (created when first PRD lands there; current PRDs live on GitHub Issues per ADR-0003 D1) |
@@ -388,6 +389,7 @@ No formal handoff document. New Claude Code sessions reconstruct state from **li
 - `gh pr list --state open` — in-flight PRs (work under review)
 - `gh issue list --label backlog` — forward queue (queued for future PRDs)
 - Project board #2 column states — visual progress of in-flight work
+- `tail .claude/logs/workflow-events.jsonl` — recent agent/bash/session-stop events from the workflow event log (per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md)); JSONL is greppable for specific event types
 
 The natural pipeline milestones (end of `/grill-me`, `/ship`, `/qa-plan`) always leave a new session in a state where live reconstruction is sufficient. Mid-task interruption (mid-grill or mid-slice) loses conversational context regardless of mechanism; this is an accepted trade-off per ADR-0006 D2.
 

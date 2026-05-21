@@ -64,6 +64,8 @@ The PRD does not contradict any accepted ADR. If it does, the PRD must include a
 
 **Sub-check — referenced-but-missing ADRs:** If the PRD references an ADR by number (e.g., "per ADR-0007") and that file does not exist in `decisions/`, **BLOCK with the literal message `"ADR-XXXX referenced but not present"`** (substituting the actual number). See "Decision on PRD §6 OQ#3" below for the rationale.
 
+**NOTE for ADR existence verification:** ALWAYS use `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` to check ADR file existence on origin/main, NOT local `ls decisions/`. The worktree's local `decisions/` may be stale (this is a common stale-worktree false-alarm pattern — 3+ instances observed 2026-05-20/21). Only trust `gh api` results.
+
 ### 8. Scope discipline
 The Solution sketch stays within the PRD's stated feature. Reject scope expansion ("while we're in there, also fix Y") — that belongs in a separate PRD.
 

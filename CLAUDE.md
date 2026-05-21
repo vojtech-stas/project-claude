@@ -208,7 +208,7 @@ gh issue edit <issue-number> --add-assignee @me   # claim the slice (I2)
 - `feat/4-ship-orchestrator-skeleton`
 - `feat/7-reviewer-enforcement-additions`
 - `docs/8-claude-md-conventions-rollup`
-- `hotfix/fix-typo-in-readme`
+- `hotfix/<issue-number>-fix-typo-in-readme` (the pre-commit regex enforces an issue number for all types, even trivial-lane hotfixes — use the closing audit-trail issue number)
 
 The `slice-N-<name>` pattern from earlier slices is retired; GitHub issue numbers replace the slice number.
 

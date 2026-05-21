@@ -2,8 +2,13 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "Edit",
-        "command": "if echo \"$CLAUDE_FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then mkdir -p .claude/logs && echo \"$(date -Iseconds) $CLAUDE_FILE_PATH (edit detected; consider running /audit-subagents)\" >> .claude/logs/subagent-edits.log; fi"
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE_PATH=$(jq -r '.tool_input.file_path' </dev/stdin); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && echo \"$(date -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" >> \"$CLAUDE_PROJECT_DIR/.claude/logs/subagent-edits.log\"; fi"
+          }
+        ]
       }
     ]
   }

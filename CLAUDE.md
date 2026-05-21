@@ -54,7 +54,7 @@ Rationale: codename-prefixed titles in `backlog` pre-bias candidate selection (t
 
 ---
 
-## Workflow improvements I1–I5
+## Workflow improvements I1–I6
 
 These are load-bearing conventions that supplement the cross-cutting rules. Per PRD #3 §4 and [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md).
 
@@ -63,6 +63,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 - **I3 — Trivial lane.** PRs ≤10 LoC of runtime-artifact diff with no behavior change MAY skip PRD/slice ceremony. Branch: `hotfix/<short-summary>`. Add the `trivial` label to the PR; the reviewer fast-paths it.
 - **I4 — Slice size cap & staleness.** Slice PRs cap at **≤300 LoC of runtime-artifact diff**. The canonical definition of "runtime artifact" lives in [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) (rule R-LOC) — do not restate it here. A slice issue open >7 days is marked stale by the reviewer.
 - **I5 — Escalation surface.** On round-3 BLOCK, the reviewer applies the `needs-human` label to the PR AND posts a comment on the parent PRD issue summarizing the stuck slice. Humans run `gh pr list --label needs-human` at session start to find what's waiting on them.
+- **I6 — Boy-scout drift detection at PR time.** Per [ADR-0018](decisions/0018-boy-scout-reviewer-rule.md), the reviewer's discretionary `R-BOY-SCOUT` rule fires when a PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`) and applies the relevant `/audit-subagents` + `/audit-meta` rubric checks inline against the touched files only. Findings emit as BLOCK (when the rule has zero documented false-positive cases AND the fix is mechanical AND the drift materially impacts future readers) or Recommendation otherwise. Default-conservative-toward-REC; the rule is additive defense-in-depth alongside the 11 hard-block reviewer rules, not the primary gate. The canonical rule lives in [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) under "Discretionary rule — R-BOY-SCOUT" — do not restate it here.
 
 ### Meta-rule: critic count cap
 

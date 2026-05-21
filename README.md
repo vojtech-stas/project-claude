@@ -154,6 +154,7 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 - **[CLAUDE.md](CLAUDE.md)** — project rules, auto-loaded by Claude Code every session. Canonical home for the cross-cutting rules, hierarchy, slicing methodology overview, and output-shape standard.
 - **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
 - **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
+- **[`docs/best-practices/`](docs/best-practices/)** — distilled best-practices KB from Anthropic-authoritative external sources (currently `@claude` + `@anthropic-ai` YouTube channels) per [ADR-0019](decisions/0019-best-practices-kb-pattern.md). Add new entries via [`/distill-video <youtube-video-id>`](.claude/skills/distill-video/SKILL.md); raw `.vtt` transcripts live under `transcripts/` for audit + re-distillation.
 - **[`bootstrap.sh`](bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.

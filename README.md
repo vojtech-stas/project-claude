@@ -41,7 +41,7 @@ flowchart TD
   subgraph S3["Stage 3: Slice decomposition"]
     PRDISSUE --> TOISSUES["/to-issues"]
     TOISSUES --> SLICER[slicer]
-    SLICER -->|N=3 alternatives| SLICERC[slicer-critic]
+    SLICER -->|N alternatives| SLICERC[slicer-critic]
     SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
     SLICERC -.BLOCK ≤1 revision.-> SLICER
   end
@@ -87,7 +87,7 @@ flowchart TD
 |---|---|---|---|
 | 🟦 Blue | `human` | Human checkpoint | `User` (input at `/grill-me`, acceptance at `/qa-plan`) |
 | 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/audit-subagents`, `/promote-to-backlog`, `/glossary-add` |
-| 🟢 Green | `gen` | Generator subagent | `slicer` (N=3 decompositions), `implementer` (slice → PR) |
+| 🟢 Green | `gen` | Generator subagent | `slicer` (N=3 or N=1 decompositions per ADR-0013), `implementer` (slice → PR) |
 | 🟧 Orange | `critic` | Adversarial critic (≤3-round loop) | `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic` |
 | 🟥 Red | `reviewer` | Auto-merge gate (per [ADR-0002](decisions/0002-autonomous-merge-policy.md)) | `reviewer` — the only critic that auto-merges on APPROVE |
 | ⬜ Gray | `artifact` | GitHub artifact | PRD issue, slice issues, PR, merged commit, `needs-human` / `backlog` labels |
@@ -108,7 +108,7 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every gen
 
 - **`prd-critic`** — gates PRD drafts.
 - **`adr-critic`** — gates ADR drafts. Per [ADR-0004](decisions/0004-bypass-prevention.md) D1, when a macro-ADR is drafted alongside a PRD, `prd-critic` and `adr-critic` run as a **joint-APPROVE gate** — both must APPROVE before `/to-prd` posts.
-- **`slicer-critic`** — picks best of N=3 slicer decompositions, then iterates.
+- **`slicer-critic`** — picks best of N slicer decompositions (typically 3; may be 1 for degenerate cases per ADR-0013), then iterates.
 - **`reviewer`** — gates every PR; auto-merges on APPROVE, returns to implementer on BLOCK, escalates with `needs-human` on round-3 BLOCK.
 - **`glossary-critic`** — gates additions to the consolidated CLAUDE.md glossary (see "Shared vocabulary" below). Added per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5; rubric updated to 5 rules per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D4.
 

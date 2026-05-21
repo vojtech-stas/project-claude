@@ -71,6 +71,8 @@ This is the specific check that catches ADR-0003's historical defect: ADR-0003's
 
 **Sub-check — referenced-but-missing ADRs:** if the draft references `ADR-XXXX` (in any section) and `decisions/XXXX-*.md` is absent from `decisions/`, BLOCK with the literal message `"ADR-XXXX referenced but not present"` (substituting the actual number). This mirrors `prd-critic` rule 7's sub-check exactly: auto-creating a missing ADR is a side-effect outside this critic's read-only contract; surfacing the dangling reference is the cheaper failure mode.
 
+**NOTE for ADR existence verification:** ALWAYS use `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` to check ADR file existence on origin/main, NOT local `ls decisions/`. The worktree's local `decisions/` may be stale (this is a common stale-worktree false-alarm pattern — 3+ instances observed 2026-05-20/21). Only trust `gh api` results.
+
 ### 4. No scope creep beyond the stated theme
 
 The ADR title and Context section establish the theme. Every Decision must serve that theme. Reject "while we're here, also fix Y" decisions — they belong in a separate ADR.

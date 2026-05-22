@@ -12,7 +12,7 @@ This skill is the docs-first authoritative reference for Claude Code hook questi
 
 ## Authoritative guidance
 
-The 6 numbered rules below distill the hook-relevant guidance from the 2 canonical Anthropic-maintained pages fetched 2026-05-22 (`docs.claude.com/en/docs/claude-code/hooks-guide` and `.../hooks`). Rules 1, 2, 3, and 5 carry `**Grep:**` + `**Target:**` audit hooks consumable by the future PRD-D `/audit-against-best-practices` skill per ADR-0022 D1; Rules 4 and 6 are judgment-only.
+The 7 numbered rules below distill the hook-relevant guidance from the 2 canonical Anthropic-maintained pages fetched 2026-05-22 (`docs.claude.com/en/docs/claude-code/hooks-guide` and `.../hooks`) plus the canonical git hook taxonomy at `git-scm.com/docs/githooks` (Rule 7). Rules 1, 2, 3, 5, and 7 carry `**Grep:**` + `**Target:**` audit hooks consumable by the future PRD-D `/audit-against-best-practices` skill per ADR-0022 D1; Rules 4 and 6 are judgment-only.
 
 ### Rule 1: Hooks are shell commands — they can validate, log, or notify, but cannot invoke skills or subagents
 
@@ -58,6 +58,14 @@ The 6 numbered rules below distill the hook-relevant guidance from the 2 canonic
 **Why:** Without a SessionStart context injection, every new session burns its first 2-3 turns reconstructing state via `git status` / `gh issue list` / `tail logs`. A 5-line SessionStart hook collapses that to one injected reminder block — the single highest-leverage hook pattern in the docs.
 **Authority:** `https://docs.claude.com/en/docs/claude-code/hooks` — "SessionStart" event section (additionalContext / initialUserMessage / watchPaths fields) + "Add context for Claude" + "For instructions that never change, prefer CLAUDE.md."
 
+### Rule 7: Git hook taxonomy — pre-commit ≠ commit-msg ≠ pre-push
+
+**Rule:** Pick the right git hook by what input it receives and when it fires relative to `$EDITOR`. The 5 most-conflated types: `pre-commit` — no args; fires BEFORE `$EDITOR`; no commit-message access (use for branch-name / lint-staged / etc.). `prepare-commit-msg` — receives `$1=COMMIT_EDITMSG path` + `$2=source` BEFORE `$EDITOR` (use for pre-populating messages). `commit-msg` — receives `$1=COMMIT_EDITMSG path` AFTER `$EDITOR` closes (use for commit-message-content validation: conv-commits regex, etc.). `pre-push` — receives `$1=remote-name` + `$2=remote-url` + reads ref pairs on stdin (use for pre-push gating). `post-commit` — no args; fires AFTER commit succeeds (use for notification only — cannot block).
+**Why:** Conflating hook types causes mis-targeted validation behavior; commit-message-content checks require `commit-msg` (or `prepare-commit-msg`), NOT `pre-commit`. Seed example: PRD-V round 1 BLOCK ([#187](https://github.com/vojtech-stas/project-claude/issues/187)) on `.githooks/pre-commit` trying to validate commit-message content.
+**Grep:** `COMMIT_EDITMSG`
+**Target:** `.githooks/*`
+**Authority:** `https://git-scm.com/docs/githooks` — canonical git documentation enumerating each hook's name, argument signature, invocation timing, and exit-code semantics.
+
 ## Supplementary
 
 No hook-focused video distillation exists under `docs/best-practices/` as of 2026-05-22 (`grep -l hook docs/best-practices/*.md` returns only the London keynote, which mentions hooks only adjacently). Per ADR-0022 D2, Tier-3 supplementary citations are optional; this section is intentionally empty. If/when a hook-focused video lands under `docs/best-practices/`, add a pointer here.
@@ -72,6 +80,7 @@ Concrete checks against current project files (run these when authoring a new ho
 - **Rule 4 check (command contract):** every current hook command in `.claude/settings.json` follows the canonical pattern established by PR #135: `jq -r '.tool_input.<field>' </dev/stdin` to parse, `${CLAUDE_PROJECT_DIR}` for portable script paths, always-quoted shell variables, `mkdir -p` before append. New hooks must mirror this pattern; the `jq` dependency is a soft-required tool per ADR-0016 (degrades silently on missing-jq machines).
 - **Rule 5 check (PreToolUse decisions):** no `PreToolUse` hooks currently exist in the project. A future PRD will add the first PreToolUse blocking hook (likely commit-message-format validation or similar) per ADR-0015 D6's amendment path; until then the project has zero hook-side blocking and relies on `.githooks/pre-commit` for server-side git-level enforcement.
 - **Rule 6 check (SessionStart):** no `SessionStart` hook currently exists. The project's session-continuity story relies on `ADR-0006 D2` live-state reconstruction (`git log` + `gh issue list` + `tail .claude/logs/workflow-events.jsonl`). A `SessionStart` `additionalContext` injection (current branch + open slices + last workflow events) would be a high-value future addition; capture as a backlog candidate per CLAUDE.md rule #11 if you find yourself wanting it.
+- **Rule 7 check (git hook taxonomy):** the project ships 2 git hooks under `.githooks/`, both correctly typed per Rule 7. `.githooks/pre-commit` enforces branch-name + main-block (no commit-message access required — correctly uses the no-arg `pre-commit` event). `.githooks/commit-msg` validates conv-commits subject + ≤72-char cap + Co-Authored-By trailer presence (correctly receives `$1=COMMIT_EDITMSG` AFTER `$EDITOR` per ADR-0023 D6).
 
 ## Common pitfalls
 

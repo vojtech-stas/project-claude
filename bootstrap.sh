@@ -201,6 +201,11 @@ for f in "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/.githooks/install.sh"; do
     fi
 done
 
+# Same idempotent chmod for Claude Code hook scripts under .claude/hooks/
+# (per ADR-0023 D7). Glob expands to nothing if the directory is missing on a
+# partial clone; the `|| true` keeps the script best-effort.
+[ -d "$REPO_ROOT/.claude/hooks" ] && chmod +x "$REPO_ROOT"/.claude/hooks/*.sh 2>/dev/null || true
+
 # ---- step 4: project board v2 (detect only; manual create if missing) -----
 
 step 4 "GitHub Project v2 board (detect only)"

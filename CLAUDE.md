@@ -83,6 +83,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | `/audit-subagents` skill (periodic subagent-prompt quality audit per [ADR-0011](decisions/0011-subagent-quality-framework.md)) | `.claude/skills/audit-subagents/SKILL.md` | `cat .claude/skills/audit-subagents/SKILL.md` |
 | `/best-practice-workflow` skill (docs-first on-demand workflow guidance per [ADR-0022](decisions/0022-docs-first-kb-pattern.md)) | `.claude/skills/best-practice-workflow/SKILL.md` | `cat .claude/skills/best-practice-workflow/SKILL.md` |
 | `/audit-meta` skill (periodic structure + docs-currency audit per [ADR-0017](decisions/0017-audit-meta-consolidation.md); sibling to `/audit-subagents`) | `.claude/skills/audit-meta/SKILL.md` | `cat .claude/skills/audit-meta/SKILL.md` |
+| glossary-add skill (single-entry interactive flow for adding a vocab term to CLAUDE.md per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md)) | `.claude/skills/glossary-add/SKILL.md` | `cat .claude/skills/glossary-add/SKILL.md` |
 | glossary-fold skill (bulk auto-fold of skill-local vocab) | `.claude/skills/glossary-fold/SKILL.md` | `cat .claude/skills/glossary-fold/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, Claude Code hooks (per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md)) | `.claude/settings.json` | `cat .claude/settings.json` |

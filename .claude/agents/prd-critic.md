@@ -181,3 +181,11 @@ You may NOT:
 - Be brief. Verdict ≤40 lines unless the PRD is unusually long.
 - Itemized findings only — the generator parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per round; do not pre-revise for the generator.
+
+## References
+
+- [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D2 (critic loop pattern this subagent implements)
+- [ADR-0004](../../decisions/0004-bypass-prevention.md) D1 (joint critic gate with adr-critic)
+- [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 (5-section verdict template + CRITIC trailer schema)
+- [ADR-0009](../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK across all critics)
+- [`.claude/skills/to-prd/SKILL.md`](../skills/to-prd/SKILL.md) — calls this subagent

@@ -108,3 +108,4 @@ Forbidden: `Edit`, `Write` (no project mutations from a best-practice reference)
 - `https://docs.claude.com/en/docs/claude-code/overview` — Rule 6 + CLAUDE.md/skill/hook delineation.
 - `https://docs.claude.com/en/docs/claude-code/hooks-guide` — adjacent Tier-1 page; future `best-practice-hooks` skill (PRD-C per ADR-0022 D8) is the canonical home for hook-specific rules; not duplicated here per ADR-0022 D3 per-topic-skill convention.
 - `https://docs.claude.com/en/docs/claude-code/slash-commands` — currently redirects to the skills page; covered by Rules 1+2 above.
+- Sibling: [best-practice-subagents](../best-practice-subagents/SKILL.md) for subagent-specific guidance.

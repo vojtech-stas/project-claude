@@ -1,0 +1,43 @@
+#!/bin/sh
+# .githooks/commit-msg — mechanically enforce CLAUDE.md rule #5 (Conventional
+# Commits). Sibling to pre-commit; runs AFTER $EDITOR closes and receives the
+# COMMIT_EDITMSG path as $1 per git's hook taxonomy. Blocks: non-conv-commits
+# subject, >72-char subject. Warns: missing Co-Authored-By trailer.
+# See ADR-0023 D6. Bypass: `git commit --no-verify`.
+set -u
+
+msg_file="$1"
+subject=$(grep -vE '^(#|$)' "$msg_file" | head -n 1)
+
+if [ -z "$subject" ]; then
+    echo "commit-msg: ERROR: empty commit message." >&2
+    exit 1
+fi
+
+# Conv-commits subject regex per CLAUDE.md rule #5 (OQ-2 portability: `grep -E`
+# works on Git Bash, macOS, and Linux).
+if ! printf '%s' "$subject" | grep -qE '^(feat|fix|docs|chore|refactor|test|perf|style|build|ci)(\(.+\))?: [a-z]'; then
+    echo "commit-msg: ERROR: subject does not match Conventional Commits format." >&2
+    echo "commit-msg: Subject:  $subject" >&2
+    echo "commit-msg: Expected: <type>(<optional scope>): <lowercase subject>" >&2
+    echo "commit-msg: Types:    feat|fix|docs|chore|refactor|test|perf|style|build|ci" >&2
+    echo "commit-msg: See CLAUDE.md rule #5 and ADR-0023 D6." >&2
+    exit 1
+fi
+
+# ≤72-char subject cap per CLAUDE.md rule #5.
+if ! printf '%s' "$subject" | awk '{ exit length($0) > 72 ? 1 : 0 }'; then
+    len=$(printf '%s' "$subject" | awk '{print length}')
+    echo "commit-msg: ERROR: subject line exceeds 72 characters (length=$len)." >&2
+    echo "commit-msg: Subject: $subject" >&2
+    echo "commit-msg: See CLAUDE.md rule #5 (≤72 char hard cap)." >&2
+    exit 1
+fi
+
+# Co-Authored-By trailer presence — warn-only per ADR-0023 D6 (preserves
+# human-only commit ergonomics).
+if ! grep -qi '^Co-Authored-By:' "$msg_file"; then
+    echo "commit-msg: warning: missing 'Co-Authored-By:' trailer. Agent commits should include it; human-only commits may ignore." >&2
+fi
+
+exit 0

@@ -33,7 +33,7 @@ You receive (1) the PRD (issue reference or inline body) and (2) the slicer's ou
 - What variation axis was considered and rejected as non-meaningful (e.g., commit-ordering inside squash, trivial rewording)?
 - Would N=3 have produced genuinely-different alternatives, or only cosmetic variation?
 
-If the rationale is concrete on all three points, accept and score the single decomposition normally against the 9-criterion rubric below (criteria 1-9 apply identically to a single decomposition). If vague ("only one way to do it" with no PRD citation), **bias toward requesting one revision** asking for the explicit rationale before scoring (per prd-critic recommendation on PRD #116). Score-normally is a fallback for clearly-trivial single-decomposition cases only.
+If the rationale is concrete on all three points, accept and score the single decomposition normally against the 10-criterion rubric below (criteria 1-10 apply identically to a single decomposition). If vague ("only one way to do it" with no PRD citation), **bias toward requesting one revision** asking for the explicit rationale before scoring (per prd-critic recommendation on PRD #116). Score-normally is a fallback for clearly-trivial single-decomposition cases only.
 
 When the slicer correctly emitted N=3 (the default for genuinely-open-shape PRDs per ADR-0003 D3 — the part not superseded by ADR-0013), score all three per the rubric below as usual.
 
@@ -56,6 +56,7 @@ Score each decomposition on every criterion. Each criterion is PASS / FAIL / WAR
 7. **Slice count and per-slice LoC fit the PRD §4 appetite.** Slice count within budget; every per-slice LoC estimate ≤ cap. Any violation → FAIL.
 8. **Risk front-loading.** The biggest risk identified across slices lands in slice 1 or 2. If the riskiest mechanic is buried at the end → WARN (not FAIL — defensible in some PRDs).
 9. **Cascade-docs identified and covered.** Each decomposition must explicitly identify cascade-docs that should be updated to reflect the new feature even when not strictly in the PRD's §2 acceptance criteria (README, CLAUDE.md Map rows, ADR index rows, downstream skill/subagent bodies referencing the changed area), and cover each identified cascade-doc via a slice (new or merged into an existing slice). Per `slicer.md` "Cascade-doc check" and [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D3. **FAIL** if a load-bearing cascade-doc (README, CLAUDE.md, ADR index `decisions/README.md`) is missed. **WARN** if a minor cascade-doc is missed (downstream skill body, peripheral reference). **PASS** if cascade-docs are identified and each is covered by a slice, OR if the decomposition explicitly states "no cascade-docs identified" with a one-line justification (e.g., "feature is internal-only — no user-facing surface changes").
+10. **Cross-PR cascade-doc collision check.** When the slice's announced cascade-doc edits (from slicer's "Cascade-docs identified" row in its decomposition table — see `slicer.md`) intersect with files touched by currently-open PRs, emit **WARN** naming the in-flight PR(s) and recommend **sequencing OR deferred-trivial-lane back-ref pattern** (ship the skill/subagent body in this slice now; ship the cross-skill back-refs in a separate I3 trivial-lane PR after all sibling PRs merge). Mechanical check: run `gh pr list --state open --json number,title,files | jq -r '.[] | {n: .number, t: .title, f: [.files[].path]}'` and intersect the file paths against the slice's cascade-doc file list. If the slicer's cascade-doc emission isn't parseable as discrete file paths (loose prose in the table cell), fall back to manual comparison: the critic reads the slicer's listed cascade-docs verbatim and compares against `gh pr list --state open --json files`. **WARN, not FAIL** — collisions are sometimes acceptable (the in-flight PR will obviously merge first; sequencing is operational). The WARN surfaces the conflict for human/agent judgment; does not hard-block. **PASS** if no intersection, OR if the decomposition explicitly notes "no open PR touches the cascade-doc files (verified via `gh pr list`)". Added per backlog #194 / PRD #210 root-cause analysis of the PR #186 cascade-doc rebase pattern.
 
 A decomposition is **viable** if it has zero FAILs. WARNs are acceptable; the count of WARNs is a tiebreaker among viable decompositions (fewer WARNs wins).
 
@@ -108,7 +109,7 @@ Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../..
 <2-4 sentences. What is being judged: the N=3 alternative decompositions of PRD #N produced by the slicer. State the PRD's stated theme and per-slice cap so the rubric is anchored against a concrete spec contract.>
 
 ### Rubric
-Each of the 9 criteria below is scored per decomposition (A / B / C) as PASS / FAIL / WARN; details in the Scoring matrix extension below.
+Each of the 10 criteria below is scored per decomposition (A / B / C) as PASS / FAIL / WARN; details in the Scoring matrix extension below.
 
 - 1. INVEST per slice
 - 2. Walking-skeleton-first
@@ -119,6 +120,7 @@ Each of the 9 criteria below is scored per decomposition (A / B / C) as PASS / F
 - 7. Slice count & LoC fit
 - 8. Risk front-loading
 - 9. Cascade-docs identified & covered
+- 10. Cross-PR cascade-doc collision check
 
 ### Findings
 <On BLOCK: numbered list. For each blocking failure: which decomposition (A/B/C) + which criterion + 1-2 sentence diagnosis + the concrete defect (slice number / cascade-doc name / rule cited). Mechanically actionable. If ALL three decompositions are non-viable (≥1 FAIL each), state that and require regeneration.
@@ -140,6 +142,7 @@ On APPROVE: "None.">
 | 7. Slice count & LoC fit | … | … | … |
 | 8. Risk front-loading | … | … | … |
 | 9. Cascade-docs identified & covered | … | … | … |
+| 10. Cross-PR cascade-doc collision check | … | … | … |
 | **Viable?** | yes/no | yes/no | yes/no |
 | **WARN count** | <int> | <int> | <int> |
 
@@ -190,3 +193,5 @@ FINDINGS_COUNT: <integer>
 
 You may use `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` / `git` only). You may NOT write files, post GitHub issues, comment on issues, create branches, or invoke other agents. Output is text only.
 ## References
+
+- Backlog #194 / PRD #210 — surfacing analysis: parallel sibling PRDs (PR #183 + PR #186) hit rebase conflict from cascade-doc collision; criterion 10 added per the root-cause workflow improvement.

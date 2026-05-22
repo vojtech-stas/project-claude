@@ -50,8 +50,8 @@ Each check declares `subcommand: structure`. Skip all if `RUN_STRUCT=0`. Pattern
 - **STRUCT-1** — `subcommand: structure` — `.claude/agents/` file count ≤ 12 (ADR-0008 D7 6-critic-cap headroom).
   Pattern: `ls .claude/agents/*.md | wc -l` ≤ `12` → PASS; `13..15` → WARN; `>15` → FAIL.
 
-- **STRUCT-2** — `subcommand: structure` — `.claude/skills/` direct-child directory count ≤ 12.
-  Pattern: `ls -d .claude/skills/*/ | wc -l` ≤ `12` → PASS; `13..15` → WARN; `>15` → FAIL.
+- **STRUCT-2** — `subcommand: structure` — `.claude/skills/` direct-child directory count ≤ 16 (cap bumped from 12 to accommodate ADR-0022 D3+D8 best-practice sibling skills B/C/E/F; see #184).
+  Pattern: `ls -d .claude/skills/*/ | wc -l` ≤ `16` → PASS; `17..19` → WARN; `>19` → FAIL.
 
 - **STRUCT-3** — `subcommand: structure` — no markdown file > 500 LoC (split-candidate detector).
   Pattern: `find . -name "*.md" -not -path "./.git/*" -exec wc -l {} \; | awk '$1 > 500'` → empty → PASS; non-empty → WARN (list offenders).
@@ -125,7 +125,7 @@ Subcommands run: structure, docs
 | Check | Result | Details |
 |---|---|---|
 | STRUCT-1 | PASS | .claude/agents/ count = 8 (≤ 12) |
-| STRUCT-2 | PASS | .claude/skills/ count = 10 (≤ 12) |
+| STRUCT-2 | PASS | .claude/skills/ count = 14 (≤ 16) |
 | STRUCT-3 | WARN | 3 files > 500 LoC: decisions/0003-*.md (612), ... |
 | STRUCT-4 | PASS | max depth = 4 |
 | ... | ... | ... |

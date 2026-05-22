@@ -89,6 +89,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | glossary-fold skill (bulk auto-fold of skill-local vocab) | `.claude/skills/glossary-fold/SKILL.md` | `cat .claude/skills/glossary-fold/SKILL.md` |
 | Fresh-clone project setup | `bootstrap.sh` at repo root (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6) | `./bootstrap.sh` |
 | Settings, permissions, Claude Code hooks (per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md)) | `.claude/settings.json` | `cat .claude/settings.json` |
+| Hook scripts (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md) D7 — extracted from inline per ADR-0015 D6 future direction) | `.claude/hooks/<name>.sh` | `ls .claude/hooks/` |
 | Workflow event log — JSONL of agent/bash/stop events (per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md)) | `.claude/logs/workflow-events.jsonl` (gitignored) | `tail -20 .claude/logs/workflow-events.jsonl` ; `grep '"event":"agent_complete"' .claude/logs/workflow-events.jsonl` |
 | Pre-commit hooks (workflow enforcement) | `.githooks/pre-commit`, `.githooks/install.sh` | `ls .githooks/` |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | `ls decisions/` |
@@ -348,6 +349,12 @@ See [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1 for th
 ## Pipeline operational logic
 
 The HOW for each pipeline stage. Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage is paired with an adversarial critic.
+
+**Session-level enforcement hooks** (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md), extending [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D6; forward-pointing — slice 1 of PRD #187 ships SessionStart, slices 2-3 ship the other 3):
+- **`SessionStart`** — injects `additionalContext` with branch + divergence vs `origin/main` + recent commits + open slice/PR/captured counts; mitigates the recurring stale-worktree false-alarm (#173).
+- **`PreToolUse(Edit|MultiEdit|Write)`** — emits `permissionDecision: "ask"` when main agent (not subagent) writes a tracked file, mechanically escalating rule #10.
+- **`PreToolUse(Bash)`** — emits `permissionDecision: "deny"` on `git push ... origin main` (any flavor), enforcing rule #4.
+- **`UserPromptSubmit`** — nudges feature-request-shaped prompts toward `/grill-me` before `/ship`.
 
 ### How to grill (idea capture) — ✓ available
 See [`.claude/skills/grill-me/SKILL.md`](.claude/skills/grill-me/SKILL.md). Invoked via `/grill-me` or natural-language match. Interviews user one question at a time, recommends an answer for each, walks the decision tree.

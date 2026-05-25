@@ -2,6 +2,8 @@
 
 A clone-as-template starter for AI-coded projects, replicating the workflow of a **senior engineer overseeing a small team of developers** — but with AI agents instead of humans. Built on 20-year-old software engineering practices (small slices, fast feedback, git-tracked changes, PR review, scope discipline) and heavy borrowing from [Matt Pocock's skills repo](https://github.com/mattpocock/skills).
 
+> **New here? Start here →** Jump to the [5-Minute Quickstart](#5-minute-quickstart) for a literal first-use cycle. Skim the [Concepts cheat sheet](#concepts-cheat-sheet) for one-line definitions. Hit the [FAQ](#frequently-asked-questions) for common newcomer questions. For deep theory, scroll to *What's the idea*; for the architecture, see [CLAUDE.md](CLAUDE.md).
+
 ## What's the idea
 
 You play **senior engineer**. AI agents play **the team**. The template ships an autonomous pipeline with **exactly two human-touch points**:
@@ -23,9 +25,88 @@ The middle is glued together by one command: **`/ship`**. After `/grill-me`, you
 
 **Session continuity.** New Claude Code sessions reconstruct state from live state (`git log`, `gh issue list`, `gh pr list`, project board) — no formal handoff document. See the "Session continuity" section in [CLAUDE.md](CLAUDE.md) for the canonical procedure.
 
+## 5-Minute Quickstart
+
+A literal walkthrough of the first full feature cycle. Pick something tiny — e.g., a `/say-hello` skill that prints a greeting. (Real PRDs are bigger; we use `/say-hello` here purely to make the example fit in 5 minutes.)
+
+**1. Clone + bootstrap (one-time, ~30 seconds):**
+
+```bash
+git clone https://github.com/vojtech-stas/project-claude my-new-project
+cd my-new-project
+./bootstrap.sh         # creates labels, installs git hooks, applies branch protection
+```
+
+**2. Open the repo in Claude Code.** `CLAUDE.md` auto-loads; the agents are oriented.
+
+**3. Grill the idea (~2 minutes).** Run `/grill-me I want a /say-hello skill that prints a friendly greeting`. The agent interviews you one question at a time:
+
+```
+Agent:  1. Should /say-hello take an optional name argument, or always greet "world"?
+        Recommendation: 1B (optional argument) — slightly more useful, same LoC.
+        1A. always "Hello, world!"     pros: dead simple; cons: not personalizable
+        1B. optional name argument     pros: useful; cons: trivially more code
+        1C. read name from git config  pros: zero-arg + personal; cons: edge cases
+You:    1B
+Agent:  2. Should output go to stdout, or use AskUserQuestion?
+        ...
+```
+
+After 3-5 questions the agent confirms the settled design and returns.
+
+**4. Ship it (autonomous, ~2 minutes wall-clock for a trivial example).** Run `/ship`. The orchestrator chains: `to-prd` → `prd-critic` (≤3 APPROVE/BLOCK rounds) → `slicer` → `slicer-critic` → posts the PRD + slice issues → `implementer` writes the code per slice → `reviewer` audits the PR → auto-merges on APPROVE. You watch; you don't touch.
+
+**5. Verify (~30 seconds).** When the last slice merges, run `/qa-plan <PRD-number>`. The `qa-tester` subagent walks each acceptance criterion mechanically; subjective ones surface via `AskUserQuestion`. On all-PASS the PRD auto-closes.
+
+That's the full loop. Two human commands (`/grill-me`, `/qa-plan`), one orchestration command (`/ship`), and the rest is autonomous.
+
+## Concepts cheat sheet
+
+One-line definitions of the load-bearing terms. For the full canonical glossary (with authority citations), see [CLAUDE.md `## Glossary`](CLAUDE.md#glossary).
+
+- **PRD** — feature-sized GitHub issue (label `prd`); top of the PRD → Slice → PR hierarchy.
+- **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤300 LoC diff.
+- **skill** — user-invocable command at `.claude/skills/<name>/SKILL.md` (e.g., `/ship`).
+- **subagent** — specialist at `.claude/agents/<name>.md` with isolated context + restricted tools.
+- **critic** — adversarial subagent judging a stage's output with APPROVE/BLOCK (≤3 rounds).
+- **generator** — subagent producing output (decompositions, code, test plans); paired with a critic.
+- **autopilot** — inline-firing mechanism (e.g., `/promote-to-backlog` after a captured-label issue).
+- **trivial-lane** — fast path (I3) for PRs ≤10 LoC; branch `hotfix/<N>-...`, label `trivial`.
+- **truth-doc** — `docs/current/<topic>.md` active-state synthesis per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md); read via `current-state-reader`.
+
+## Frequently asked questions
+
+### Do I have to use `/grill-me`?
+
+Recommended for any new feature. Skippable for the trivial lane (I3 — PRs ≤10 LoC, no behavior change, branch `hotfix/<N>-...`). The `/to-prd` skill also accepts a clear pre-written spec if you'd rather draft offline. The autopilot enforces no hard requirement today, though a future PRD may make `/grill-me` mechanically required for new features.
+
+### Why is Claude asking permission to edit every file?
+
+The `PreToolUse(Edit|MultiEdit|Write)` hook ([ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md) D3) emits `permissionDecision: "ask"` when the **main agent** (not a subagent) writes a tracked file. This is the mechanical enforcement of CLAUDE.md rule #10 — main-agent meta-output discipline. Subagent edits (e.g., `implementer` shipping a slice) skip the prompt entirely. If you see prompts on every edit including untracked / gitignored files, you may be hitting captured issue #222 — make sure `jq` is installed and on your PATH.
+
+### What if I want to skip critics?
+
+You can't via the pipeline. The joint-APPROVE gate ([ADR-0004](decisions/0004-bypass-prevention.md) D1) is non-negotiable, and `reviewer` is the sole gate per PR ([ADR-0002](decisions/0002-autonomous-merge-policy.md)). You CAN, however, escalate a round-3 BLOCK to a `needs-human` label and apply your own judgment in a manual PR — that's the designed escape valve.
+
+### How do I add a new subagent?
+
+Author `.claude/agents/<name>.md` per [ADR-0001](decisions/0001-foundational-design.md) D6; declare tool boundaries in the frontmatter; write the body per the standards in [`/best-practice-subagents`](.claude/skills/best-practice-subagents/SKILL.md). If your new subagent is a critic, honor the 6-critic-cap meta-rule ([ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7) — a new ADR must justify why an existing critic's rubric can't absorb the concern.
+
+### How do I keep up with what's true today?
+
+Per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md), `docs/current/<topic>.md` truth-docs synthesize active state across the ADR + skill + subagent chain for a given topic (slicing, output-shape, hooks, etc.). Agents auto-load them via the `current-state-reader` subagent, dispatched by the topic-nudge `UserPromptSubmit` hook ([ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4) when your prompt mentions a covered topic. Humans read them directly. The reviewer rule **R-TRUTH-DOC** enforces that any new or amended ADR ships an accompanying truth-doc update in the same PR.
+
+### Why so many ADRs?
+
+Each ADR is one architectural decision frozen at its moment per [`decisions/README.md`](decisions/README.md) "What an ADR is". The count reflects the template's walking-skeleton evolution — superseded decisions live on for audit + history, never edited in place. If you fork the template and decide differently for your project, you write new ADRs; the originals remain as the historical record.
+
+### What does it mean if I see a `needs-human` label?
+
+The reviewer applies `needs-human` on round-3 BLOCK ([ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) I5) — three rounds of generator/critic disagreement is the autonomy ceiling. A human needs to decide. Find them at session start with `gh pr list --label needs-human` and `gh issue list --label needs-human`. The reviewer also posts a summary to the parent PRD issue so you don't have to guess what's stuck.
+
 ## Pipeline diagram
 
-The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot) live in their own subgraph.
+The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot, and the topic-nudge `UserPromptSubmit` hook that dispatches `current-state-reader` per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4) live in their own subgraph or fire transparently around the main pipeline.
 
 ```mermaid
 flowchart TD
@@ -108,13 +189,14 @@ No `feature` label, no `slice-N-foo` branch names. Branches use Conventional Com
 
 ## Adversarial critics
 
-Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. Five critics ship today:
+Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. The project honors the **6-critic-cap meta-rule** per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 — promoting a new critic requires a new ADR explicitly justifying why an existing critic's rubric cannot absorb the concern. Today's critics:
 
 - **`prd-critic`** — gates PRD drafts.
 - **`adr-critic`** — gates ADR drafts. Per [ADR-0004](decisions/0004-bypass-prevention.md) D1, when a macro-ADR is drafted alongside a PRD, `prd-critic` and `adr-critic` run as a **joint-APPROVE gate** — both must APPROVE before `/to-prd` posts.
 - **`slicer-critic`** — picks best of N slicer decompositions (typically 3; may be 1 for degenerate cases per ADR-0013), then iterates.
 - **`reviewer`** — gates every PR; auto-merges on APPROVE, returns to implementer on BLOCK, escalates with `needs-human` on round-3 BLOCK.
 - **`glossary-critic`** — gates additions to the consolidated CLAUDE.md glossary (see "Shared vocabulary" below). Added per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5; rubric updated to 5 rules per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D4.
+- **`backlog-critic`** — gates `captured` → `backlog` label promotions against a 4-criterion rubric (actionable / scoped / not duplicate / clear); fires once inline via the `/promote-to-backlog` autopilot, default-conservative on BLOCK (the item stays in the captured tier as a graveyard for lazy human review). Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4.
 
 The loop convention (generator proposes → critic challenges against explicit rubric → generator revises → ≤3 rounds → APPROVE or escalate) is the canonical pattern from [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2.
 
@@ -138,6 +220,7 @@ The pipeline is complemented at the Claude Code session level by **hooks** ([`.c
 2. **PreToolUse rule-#10 escalation** — `PreToolUse(Edit|MultiEdit|Write)` emits `permissionDecision: "ask"` when the main agent (not a subagent) writes a tracked file; preserves trivial-lane I3 ergonomics over hard-deny.
 3. **PreToolUse dangerous-git deny** — `PreToolUse(Bash)` emits `permissionDecision: "deny"` on `git push ... origin main` (any flavor), mechanically enforcing rule #4.
 4. **UserPromptSubmit grill-suggestion** — feature-request-shaped prompts get a non-blocking nudge toward `/grill-me` before `/ship` if the prompt does not already invoke a pipeline command.
+5. **UserPromptSubmit topic-nudge** — per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4, prompts mentioning a covered topic (slicing, output-shape, hooks, etc.) trigger an `additionalContext` nudge dispatching the [`current-state-reader`](.claude/agents/current-state-reader.md) subagent to load the matching `docs/current/<topic>.md` truth-doc; closes the "stale via memory" drift loop without manual lookup.
 
 **Workflow event log.** Per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md), three additional hooks (`PostToolUse(Agent)`, `PostToolUse(Bash)`, `Stop`) append JSONL events to [`.claude/logs/workflow-events.jsonl`](.claude/logs/) for run-time observability — which subagents fired, which bash commands ran, where session boundaries fell. Greppable from any session (`grep '"event":"agent_complete"' .claude/logs/workflow-events.jsonl`) and read by future audit-meta tooling.
 
@@ -163,6 +246,7 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 - **[CLAUDE.md](CLAUDE.md)** — project rules, auto-loaded by Claude Code every session. Canonical home for the cross-cutting rules, hierarchy, slicing methodology overview, and output-shape standard.
 - **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
 - **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
+- **[`docs/current/`](docs/current/)** — per-topic truth-docs surface per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) (slicing, output-shape, hooks, etc.); each file is the active-state synthesis across the ADR + skill + subagent chain for one topic. Agents auto-load them via the [`current-state-reader`](.claude/agents/current-state-reader.md) subagent, dispatched by the `UserPromptSubmit` **topic-nudge** hook per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4. The reviewer rule **R-TRUTH-DOC** enforces that any new or amended ADR ships an accompanying truth-doc update in the same PR.
 - **[`docs/best-practices/`](docs/best-practices/)** — distilled best-practices KB from Anthropic-authoritative external sources (currently `@claude` + `@anthropic-ai` YouTube channels, demoted to Tier-3 supplementary per [ADR-0022](decisions/0022-docs-first-kb-pattern.md) D2) per [ADR-0019](decisions/0019-best-practices-kb-pattern.md) D1+D2 (D3 yt-dlp bits surgically superseded by ADR-0022 D11). Add new video entries via [`/distill-video <youtube-video-id>`](.claude/skills/distill-video/SKILL.md); raw `.vtt` transcripts live under `transcripts/` for audit + re-distillation. **Tier-1 on-demand best-practice skills** live separately under `.claude/skills/best-practice-<topic>/SKILL.md` per ADR-0022 D3 — the first one shipped is [`/best-practice-workflow`](.claude/skills/best-practice-workflow/SKILL.md) (workflow questions: slash-commands, skill activation, settings hierarchy, sub-agent-vs-skill choice). Sibling skills for `subagents`/`hooks`/`claude-md-conventions`/`prompt-patterns` topics ship as future PRDs per ADR-0022 D8.
 - **[`bootstrap.sh`](bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.

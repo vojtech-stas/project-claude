@@ -304,6 +304,46 @@ else
     note "⚠ yt-dlp: missing (install for /distill-video; otherwise harmless)"
 fi
 
+# ---- step 7: Playwright MCP dep check (per ADR-0025 D7) -------------------
+
+step 7 "Playwright MCP dep check (idempotent)"
+
+# Playwright MCP is required by the qa-tester subagent's ui-mode (per
+# ADR-0025 D1 + D7) for screenshot-judged UI acceptance testing. We try a
+# zero-state probe via `npx -y @playwright/mcp@latest --version`; npx caches
+# the package locally on first download. Subsequent runs are instant.
+#
+# Cross-platform notes (OQ-4 in PRD #215):
+#   - Verified on Windows Git Bash 2026-05-25 (Node v22.x, npm 11.13.0) —
+#     `npx -y @playwright/mcp@latest --version` returned "Version 0.0.75".
+#   - Linux/macOS unverified at bootstrap-time; same `npx` invocation should
+#     work since npx is platform-portable.
+#   - Playwright MCP itself depends on Playwright browser binaries; the MCP
+#     package downloads them lazily on first browser launch (not at install).
+#   - Per ADR-0025 D7, we use the bundled `npx -y` mechanism rather than a
+#     global install to avoid `npm -g` permission complexity across platforms.
+#
+# This step is best-effort warn-only — qa-tester bash-mode (per ADR-0020 D3)
+# does NOT require Playwright; consumer projects without UI ACs are unaffected.
+if command -v npx >/dev/null 2>&1; then
+    if npx -y @playwright/mcp@latest --version >/dev/null 2>&1; then
+        PW_MCP_VERSION=$(npx -y @playwright/mcp@latest --version 2>/dev/null | head -1)
+        log "Playwright MCP callable: ${PW_MCP_VERSION}"
+        note "✓ Playwright MCP: callable (${PW_MCP_VERSION})"
+    else
+        warn "npx present but 'npx -y @playwright/mcp@latest --version' failed."
+        warn "  Required by qa-tester ui-mode (ADR-0025 D1). Try running manually for diagnostics:"
+        warn "    npx -y @playwright/mcp@latest --version"
+        warn "  Network access required on first run (downloads package to npx cache)."
+        note "⚠ Playwright MCP: probe failed (qa-tester ui-mode degraded)"
+    fi
+else
+    warn "npx not on PATH. Required by qa-tester ui-mode (ADR-0025 D1)."
+    warn "  Install Node.js + npm (npx ships with npm) to enable ui-mode."
+    warn "  Without it, qa-tester bash-mode (ADR-0020 D3) still works."
+    note "⚠ npx missing — Playwright MCP install skipped (ui-mode unavailable)"
+fi
+
 # ---- end-of-run summary ---------------------------------------------------
 
 printf '\n%s ---- summary ----\n' "$TAG"

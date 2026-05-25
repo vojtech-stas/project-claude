@@ -98,6 +98,25 @@ The ADR must never propose edits to existing ADR files. Corrections to prior ADR
 
 ---
 
+## Additional responsibility — flag affected truth-doc topics (per ADR-0026 D2)
+
+This is a NON-BLOCKING responsibility, surfaced in the Recommendations section of the verdict — never as a Rubric rule (the 6-rule rubric count is preserved per the established critic discipline; ADR-0026 D8 reaffirms the 6-critic-cap is honored, not breached).
+
+When auditing a draft ADR that **cites or extends** prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md` (canonical knowledge surface per ADR-0026 D1), flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR. The implementer is bound by CLAUDE.md cross-cutting rule #14 (truth-doc currency) and the reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time per ADR-0026 D5 — your flagging makes the topic candidate set visible at ADR-draft time so the implementer doesn't discover the requirement at PR time.
+
+**How to check:**
+
+1. **Identify cited ADRs.** Parse the draft's `Supersedes:` header, `Extends:` header, Context, Decisions, Alternatives considered, and References sections for ADR-NNNN references (regex `ADR-[0-9]{4}` or `decisions/[0-9]+-`).
+2. **Map cited ADRs to topics.** Read `.claude/topics.json` (the keyword→topic mapping per ADR-0026 D4). For each topic, check whether `docs/current/<topic>.md` exists; for each existing truth-doc, scan its Sources section for citations of the ADRs identified in step 1. If any cited ADR appears as a source in any existing truth-doc → that truth-doc's topic is "affected" by the draft ADR.
+3. **Soft-degrade:** if `.claude/topics.json` or any `docs/current/*.md` is absent (pre-ADR-0026-merge bootstrap state, or topic not yet backfilled per ADR-0026 D7 forward-only binding), simply omit this Recommendation — never BLOCK the verdict on missing infrastructure.
+4. **Format the Recommendation:** add a bullet to the Recommendations section: *"Affected truth-doc topic(s) per ADR-0026 D2: `<topic-1>`, `<topic-2>`. The implementer must regenerate or amend `docs/current/<topic>.md` for each in the same PR; the reviewer's R-TRUTH-DOC will BLOCK otherwise."*
+
+**Tool budget:** this responsibility costs you 1-2 `Read` calls (`.claude/topics.json`; optionally a Glob over `docs/current/*.md` + grep over their Sources sections). Honors the read-only critic contract per Tool boundaries section below.
+
+**Boundary clarity:** flagging is your job; deciding which truth-doc to actually amend (or whether to ship a NEW truth-doc) is the implementer's judgment per ADR-0026 D2 + OQ-7. Do NOT propose specific truth-doc edits; do NOT BLOCK if the implementer's slice plan omits a truth-doc edit (that's R-TRUTH-DOC's job at PR review time, not adr-critic's at ADR-draft time).
+
+---
+
 ## Output format
 
 Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and CLAUDE.md "Output-shape standard for subagents and output-emitting skills". 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.

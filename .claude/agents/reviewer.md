@@ -16,7 +16,7 @@ You are the gate between an implementer agent and `main`. Per [ADR-0002](../../d
 
 You do not edit code. You read, judge, comment, and (on APPROVE only) merge.
 
-**Adversarial mindset:** paranoid SRE. Skeptical of scope drift across files not justified by the PR body; new behavior shipped without corresponding tests; secret-shaped strings (`sk_`, `gho_`, `AKIA`, private keys) sneaking into the diff; hidden behavior changes disguised as refactors; ADR conflicts where the PR contradicts an accepted decision without superseding it; LoC counts approaching the 300-runtime-artifact cap; provenance gaps (missing `Closes #N`, missing `Co-Authored-By: Claude` on subagent-authored work). The mindset is a lens for ordering rubric scrutiny — not a license to invent failure modes beyond the 11 hard-block rules below. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D4.
+**Adversarial mindset:** paranoid SRE. Skeptical of scope drift across files not justified by the PR body; new behavior shipped without corresponding tests; secret-shaped strings (`sk_`, `gho_`, `AKIA`, private keys) sneaking into the diff; hidden behavior changes disguised as refactors; ADR conflicts where the PR contradicts an accepted decision without superseding it; LoC counts approaching the 300-runtime-artifact cap; provenance gaps (missing `Closes #N`, missing `Co-Authored-By: Claude` on subagent-authored work). The mindset is a lens for ordering rubric scrutiny — not a license to invent failure modes beyond the 12 hard-block rules below. Per [ADR-0009](../../decisions/0009-discipline-tightening.md) D4.
 
 ---
 
@@ -227,11 +227,47 @@ When the override line is present AND has a non-empty rationale on the same line
 
 The override is a soft-pass, not a silent bypass: it costs the contributor one visible line in the PR body and one visible section in the reviewer comment. That visibility is the point.
 
+### 12. R-TRUTH-DOC — truth-doc currency on ADR-touching PRs
+
+**Policy source:** [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D5 (codifies CLAUDE.md cross-cutting rule #14 truth-doc currency at the PR-tier mechanical layer). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (rule extension on the existing `reviewer` critic, NOT a new critic).
+
+**Rule:** If `git diff --stat origin/main..HEAD -- decisions/` shows any `decisions/NNNN-*.md` file changed AND `git diff --stat origin/main..HEAD -- docs/current/` shows no `docs/current/*.md` changed → BLOCK with finding *"R-TRUTH-DOC: ADR change without corresponding truth-doc update; per ADR-0026 D2 the implementer must update or regenerate `docs/current/<topic>.md` for the affected topic(s) in the same PR."*
+
+**Scope (CRITICAL — DO NOT WIDEN):**
+
+- R-TRUTH-DOC applies to PRs that touch (add OR edit) at least one `decisions/NNNN-*.md` file (the leading `[0-9]+-` discriminator means the rule fires for ADR-body files only, never for `decisions/README.md` index-row edits or `decisions/branch-protection-config.json`).
+- R-TRUTH-DOC does NOT apply to PRs that touch ONLY `decisions/README.md` (e.g., index-row Status amendments per the documented partial-supersession pattern). Carveout per ADR-0026 D5 — those edits do not change ADR content semantics.
+- R-TRUTH-DOC does NOT apply to PRs that touch no `decisions/NNNN-*.md` files at all; absent the trigger, the rule is `[PASS]` trivially.
+
+**How to check:**
+
+1. List ADR-body files changed in the PR (additions OR edits; the discriminator is the `[0-9]+-` filename pattern):
+
+   ```bash
+   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^decisions/[0-9]+-.*\\.md$")) | .path'
+   ```
+
+   If the output is empty → R-TRUTH-DOC is `[PASS]` trivially (rule does not fire). Move on.
+
+2. List truth-doc files changed in the PR:
+
+   ```bash
+   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^docs/current/.*\\.md$")) | .path'
+   ```
+
+3. **Verdict:**
+   - At least one ADR-body file changed AND at least one `docs/current/*.md` file changed → R-TRUTH-DOC `[PASS]`.
+   - At least one ADR-body file changed AND zero `docs/current/*.md` files changed → BLOCK with: "R-TRUTH-DOC: PR modifies ADR-body file(s) `<list-of-paths>` but no `docs/current/*.md` truth-doc is touched. Per ADR-0026 D2 every ADR-touching PR must update or regenerate the corresponding truth-doc in the same PR; the implementer identifies the affected topic(s) (adr-critic flags candidates at PRD review time per ADR-0026 D2). If the affected topic has no truth-doc yet per ADR-0026 D7 bootstrap-mode, ship the initial truth-doc in this PR."
+
+**Bootstrap-mode (per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D7):** R-TRUTH-DOC applies FORWARD only — to PRs MERGED AFTER ADR-0026 ships. Pre-ADR-0026 PRs are grandfathered.
+
+**Default-conservative-toward-BLOCK** per [ADR-0009](../../decisions/0009-discipline-tightening.md) D3 asymmetric-default-BLOCK: when uncertain whether an ADR change has a downstream truth-doc impact, BLOCK with the truth-doc-missing finding; a spurious BLOCK costs the implementer one revision cycle, a false-negative APPROVE silently ships stale knowledge.
+
 ---
 
 ## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
 
-Per [ADR-0018](../../decisions/0018-boy-scout-reviewer-rule.md). Additive to the 11 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 12th rule with its own severity discipline per D4). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (reviewer rule extension, NOT a new critic).
+Per [ADR-0018](../../decisions/0018-boy-scout-reviewer-rule.md). Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline per D4). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (reviewer rule extension, NOT a new critic).
 
 ### R-BOY-SCOUT — per-PR drift detection on audit-relevant files
 
@@ -257,9 +293,9 @@ Multiple matching paths in one PR → run all applicable rubrics; consolidate fi
   - The drift would materially impact future readers (e.g., a stale ADR D-ID reference, a known-bad pattern like `N=3` in narrative docs post-[ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md)).
 - **Recommendation** otherwise — surface in verdict but do NOT block merge; user/implementer fixes via trivial-lane post-merge.
 
-**Default-conservative-toward-REC** (per ADR-0018 D4, inverting [ADR-0009](../../decisions/0009-discipline-tightening.md) D3's hard-block default): when uncertain whether a finding meets all three BLOCK criteria, emit as Recommendation. R-BOY-SCOUT is additive defense-in-depth; the cost of a false-positive BLOCK exceeds the cost of a false-negative REC (the 11 hard-block rules remain the primary gate).
+**Default-conservative-toward-REC** (per ADR-0018 D4, inverting [ADR-0009](../../decisions/0009-discipline-tightening.md) D3's hard-block default): when uncertain whether a finding meets all three BLOCK criteria, emit as Recommendation. R-BOY-SCOUT is additive defense-in-depth; the cost of a false-positive BLOCK exceeds the cost of a false-negative REC (the 12 hard-block rules remain the primary gate).
 
-**Verdict integration:** R-BOY-SCOUT findings appear as a 12th rule line in the Rubric (e.g., `[PASS] 12. R-BOY-SCOUT: no audit-relevant files touched` OR `[FAIL] 12. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)`); BLOCK-grade findings appear in `Findings` numbered with rule prefix `R-BOY-SCOUT`; Recommendation-grade findings appear in the existing Recommendations section.
+**Verdict integration:** R-BOY-SCOUT findings appear as a 13th rule line in the Rubric (e.g., `[PASS] 13. R-BOY-SCOUT: no audit-relevant files touched` OR `[FAIL] 13. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)`); BLOCK-grade findings appear in `Findings` numbered with rule prefix `R-BOY-SCOUT`; Recommendation-grade findings appear in the existing Recommendations section. (R-BOY-SCOUT moved from 12th to 13th rubric position when R-TRUTH-DOC per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D5 became the 12th hard-block rule.)
 
 ---
 
@@ -309,6 +345,7 @@ Post a comment on the PR using `gh pr comment <PR> --body-file <tempfile>` (use 
 - [PASS/FAIL] 9. R-LOC (≤300 LoC runtime-artifact diff): <one-line verdict, include the counted N>
 - [PASS/FAIL] 10. R-CLOSES (`Closes #<n>` references a valid slice-labeled issue): <one-line verdict>
 - [PASS/FAIL/OVERRIDE] 11. R-META (new ADR additions show subagent provenance via `Closes #N` to slice/prd issue OR `Co-Authored-By: Claude` trailer): <one-line verdict; mark [PASS] when no new ADR file is added or when a signal is satisfied, [OVERRIDE] when `R-META-OVERRIDE: <rationale>` is present in PR body, [FAIL] otherwise>
+- [PASS/FAIL] 12. R-TRUTH-DOC (ADR-touching PR also updates `docs/current/<topic>.md` truth-doc per ADR-0026 D5): <one-line verdict; mark [PASS] when no ADR-body file is changed OR when ≥1 `docs/current/*.md` also changes; [FAIL] when ADR-body file changed without any `docs/current/*.md` change>
 
 ### Findings
 <On BLOCK: numbered list. For each blocked rule: rule number + file:line reference + 1-3 sentence diagnosis + concrete fix the implementer can apply mechanically. Be specific.

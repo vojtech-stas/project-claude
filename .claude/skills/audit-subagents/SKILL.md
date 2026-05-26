@@ -3,11 +3,15 @@ name: audit-subagents
 description: Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 10-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
 ---
 
-This skill is the mechanical drift-detector for subagent prompts under `.claude/agents/`. Per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md), it codifies the conventions established across [ADR-0001](../../../decisions/0001-foundational-design.md) D6, [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1, [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8, and [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 as literal `grep` patterns producing deterministic PASS/FAIL per (subagent, applicable check) pair.
+This skill is the mechanical drift-detector for subagent prompts under `.claude/agents/`. Per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md), it codifies conventions from [ADR-0001](../../../decisions/0001-foundational-design.md) D6, [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1, [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8, and [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 as literal `grep` patterns producing deterministic PASS/FAIL per (subagent, applicable check) pair.
 
-**Ownership choice rationale** (per ADR-0011 D1): a skill, not a 7th critic, because the [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap meta-rule blocks a `subagent-critic`; a skill, not a reviewer rule, because PR-time gating misses drift in unchanged files (the exact failure mode of the 2026-05-19 stale-worktree audit that motivated this).
+Full role synthesis: [entities/skills/audit-subagents](../../../docs/current/entities/skills/audit-subagents.md). Sibling skill of [`/audit-meta`](../audit-meta/SKILL.md) per [ADR-0017](../../../decisions/0017-audit-meta-consolidation.md) D6 (not an extension — separate domains).
 
-**Default conservative.** When a grep pattern is ambiguous against the file content (e.g., the literal string appears only inside a quoted example or commented-out block), FAIL. Asymmetric-cost rationale (same as [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3 generalized to advisory audits): a spurious FAIL costs one user-glance round; a wrong-PASS lets a real drift slip past undetected.
+**Ownership rationale** (ADR-0011 D1): skill (not 7th critic — ADR-0008 D7 cap) and not a reviewer rule (PR-time gating misses drift in unchanged files).
+
+**Default conservative.** When a grep pattern is ambiguous (literal string only inside a quoted example), FAIL. Asymmetric-cost: spurious FAIL costs one user-glance; wrong-PASS lets real drift slip past (the #93 failure mode).
+
+---
 
 ## Invocation
 
@@ -15,110 +19,50 @@ This skill is the mechanical drift-detector for subagent prompts under `.claude/
 /audit-subagents
 ```
 
-No arguments. The skill globs `.claude/agents/*.md`, applies the rubric per file, and prints the report to stdout. Does NOT call `gh issue create`, does NOT open a PR, does NOT modify any tracked file.
+No arguments per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D7. Globs `.claude/agents/*.md`, applies the rubric per file, prints the report to stdout. Does NOT call `gh issue create`, does NOT open a PR, does NOT modify any tracked file.
+
+---
 
 ## Process
 
-1. **List subagents.** `Glob` for `.claude/agents/*.md` (relative to repo root). Per ADR-0011 D7, this excludes `.claude/skills/audit-subagents/SKILL.md` itself — non-recursive audit pattern per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D8.
+1. **List subagents.** `Glob` `.claude/agents/*.md`. Non-recursive per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D8 — the skill does NOT audit `.claude/skills/audit-subagents/SKILL.md` itself.
+2. **Classify each file** per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D3: filename ends `-critic.md` OR is exactly `reviewer.md` → critic; else generator.
+3. **Apply the rubric** below. Each check declares a `scope:` tag (`all` | `critic` | `generator`). Skip checks whose scope does not match the file's classification. Honor each check's optional `excludes:` allowlist — excluded pairs render `N/A (excluded per rubric)` and are omitted from FAIL enumeration.
+4. **Aggregate** into the Markdown report — one H2 per subagent, one row per applicable check (`PASS` / `FAIL` / `N/A (excluded per rubric)` / `—`).
+5. **Emit the report to stdout** followed by the canonical [GENERATOR trailer](../../../docs/current/topics/output-shapes.md).
 
-2. **Classify each file** per ADR-0011 D3 (locked classifier): filename ends `-critic.md` OR is exactly `reviewer.md` → critic; else generator. Current main: `reviewer.md`, `prd-critic.md`, `adr-critic.md`, `slicer-critic.md`, `glossary-critic.md`, `backlog-critic.md` → critic (6); `slicer.md`, `implementer.md` → generator (2).
-
-3. **Apply the rubric** below. Each check declares a `scope:` tag (`all` | `critic` | `generator`) and a literal `grep` pattern. Skip checks whose scope does not match the file's classification.
-
-4. **Aggregate.** Build the Markdown report per the report template below — one table row per subagent, one column per applicable check (`PASS` / `FAIL` / `—` for not-applicable).
-
-5. **Emit the report to stdout** followed by the canonical GENERATOR trailer.
+---
 
 ## Rubric (10 checks; ADR-0011 D4)
 
-Each entry: `ID | scope | check | literal grep pattern`. The grep pattern is what the skill executes (case-sensitive, extended-regex where `-E` is shown). When a pattern fails to match in the target file → FAIL for that check; when it matches → PASS.
+Each criterion's full mechanic + grep pattern + rationale + examples lives in the linked atomic note; this shell carries the ID + scope + one-line trigger only.
 
-**Optional `excludes:` schema field (per-check allowlist).** A check declaration MAY include an optional `excludes:` field whose value is a comma-separated list of subagent filenames (e.g., `excludes: backlog-critic.md`). When the audit runner processes a check whose `excludes:` list contains the current subagent's filename, the result for that `(subagent, check)` pair is rendered as `N/A (excluded per rubric)` in the report instead of `FAIL`/`PASS`, and the pair is omitted from the FAIL enumeration in the Summary section. Backward-compatible: checks without an `excludes:` field behave exactly as today. Each `excludes:` entry MUST be accompanied by a brief inline rationale citing the authoritative ADR/source so a future reader understands WHY the exception exists (not just THAT it exists). Per-check allowlist is the principled mechanism for the narrow class of subagents whose domain semantics legitimately conflict with an otherwise-correct mechanical check (e.g., `backlog-critic.md` legitimately mentioning the `backlog` label because its domain IS the backlog tier).
+- [AS-ALL-1](../../../docs/current/concepts/rules/as-all-1.md) — `scope: all` — frontmatter declares `name` / `description` / `tools` / `model` fields.
+- [AS-ALL-2](../../../docs/current/concepts/rules/as-all-2.md) — `scope: all` — "Tool boundaries" section heading present.
+- [AS-ALL-3](../../../docs/current/concepts/rules/as-all-3.md) — `scope: all` — cross-link section heading present (References / Related / See also / Cross-refs).
+- [AS-ALL-4](../../../docs/current/concepts/rules/as-all-4.md) — `scope: all` — surfacing prose uses `captured`-label NOT `backlog`-label (the #93 drift detector). `excludes: backlog-critic.md`.
+- [AS-ALL-5](../../../docs/current/concepts/rules/as-all-5.md) — `scope: all` — "Mandatory reading order" OR "When invoked" section heading present.
+- [AS-CRIT-1](../../../docs/current/concepts/rules/as-crit-1.md) — `scope: critic` — Default-BLOCK clause present (`Default conservative` literal).
+- [AS-CRIT-2](../../../docs/current/concepts/rules/as-crit-2.md) — `scope: critic` — adversarial mindset block present (`paranoid` OR `Adversarial mindset`). `excludes: backlog-critic.md`.
+- [AS-CRIT-3](../../../docs/current/concepts/rules/as-crit-3.md) — `scope: critic` — CRITIC trailer spec present (`VERDICT:` / `REASON:` / `ROUND:` fields).
+- [AS-CRIT-4](../../../docs/current/concepts/rules/as-crit-4.md) — `scope: critic` — 5-section verdict template present (Header / Subject of review / Rubric / Findings / Summary).
+- [AS-GEN-1](../../../docs/current/concepts/rules/as-gen-1.md) — `scope: generator` — GENERATOR trailer spec present (`RESULT:` / `REASON:` / `ARTIFACTS:` fields).
 
-- **ALL-1** — `scope: all` — Frontmatter present (`name`, `description`, `tools`, `model` fields in the leading YAML block).
-  Pattern: `grep -cE "^(name|description|tools|model):" <file>` ≥ `4` → PASS. Source: ADR-0001 D6.
+**Coverage arithmetic** (ADR-0011 D4 at current 6-critic + 2-generator baseline): 5 × 8 + 4 × 6 + 1 × 2 = baseline 66 evaluations; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`.
 
-- **ALL-2** — `scope: all` — "Tool boundaries" section heading present.
-  Pattern: `grep -cE "^#+\s*Tool boundaries" <file>` ≥ `1` → PASS. Source: ADR-0001 D6.
+**Per-check `excludes:` schema.** A check MAY declare `excludes: <comma-separated subagent filenames>`. For excluded pairs the runner renders `N/A (excluded per rubric)` instead of PASS/FAIL and omits the pair from the FAIL enumeration. Each exclusion carries an inline rationale (in the atomic note) citing the authoritative ADR.
 
-- **ALL-3** — `scope: all` — "References" / "Related" / "See also" / "Cross-refs" section heading present (case-insensitive; any of these enumerated heading variants satisfies the check).
-  Pattern: `grep -ciE "^#+\s*.*(References|Related|See also|Cross-refs)" <file>` ≥ `1` → PASS. Source: convention across 8 subagents. (Pattern broadened from the original literal `^#+\s*References` after PR #96 dogfood showed 7/8 subagents FAILing because the convention is "any heading-shaped cross-link section", not the exact word "References".)
+---
 
-- **ALL-4** — `scope: all` — Surfacing-convention prose uses `captured`-label, NOT `backlog`-label (the #93 drift detector).
-  Pattern: file contains the surfacing-drift idiom — either ``\`backlog\`-labeled`` prose or `--label backlog` literal → FAIL (drift detected); absent → PASS. Equivalently: ``grep -cE "(\\\`backlog\\\`-labeled|--label backlog)" <file>`` == `0` → PASS. Source: ADR-0008 D8 + ADR-0009 D2. (Default-conservative per skill prompt: if a match appears anywhere in the file — including inside example/quoted blocks — FAIL; the cost of a spurious FAIL is one user-glance; the cost of a missed real drift is the #93 failure mode itself.)
-  `excludes: backlog-critic.md` — rationale: `backlog-critic.md`'s domain IS the backlog tier per ADR-0008 D2, so it legitimately mentions ``\`backlog\`-labeled`` in prose without being the drift idiom this check detects. The mechanical grep has no way to distinguish "this file's subject IS the backlog label" from "this file is using the backlog label as the surfacing idiom (the drift)".
+## Report shape
 
-- **ALL-5** — `scope: all` — "Mandatory reading order" OR "When invoked" section heading present.
-  Pattern: `grep -cE "^#+\s*(Mandatory reading order|When invoked)" <file>` ≥ `1` → PASS. Source: convention across 8 subagents.
+Print one Markdown H2 per subagent, then a per-file table whose columns are the applicable check IDs. End with a Summary section enumerating every FAIL by `(file, check ID)`. Excluded pairs appear only in the per-subagent table as `N/A (excluded per rubric)`; not in the FAIL list.
 
-- **CRIT-1** — `scope: critic` — Default-BLOCK clause present (literal "Default conservative" string).
-  Pattern: `grep -cF "Default conservative" <file>` ≥ `1` → PASS. Source: ADR-0009 D3.
+Per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D5, the report is advisory only — the user reads it and captures real drift findings per CLAUDE.md rule #11 manually. Full report template (with example rows) lives in [entities/skills/audit-subagents](../../../docs/current/entities/skills/audit-subagents.md).
 
-- **CRIT-2** — `scope: critic` — Adversarial mindset block present ("paranoid" OR "Adversarial mindset" literal string).
-  Pattern: `grep -cE "(paranoid|Adversarial mindset)" <file>` ≥ `1` → PASS. Source: ADR-0009 D4.
-  `excludes: backlog-critic.md` — rationale: ADR-0009 D4 deliberately excluded `backlog-critic` from the mindset rollout because its single-fire autopilot semantics (per ADR-0008 D2) differ from the ≤3-round critics that received the mindset block. Codifying the exception here matches the ADR-0009 D4 table; flagging `backlog-critic.md` as a CRIT-2 FAIL would contradict the explicit ADR decision.
-
-- **CRIT-3** — `scope: critic` — CRITIC trailer spec present (`VERDICT:`, `REASON:`, `ROUND:` fields in a fenced block).
-  Pattern: all three of `grep -cF "VERDICT:" <file>` ≥ `1` AND `grep -cF "REASON:" <file>` ≥ `1` AND `grep -cF "ROUND:" <file>` ≥ `1` → PASS. Source: ADR-0005 D1b.
-
-- **CRIT-4** — `scope: critic` — 5-section verdict template present (Header → Subject of review → Rubric → Findings → Summary headings).
-  Pattern: all five of `grep -cF "Subject of review" <file>` ≥ `1` AND `grep -cE "^#+\s*Rubric" <file>` ≥ `1` AND `grep -cE "^#+\s*Findings" <file>` ≥ `1` AND `grep -cE "^#+\s*Summary" <file>` ≥ `1` AND `grep -cE "verdict:" <file>` ≥ `1` → PASS. Source: ADR-0005 D1a.
-
-- **GEN-1** — `scope: generator` — GENERATOR trailer spec present (`RESULT:`, `REASON:`, `ARTIFACTS:` fields in a fenced block).
-  Pattern: all three of `grep -cF "RESULT:" <file>` ≥ `1` AND `grep -cF "REASON:" <file>` ≥ `1` AND `grep -cF "ARTIFACTS:" <file>` ≥ `1` → PASS. Source: ADR-0005 D1c.
-
-**Coverage arithmetic** (per ADR-0011 D4): 5 scope-`all` × 8 subagents + 4 scope-`critic` × 6 critics + 1 scope-`generator` × 2 generators = 40 + 24 + 2 = baseline 66 evaluations; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`. (The 2 excluded pairs render as `N/A (excluded per rubric)` and are omitted from FAIL counts.)
-
-## Report template
-
-Print one Markdown H2 per subagent, then a per-file table whose columns are exactly the applicable check IDs. Use one of three rendering tokens per cell:
-
-- `PASS` — grep pattern matched (or, for ALL-4, did NOT match the drift idiom).
-- `FAIL` — check failed against the file.
-- `N/A (excluded per rubric)` — the check's `excludes:` list contains this subagent's filename; the runner skips evaluation and renders this token instead of PASS/FAIL. Per-check exclusions are codified in the Rubric section above (currently: CRIT-2 and ALL-4 both exclude `backlog-critic.md`).
-- `—` — em-dash for scope-not-applicable (e.g., critic-only checks against a generator file).
-
-End with a Summary section enumerating every FAIL by `(file, check ID)`. Excluded pairs do NOT appear in the FAIL list; they are visible only in the per-subagent table as `N/A (excluded per rubric)`.
-
-```
-# /audit-subagents report — <YYYY-MM-DD>
-
-## reviewer.md (critic)
-
-| ALL-1 | ALL-2 | ALL-3 | ALL-4 | ALL-5 | CRIT-1 | CRIT-2 | CRIT-3 | CRIT-4 | GEN-1 |
-|---|---|---|---|---|---|---|---|---|---|
-| PASS | PASS | PASS | FAIL | PASS | PASS | PASS | PASS | PASS | — |
-
-## backlog-critic.md (critic)
-
-| ALL-1 | ALL-2 | ALL-3 | ALL-4 | ALL-5 | CRIT-1 | CRIT-2 | CRIT-3 | CRIT-4 | GEN-1 |
-|---|---|---|---|---|---|---|---|---|---|
-| PASS | PASS | PASS | N/A (excluded per rubric) | PASS | PASS | N/A (excluded per rubric) | PASS | PASS | — |
-
-## slicer.md (generator)
-
-| ALL-1 | ALL-2 | ALL-3 | ALL-4 | ALL-5 | CRIT-1 | CRIT-2 | CRIT-3 | CRIT-4 | GEN-1 |
-|---|---|---|---|---|---|---|---|---|---|
-| PASS | PASS | PASS | FAIL | PASS | — | — | — | — | PASS |
-
-... (one section per subagent) ...
-
-## Summary
-
-- Total subagents audited: <N>
-- Total check evaluations: baseline 66; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md` (the 2 excluded pairs render as `N/A (excluded per rubric)` and are omitted from FAIL counts).
-- FAILs:
-  - `slicer.md` ALL-4
-  - `adr-critic.md` ALL-4
-  - ... (one bullet per FAIL; excluded pairs are NOT listed here)
-- Capture status of each FAIL: cross-reference to existing `gh issue list --label captured` / `--label backlog` results so the user can spot duplicates of known drift (e.g., backlog #93 owns the captured-vs-backlog drift family).
-```
-
-The Summary cross-reference is advisory — the skill does NOT call `gh issue create`. Per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D5, the user reviews the report and captures real follow-ups per CLAUDE.md rule #11 manually.
+---
 
 ## Canonical GENERATOR trailer (ADR-0005 D1c)
-
-The skill emits the report body above, then this trailer as a fenced code block:
 
 ```
 RESULT: SUCCESS | STOPPED | INVALID_INPUT
@@ -129,31 +73,25 @@ CHECK_EVALUATIONS: <integer; baseline 66, effective 64 with current CRIT-2 + ALL
 FAIL_COUNT: <integer>
 ```
 
-`SUBAGENTS_AUDITED`, `CHECK_EVALUATIONS`, and `FAIL_COUNT` are per-agent extensions to the canonical trailer per ADR-0005 D1c, named here so downstream consumers (a future post-PRD-audit skill per backlog #47) can parse without re-reading the report.
+`SUBAGENTS_AUDITED` / `CHECK_EVALUATIONS` / `FAIL_COUNT` are per-agent extensions per ADR-0005 D1c. `RESULT: SUCCESS` regardless of FAIL count — the audit ran; FAILs are advisory findings, not runtime failures. `RESULT: STOPPED` for runtime errors (file-read, glob); `RESULT: INVALID_INPUT` if invoked with unexpected positional arguments (the no-args contract per ADR-0011 D7).
 
-`RESULT: SUCCESS` regardless of FAIL count — the audit ran to completion; FAILs are advisory findings, not skill-runtime failures. `RESULT: STOPPED` is reserved for runtime failures (file read errors, glob errors). `RESULT: INVALID_INPUT` is reserved if the skill is invoked with unexpected positional arguments (the no-args contract per ADR-0011 D7).
+---
 
 ## Tool boundaries
 
 Allowed: `Read`, `Glob`, `Grep`, `Bash` (for executing the grep patterns above against globbed files).
 
-Forbidden: `Edit`, `Write` (the skill emits a report to stdout; it does NOT modify tracked files); `Agent` (no recursive subagent invocation — the skill is not a critic and has no adversarial pair per ADR-0011 D1); `gh issue create` / `gh pr create` (no auto-capture per ADR-0011 D5; no PR opening — this is a read-only audit).
+Forbidden: `Edit`, `Write` (advisory only); `Agent` (no recursive invocation — not a critic, no adversarial pair per ADR-0011 D1); `gh issue create` / `gh pr create` (no auto-capture per ADR-0011 D5).
 
-## What this skill deliberately does NOT do
-
-- Does NOT audit `.claude/skills/*.md` — out of scope per ADR-0011 D8 (non-recursive audit pattern; the skill is a subagent-shaped artifact but is NOT itself a subagent under `.claude/agents/`).
-- Does NOT auto-capture FAIL findings as `captured`-labeled issues — deferred per ADR-0011 D5. The slice-1 dogfood is expected to produce ~5 ALL-4 FAILs that mostly duplicate backlog #93; auto-capturing them would force `backlog-critic` to BLOCK duplicates (correct, but noisy).
-- Does NOT run a ≤3-round critic loop — this skill is a GENERATOR per ADR-0005 D1c, not a critic; there is no APPROVE/BLOCK verdict.
-- Does NOT block PRs that touch `.claude/agents/*.md` — a future `R-SUBAGENT-QUALITY` reviewer rule is explicitly deferred per ADR-0011 D8 future-direction; would require its own bootstrap-mode policy.
-- Does NOT apply semantic / LLM judgment — checks are pure mechanical grep per ADR-0011 D2. Catching a mindset block that is "actually a personality novel rather than a scrutiny lens" requires LLM-semantic checks, deferred to a future PRD.
-- Does NOT take a `<name>` argument for single-subagent targeting — bulk-audit is the primary use case per ADR-0011 D7; two code paths would inflate slice-1 LoC.
+---
 
 ## References
 
-- [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — D1 (skill ownership), D2 (mechanical-only rubric), D3 (classifier rule), D4 (the 10 checks), D5 (single Markdown report, no auto-capture), D6 (rubric embedded in SKILL.md), D7 (no-args invocation), D8 (bootstrap-mode + non-recursive), D9 (sibling backlog relationships).
-- [ADR-0001](../../../decisions/0001-foundational-design.md) D6 — subagent definition; sources ALL-1 and ALL-2.
-- [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a (5-section verdict — CRIT-4), D1b (CRITIC trailer — CRIT-3), D1c (GENERATOR trailer — GEN-1 + this skill's own output shape).
-- [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 (6-critic-cap, honored by skill-ownership), D8 (captured-tier surfacing — sources ALL-4).
-- [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK — sources CRIT-1), D4 (adversarial mindsets — sources CRIT-2).
-- Backlog [#93](https://github.com/vojtech-stas/project-claude/issues/93) — the surfacing-convention drift fix that ALL-4 mechanically detects.
+- [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — D1 (skill ownership), D2 (mechanical-only rubric), D3 (classifier), D4 (the 10 checks), D5 (single Markdown report, no auto-capture), D6 (rubric embedded), D7 (no-args invocation), D8 (bootstrap-mode + non-recursive), D9 (sibling backlog relationships).
+- [ADR-0001](../../../decisions/0001-foundational-design.md) D6 — subagent definition (sources AS-ALL-1, AS-ALL-2).
+- [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a/D1b/D1c — verdict template + CRITIC + GENERATOR trailers (sources AS-CRIT-3, AS-CRIT-4, AS-GEN-1, this skill's own output shape).
+- [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 (6-critic-cap, honored), D8 (surfacing convention — sources AS-ALL-4).
+- [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK — sources AS-CRIT-1), D4 (adversarial mindsets — sources AS-CRIT-2).
+- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; full rule bodies live in `docs/current/concepts/rules/as-*.md`; full skill synthesis in `docs/current/entities/skills/audit-subagents.md`.
+- Backlog [#93](https://github.com/vojtech-stas/project-claude/issues/93) — surfacing-convention drift fix that AS-ALL-4 detects.
 - Backlog [#47](https://github.com/vojtech-stas/project-claude/issues/47) — future post-PRD audit pipeline; natural consumer of this skill per ADR-0011 D9.

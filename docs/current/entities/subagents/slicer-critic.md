@@ -15,6 +15,8 @@ sources:
 
 The `slicer-critic` subagent is the **adversarial gate at stage 3.6** of the autonomous pipeline. It receives (1) the parent PRD and (2) the [`slicer`](slicer.md)'s N=3 decomposition block, scores all three against a 10-criterion rubric, picks the best with explicit tiebreak rationale, runs **exactly one revision loop** on the chosen decomposition, then emits APPROVE (with the final approved decomposition for `/to-issues` to post) or BLOCK (with reasons). Unlike most critics, it doubles as a generator — the "Final approved decomposition" extension is the artifact downstream consumers post.
 
+This entity note is the **canonical full role synthesis** for the slicer-critic subagent. After the T3 knowledge-architecture migration ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md), PRD #273 terminal slice #277), the operational `.claude/agents/slicer-critic.md` carries only the prompt-level operational mechanics (mandatory reading order, N=1 acceptance, rubric trigger lines, output-format pointer, tool boundaries) and links here for the 10-criterion full bodies (each shipped as a `docs/current/concepts/rules/sc-*.md` atomic note in T3 slices 1+2), the selection/tiebreak rationale, and the iteration-shape lock.
+
 ## Role and responsibility
 
 The slicer-critic has three jobs, in strict priority order:

@@ -105,6 +105,12 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ---
 
+## KB schema (per ADR-0031)
+
+The project's knowledge base lives under `docs/current/` (compiled atomic notes + topic syntheses) and `docs/raw/` (immutable source material). KB notes use a 5-node-type taxonomy (concept / entity / topic / pattern / decision) + 13 typed edges in `**EdgeType:** [[path]]` syntax, with YAML frontmatter on every note. See [docs/current/topics/kb-schema.md](docs/current/topics/kb-schema.md) for the full operating manual. New content from ADR-0031 merge forward is born into this structure per bootstrap-mode ([ADR-0004](decisions/0004-bypass-prevention.md) D2 / [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D13); existing content migrates over PRDs T1-T9.
+
+---
+
 ## Glossary (key terms)
 
 Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D1 (single-tier consolidation per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D1). Soft cap ~35 entries (per ADR-0012 D5). Each entry follows the canonical shape from [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 (term + one-sentence definition + authority + see-also). To add a term, run `/glossary-add`; [`glossary-critic`](.claude/agents/glossary-critic.md) gates each addition against the 5-rule rubric (including ADR-0012 D2's ≥3-citations-across-≥2-directories inclusion threshold).

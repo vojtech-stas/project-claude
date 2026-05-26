@@ -15,19 +15,24 @@ Per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D3 you
 
 ## When invoked
 
-Dispatched with one input: a `<topic>` string (kebab-case slug matching a filename under `docs/current/`). Examples: `qa-automation` → reads `docs/current/qa-automation.md`.
+Dispatched with one input parameter, in one of two forms (additive per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D6 — both forms supported; old form is backward-compat):
 
-Return `RESULT: INVALID_INPUT` with a one-sentence reason and stop if the topic string is missing, multi-token, or not `[a-z0-9-]+`.
+- **Legacy form (ADR-0026 D3):** a `<topic>` string (kebab-case slug matching a filename under `docs/current/`). Example: `qa-automation` → reads `docs/current/qa-automation.md`. The 4 existing flat truth-docs (`qa-automation`, `subagents`, `hooks`, `bootstrap`) are reached this way.
+- **KB-v2 form (ADR-0031 D6):** `type=<concept|entity|topic|pattern>` + `name=<id>` (both kebab-case `[a-z0-9-]+`). Example: `type=pattern name=walking-skeleton` → reads `docs/current/patterns/walking-skeleton.md`. The new KB-v2 subdirectories (`concepts/`, `entities/`, `topics/`, `patterns/`) are reached this way. Decision-node queries (`type=decision name=<NNNN-slug>`) path-dispatch `decisions/NNNN-*.md` rather than a separate `docs/current/decisions/` directory per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D2 alias.
+
+Return `RESULT: INVALID_INPUT` with a one-sentence reason and stop if: (a) neither form is satisfied; (b) any provided string fails `[a-z0-9-]+`; (c) `type` is not in the enum; (d) the target file does not exist.
 
 ---
 
 ## Process
 
-1. **Validate** the topic string (kebab-case `[a-z0-9-]+`, single token). Reject otherwise.
-2. **Read** `docs/current/<topic>.md` once. If the file does NOT exist → `RESULT: INVALID_INPUT` with reason `"topic '<topic>' has no truth-doc at docs/current/<topic>.md; per ADR-0026 D7 bootstrap-mode, topics backfill organically as PRDs touch them — capture a backlog item if blocking"`. Do NOT fall back to reading ADRs / skills inline — that defeats [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D1's pre-computed-slim-load premise.
-3. **Verify shape** — H1 title + Status + Date + Active synthesis + Sources list per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D1. If any required section is missing, surface a one-line `WARN:` in the synthesis; do NOT BLOCK (partial truth-docs beat no answer).
-4. **Distill** — ≤15-line synthesis condensing the Active synthesis prose into the most decision-useful shape (lead with headline contract; follow with concrete contracts — subagent names, tool boundaries, mode contracts; close with active-ADR list + Sources count).
-5. **Emit** synthesis + canonical GENERATOR trailer. You do NOT post to GitHub. You do NOT call any other subagent. You do NOT modify any file.
+1. **Validate** the input — either legacy `<topic>` (kebab-case `[a-z0-9-]+`, single token) OR KB-v2 `type=<X>` + `name=<id>` (both kebab-case). Reject malformed input.
+2. **Resolve path** — legacy form → `docs/current/<topic>.md`; KB-v2 form → `docs/current/<type>s/<name>.md` (note pluralization: `concept`→`concepts/`, `entity`→`entities/`, `topic`→`topics/`, `pattern`→`patterns/`); decision form → `decisions/<name>.md`. The legacy form also tries `docs/current/topics/<topic>.md` as a fallback to ease the T1-T4 migration window per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D6 backward-compat.
+3. **Read** the resolved path once. If the file does NOT exist → `RESULT: INVALID_INPUT` with reason `"node '<input>' has no file at <resolved-path>; per ADR-0031 D13 bootstrap-mode, KB content backfills organically — capture a backlog item if blocking"`. Do NOT fall back to reading source ADRs / skills inline — that defeats [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D1's pre-computed-slim-load premise.
+4. **Verify shape** — for KB-v2 nodes: YAML frontmatter with required `title` + `type` + `last_updated` per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D5; for legacy truth-docs: H1 + Status + Date + Active synthesis + Sources per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D1; for decision nodes: standard ADR headers per the D5 carveout. Missing required fields → one-line `WARN:` in synthesis; do NOT BLOCK.
+5. **Distill** — ≤15-line synthesis. Lead with the `summary:` frontmatter field (or H1 + first paragraph for legacy/decision nodes); follow with the most decision-useful bullets from the body.
+6. **Resolve edges (KB-v2 nodes only)** — Grep the body for the typed-edge pattern `\*\*[a-z-]+:\*\* \[\[[^\]]+\]\]` per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D3 + `kb-schema.md`. For each match, open the link target and read its `summary:` frontmatter (or H1 for decision nodes — they lack frontmatter per D5 carveout). Append an `## Edges` section to the synthesis with one bullet per edge: `**<edge-type>:** [[<path>]] — <1-sentence summary or "UNRESOLVED" if target missing>`. Unresolved targets are reported but do NOT trigger BLOCK (edges may point to future content per [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) forward-binding). Legacy truth-doc reads SKIP this step.
+7. **Emit** synthesis + canonical GENERATOR trailer. You do NOT post to GitHub. You do NOT call any other subagent. You do NOT modify any file.
 
 You do NOT read source ADRs, skill bodies, or subagent contracts the truth-doc cites — that duplicates the chain-walking cost the truth-doc surface exists to eliminate, directly contradicting [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D1.
 
@@ -108,3 +113,6 @@ Be brief (synthesis ≤15 lines; no preamble; no postamble). Be faithful (cite t
 - `docs/current/qa-automation.md` — initial truth-doc shipped with slice 1; first consumer.
 - `.claude/topics.json` — keyword→topic mapping consumed by the topic-nudge hook.
 - `.claude/hooks/user-prompt-submit-topic-nudge.sh` — the topic-nudge hook that typically triggers your dispatch via additionalContext injection.
+- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — KB v2 extension: path-dispatch for `concepts/`, `entities/`, `topics/`, `patterns/` subdirectories + edge resolution; legacy flat truth-doc reads remain backward-compatible.
+- `docs/current/topics/kb-schema.md` — operating manual for the KB schema; defines the typed-edge `[[path]]` syntax this reader resolves.
+- `docs/current/patterns/walking-skeleton.md` — slice-1 dogfood pattern note demonstrating KB-v2 frontmatter + typed edges.

@@ -113,29 +113,17 @@ The project's knowledge base lives under `docs/current/` (compiled atomic notes 
 
 ## Glossary (key terms)
 
-Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5). **Transitional state:** 5 of 22 terms migrated to INDEX rows in slice 1 of PRD #245; remaining 17 terms keep inline shape until slices 2-3 cut them per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 sequencing.
+Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5). **Transitional state:** 14 of 22 terms migrated to INDEX rows (5 in slice 1 + 9 in slice 2 of PRD #245); remaining 8 terms keep inline shape until slice 3 cuts them per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 sequencing.
 
 - **PRD** — feature-sized Product Requirements Document; top tier of PRD→Slice→PR hierarchy → [docs/current/concepts/glossary/prd.md](docs/current/concepts/glossary/prd.md)
-- **ADR** — an Architecture Decision Record stored as `decisions/NNNN-<slug>.md`, immutable after acceptance and superseded by a new ADR rather than edited in place.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D8
-  - *See also:* supersession; bootstrap-mode
-- **backlog** — the forward-looking work queue of `backlog`-labeled GitHub Issues plus the Backlog column on project board #2, holding queued ideas not yet ready for full PRD grilling.
-  - *Scope:* (c) common word with narrowed meaning here
-  - *Authority:* [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D1
-  - *See also:* PRD; session
-- **bootstrap-mode** — the policy that new conventions bind FORWARD from the slice that ships them, with no retroactive sweep across pre-existing artifacts.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D2
-  - *See also:* ADR
+- **ADR** — Architecture Decision Record (immutable, supersession-based) → [docs/current/concepts/glossary/adr.md](docs/current/concepts/glossary/adr.md)
+- **backlog** — forward-looking work queue of `backlog`-labeled GitHub Issues + project board #2 Backlog column → [docs/current/concepts/glossary/backlog.md](docs/current/concepts/glossary/backlog.md)
+- **bootstrap-mode** — new conventions bind FORWARD from the slice that ships them; no retroactive sweep → [docs/current/concepts/glossary/bootstrap-mode.md](docs/current/concepts/glossary/bootstrap-mode.md)
 - **cascade-doc check** — the slicer's responsibility to identify docs (README, CLAUDE.md Map rows, ADR index rows) that *should* update to reflect a new feature even when not strictly required by acceptance criteria, and add or fold a slice to cover them.
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3
   - *See also:* slice
-- **Conventional Commits** — the `<type>(<optional scope>): <subject>` commit-message format (types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`) applied here with a lowercase subject, ≤72-char cap, and a `Co-authored-by:` trailer on agent commits.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* https://www.conventionalcommits.org/en/v1.0.0/
-  - *See also:* trivial lane
+- **Conventional Commits** — `<type>(<optional scope>): <subject>` format; tightened with lowercase + ≤72-char + Co-authored-by trailer → [docs/current/concepts/glossary/conventional-commits.md](docs/current/concepts/glossary/conventional-commits.md)
 - **critic** — adversarial subagent gating another stage's output via APPROVE/BLOCK verdict; never edits → [docs/current/concepts/glossary/critic.md](docs/current/concepts/glossary/critic.md)
 - **CRITIC trailer** — the canonical fenced field-schema block (`VERDICT`, `REASON`, `ROUND`, optional `FAILED_RULES`/`FINDINGS_COUNT`/`ESCALATE`) appended at the end of every critic verdict so consumers can parse it programmatically.
   - *Scope:* (a) project jargon coined here
@@ -145,10 +133,7 @@ Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note a
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
   - *See also:* CRITIC trailer
-- **hamburger method** — a vertical-slicing technique that decomposes a feature into thin end-to-end slices cutting through every layer (schema, logic, UI, test) rather than building one horizontal layer at a time.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* https://gojko.net/2012/05/01/the-hamburger-method/
-  - *See also:* SPIDR; walking-skeleton; slice
+- **hamburger method** — Gojko's vertical-slicing technique; slice 1 of any PRD must cut through every layer end-to-end → [docs/current/concepts/glossary/hamburger-method.md](docs/current/concepts/glossary/hamburger-method.md)
 - **INVEST** — Bill Wake's six-property check (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the slice shape criterion → [docs/current/concepts/glossary/invest.md](docs/current/concepts/glossary/invest.md)
 - **joint-APPROVE gate** — the rule that when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts anything.
   - *Scope:* (a) project jargon coined here
@@ -166,28 +151,16 @@ Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note a
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D4
   - *See also:* R-LOC; R-CLOSES; ADR
-- **session** — a single Claude Code conversation in this repo (auto-loaded with `CLAUDE.md` on start), reconstructed by new sessions from live state — `git log`, `gh issue list`, project board — rather than a formal handoff document.
-  - *Scope:* (c) common word with narrowed meaning here
-  - *Authority:* [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D2
-  - *See also:* backlog
+- **session** — a single Claude Code conversation; cross-session continuity via live state reconstruction (no formal handoff) → [docs/current/concepts/glossary/session.md](docs/current/concepts/glossary/session.md)
 - **slice** — INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), one PR ≤300 runtime LoC; middle tier of PRD→Slice→PR → [docs/current/concepts/glossary/slice.md](docs/current/concepts/glossary/slice.md)
 - **SPIDR** — Mike Cohn's 5 slice-split fallbacks (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules); S/I/R dominant in this project → [docs/current/concepts/glossary/spidr.md](docs/current/concepts/glossary/spidr.md)
-- **subagent** — a specialist agent invoked via the `Agent` tool with its own model, restricted tool set, and isolated context window, defined under `.claude/agents/<name>.md`.
-  - *Scope:* (c) common word with narrowed meaning here
-  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D6
-  - *See also:* critic; skill
-- **trivial lane** — the fast-path workflow (I3) for PRs ≤10 LoC of runtime-artifact diff with no behavior change: branch `hotfix/<short-summary>`, label `trivial`, no PRD/slice ceremony.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
-  - *See also:* slice; Conventional Commits
+- **subagent** — specialist agent invoked via `Agent` tool with own model, restricted tool set, isolated context window → [docs/current/concepts/glossary/subagent.md](docs/current/concepts/glossary/subagent.md)
+- **trivial lane** — fast-path (I3) for PRs ≤10 LoC with no behavior change; `hotfix/` branch + `trivial` label, no PRD/slice ceremony → [docs/current/concepts/glossary/trivial-lane.md](docs/current/concepts/glossary/trivial-lane.md)
 - **walking-skeleton** — the practice of shipping the smallest possible end-to-end version of the whole pipeline first and then iterating on the weakest stage, rather than perfecting each primitive in isolation.
   - *Scope:* (b) external standard adopted
   - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D10
   - *See also:* YAGNI; hamburger method
-- **YAGNI** — "You Aren't Gonna Need It"; the rule #1 cross-cutting practice that no code is added outside the current slice's scope, enforced by the reviewer.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D12
-  - *See also:* slice; walking-skeleton
+- **YAGNI** — "You Aren't Gonna Need It"; rule #1 — no code outside the current slice's scope, reviewer-enforced → [docs/current/concepts/glossary/yagni.md](docs/current/concepts/glossary/yagni.md)
 
 ---
 

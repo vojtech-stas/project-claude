@@ -3,52 +3,49 @@ name: glossary-add
 description: Add a single glossary term — interactive single-term flow that captures definition, scope category, and authority, then invokes glossary-critic before opening a trivial-lane PR. Use when the user (or a discretionary-surfacing agent) wants to land a new vocabulary term.
 ---
 
-This skill adds **one** glossary term per invocation. It interviews the user for the required fields, invokes the [`glossary-critic`](../../agents/glossary-critic.md) subagent in a ≤3-round APPROVE/BLOCK loop, and on APPROVE opens a `hotfix/glossary-<term>` PR with the `trivial` label.
+# /glossary-add — single-term interactive write path
 
-Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4, this is the **explicit** write path. The complementary **discretionary surfacing** path (subagents inlining *"Heads up: 'X' looks glossary-worthy — run `/glossary-add` to capture"*) is non-mandatory and described in each agent's own body file.
+Adds **one** glossary term per invocation: interview the user for the required fields, draft both the atomic concept note + CLAUDE.md INDEX row, invoke [`glossary-critic`](../../agents/glossary-critic.md) in a ≤3-round APPROVE/BLOCK loop, and on APPROVE open a `hotfix/glossary-<term>` PR with the `trivial` label.
+
+This is the **explicit** write path per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. The complementary discretionary-surfacing path is non-mandatory and described in each agent's own body.
+
+Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, edges): [entities/skills/glossary-add](../../../docs/current/entities/skills/glossary-add.md). Vocabulary: [adr](../../../docs/current/concepts/glossary/adr.md), [trivial-lane](../../../docs/current/concepts/glossary/trivial-lane.md), [generator-trailer](../../../docs/current/concepts/glossary/generator-trailer.md).
 
 ## Process
 
-1. **Collect the required fields** — either from inline arguments or by asking one question at a time. Required fields:
-   - **term** — the word or phrase being defined. Must not already exist in the CLAUDE.md glossary (the critic enforces).
-   - **definition** — one declarative sentence. Multi-sentence, vague, or tutorial-shaped definitions are rejected by the critic per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2.
-   - **scope category** — exactly one of `a` (project jargon coined here), `b` (external standard adopted), or `c` (common word with narrowed meaning here) per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D3.
-   - **authority** — one of: `ADR-NNNN D-X` (project decision), a URL (named external source), or the literal string `external` (industry-standard, no project-specific authority).
+1. **Collect the required fields** — either from inline arguments or by asking one question at a time:
+   - **term** — the word or phrase being defined. Must not already exist in the CLAUDE.md glossary (critic enforces).
+   - **definition** — one declarative sentence. Multi-sentence, vague, or tutorial-shaped definitions are rejected per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2.
+   - **scope category** — exactly one of `a` (project jargon), `b` (external standard adopted), `c` (common word narrowed) per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D3.
+   - **authority** — `ADR-NNNN D-X`, a URL, or the literal `external`.
 
    Inline-args form: `/glossary-add <term> --definition "..." --category a|b|c --authority "..."`. Missing fields fall back to one-question-at-a-time prompts.
 
-2. **Draft the entry markdown.** Use the canonical shape from [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2: term + one-sentence definition + authority + (optional) see-also.
+2. **Draft both artifacts** per the dual-tier knowledge architecture established by [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D2 + D10 step 1: (a) a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` (50–100 LoC body + YAML frontmatter + typed edges), and (b) a single-line INDEX row appended to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position, pointing to the atomic note.
 
-   Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D2 + D10 step 1 (executed in PRD #245), glossary entries live in TWO places: (a) a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` (the canonical home; 50-100 LoC body + YAML frontmatter + typed edges per ADR-0031 D4+D5+D3), and (b) a single-line INDEX row appended to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position, pointing to the atomic note. The skill MUST write both. Before drafting, count existing INDEX rows; if the count is at or above the ~35 soft cap per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D5, surface a warning but proceed (the cap is soft, not mechanically enforced). `glossary-critic`'s rule 5 (inclusion threshold) is the load-bearing gate per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2.
+   Before drafting, count existing INDEX rows; at/above the ~35 soft cap per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D5, surface a warning but proceed (the cap is soft).
 
-   Transitional note: 5 of 22 pre-existing terms have been migrated to the atomic-note + INDEX shape in PRD #245 slice 1; sibling slices 2 and 3 migrate the remaining 17. From PRD #245 merge forward, new terms ship in the new shape per bootstrap-mode ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D13). Full skill thinning to the new shape is deferred to T5 per ADR-0031 D10.
-
-3. **Invoke the critic.** State the round number explicitly (start at round 1). Pass the drafted entry inline — `glossary-critic` no longer requires a target-zone argument (single-tier per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D1). Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5 as partially superseded by [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D4, the critic runs a 5-rule rubric: scope category (a/b/c), no duplicate, one-sentence definition, authority field, inclusion threshold (≥3 citations across ≥2 of {decisions/, .claude/agents/, .claude/skills/}).
+3. **Invoke the critic** — state the round number explicitly (start at 1). Pass the drafted entry inline; `glossary-critic` no longer requires a target-zone argument (single-tier per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D1). The 5-rule rubric: scope (a/b/c), no duplicate, one-sentence definition, authority field, inclusion threshold (≥3 citations across ≥2 of {`decisions/`, `.claude/agents/`, `.claude/skills/`}).
 
 4. **Critic loop (≤3 rounds):**
-   - On **APPROVE** → proceed to step 5.
-   - On **BLOCK** with `ROUND < 3` → apply each finding from the itemized list, increment the round, re-invoke. Do not invent fixes the critic did not request; do not skip any finding.
-   - On **BLOCK** with `ROUND == 3` (or `ESCALATE: needs-human`) → STOP. Do not open the PR. Surface the verdict to the user with the failing findings. Per I5 escalation pattern, this is the user-revises-and-retries surface.
+   - **APPROVE** → step 5.
+   - **BLOCK** with `ROUND < 3` → apply each finding from the itemized list, increment the round, re-invoke. Do not invent fixes the critic did not request.
+   - **BLOCK** with `ROUND == 3` (or `ESCALATE: needs-human`) → STOP. Do NOT open the PR. Surface the verdict + failing findings; this is the user-revises-and-retries surface per the I5 escalation pattern.
 
-5. **Open the trivial-lane PR.** Only after APPROVE.
+5. **Open the trivial-lane PR** (only after APPROVE):
 
    ```bash
-   git checkout main
-   git pull --ff-only origin main
+   git checkout main && git pull --ff-only origin main
    git checkout -b hotfix/glossary-<kebab-term>
-   # apply BOTH edits: new docs/current/concepts/glossary/<slug>.md atomic note + CLAUDE.md INDEX row
    git add docs/current/concepts/glossary/<slug>.md CLAUDE.md
    git commit -m "docs(glossary): add <term>" -m "<one-sentence why>" -m "Co-authored-by: Claude <noreply@anthropic.com>"
    git push -u origin hotfix/glossary-<kebab-term>
-   gh pr create --title "docs(glossary): add <term>" --body "<see template below>" --label trivial
+   gh pr create --title "docs(glossary): add <term>" --body "<see template>" --label trivial
    ```
 
-   PR body MUST include:
-   - **`Closes`** — none required; trivial-lane PRs skip the slice ceremony per CLAUDE.md I3.
-   - **Scope** — "Adds glossary entry for `<term>` to CLAUDE.md."
-   - **Critic audit trail** — paste the `glossary-critic` APPROVE verdict (or at minimum its CRITIC trailer) so reviewer-time inspection is one click away.
+   PR body MUST include: **Scope** ("Adds glossary entry for `<term>` to CLAUDE.md.") + **Critic audit trail** (the `glossary-critic` APPROVE verdict, or at minimum its CRITIC trailer). No `Closes` required — trivial-lane PRs skip slice ceremony per CLAUDE.md I3.
 
-6. **Return the GENERATOR trailer.** Per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c:
+6. **Return the GENERATOR trailer** per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c (full schema at [topics/output-shapes](../../../docs/current/topics/output-shapes.md)):
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT
@@ -60,14 +57,16 @@ Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extensio
 
 ## What this skill deliberately does NOT do
 
-- It does NOT add multiple terms in one invocation. One term per `/glossary-add` per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. For batch backfills, invoke once per term.
-- It does NOT bypass the critic. The `glossary-critic` is the sole authority on entry shape; this skill's self-checks during step 1 are a fast-path convenience, not a substitute.
-- It does NOT edit any files other than `CLAUDE.md` and the one new `docs/current/concepts/glossary/<slug>.md` atomic note. ADR edits, README edits, and Map-table edits are out of scope.
-- It does NOT open a PR on round-3 BLOCK. The skill is the gatekeeper for the trivial-lane PR; a thrice-blocked entry never reaches `reviewer`.
+- Add multiple terms per invocation — one term per `/glossary-add` per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. Batch backfills invoke once per term.
+- Bypass the critic — `glossary-critic` is the sole authority on entry shape; the step-1 self-checks are fast-path convenience.
+- Edit any files other than `CLAUDE.md` and the one new atomic note. ADR/README/Map-table edits are out of scope.
+- Open a PR on round-3 BLOCK — the skill is the gatekeeper; a thrice-blocked entry never reaches `reviewer`.
 
 ## References
 
-- [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) — D2 (entry shape); D3 (scope rule); D4 (this skill is the explicit write path); D7 (bootstrap-mode).
-- [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) — D1 (single-tier consolidation, supersedes ADR-0007 D1); D2 (≥3-citations inclusion threshold); D3 (this skill's zone-branching dropped); D4 (critic rubric updated to 5 rules, partial supersession of ADR-0007 D5); D5 (~35-entry soft cap); D7 (bootstrap-mode).
+- Entity note (full role, invocation contract, edges): [entities/skills/glossary-add](../../../docs/current/entities/skills/glossary-add.md).
+- [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) — D2 (entry shape), D3 (scope rule), D4 (explicit write path), D7 (bootstrap-mode).
+- [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) — D1 (single-tier consolidation), D2 (≥3-citations threshold), D4 (5-rule rubric), D5 (~35-entry soft cap).
+- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — D2 + D10 step 1 (dual-tier atomic note + INDEX row).
 - [`.claude/agents/glossary-critic.md`](../../agents/glossary-critic.md) — the critic this skill invokes.
-- [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md) — the parent pattern (interactive skill that invokes a critic in a ≤3-round loop before publishing).
+- Sibling: [`/glossary-fold`](../glossary-fold/SKILL.md) — bulk auto-fold of skill-local vocabulary.

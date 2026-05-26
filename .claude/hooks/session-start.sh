@@ -25,8 +25,16 @@ if [ "$GH_OK" -eq 1 ]; then
        | jq -r 'if length==0 then "0 open" else "\(length)+ open; recent: \([.[] | "#\(.number) \(.title)"] | join(" | "))" end' 2>/dev/null || echo "(query failed)")
 fi
 
-CTX=$(printf "Branch: %s | divergence vs origin/main: %s commit(s) behind\n\nRecent commits:\n%s\n\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\n" \
-  "$BR" "$DIV" "$LOG" "$SL" "$PR" "$CAP" | head -c 4096 | head -n 50)
+# ADR-0030 D4: warn if jq is missing — PreToolUse Edit/Write hook degrades to
+# rule-#10 ask on every edit when jq is unavailable (real user-pain per #222).
+# Surfacing the warning at session start beats discovering it after 30 prompts.
+JQ_WARN=""
+if [ "$JQ_OK" -ne 1 ]; then
+  JQ_WARN=$(printf "\nWARNING: jq is missing on this system. PreToolUse Edit/Write hook may prompt on every edit (rule #10 ask fallback). Install via bootstrap.sh or winget install jqlang.jq (Windows) / brew install jq (macOS) / apt-get install jq (Linux).\n")
+fi
+
+CTX=$(printf "Branch: %s | divergence vs origin/main: %s commit(s) behind\n\nRecent commits:\n%s\n\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s%s\n" \
+  "$BR" "$DIV" "$LOG" "$SL" "$PR" "$CAP" "$JQ_WARN" | head -c 4096 | head -n 50)
 
 if [ "$JQ_OK" -eq 1 ]; then
   jq -cn --arg ctx "$CTX" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'

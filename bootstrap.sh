@@ -5,12 +5,15 @@
 #   Bring a fresh clone of this repo to a usable state in one command.
 #   Run this once after `git clone`. Re-running is safe (idempotent).
 #
-# Scope (per ADR-0008 D6, slice #60):
+# Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
 #   2. Create the 6 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
 #   5. Apply branch protection R1+R2 on `main` (warn-and-proceed if no admin).
+#   6. yt-dlp dep check (warn-only; ADR-0019 D3).
+#   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
+#   8. Playwright MCP install — idempotent npx (ADR-0025 D7 / ADR-0030 D2).
 #
 # Explicit DEFERRALS (NOT done here):
 #   - Matt Pocock skills install                    — user-level concern
@@ -304,16 +307,99 @@ else
     note "⚠ yt-dlp: missing (install for /distill-video; otherwise harmless)"
 fi
 
-# ---- step 7: Playwright MCP dep check (per ADR-0025 D7) -------------------
+# ---- step 7: jq install (per ADR-0030 D1) ---------------------------------
 
-step 7 "Playwright MCP dep check (idempotent)"
+step 7 "jq install (idempotent; cross-platform)"
+
+# jq is required by:
+#   - .claude/hooks/pre-tool-edit.sh (parses tool_input.file_path JSON)
+#   - .claude/hooks/session-start.sh (emits hookSpecificOutput JSON)
+# On Windows Git Bash, jq is NOT installed by default, which triggers the
+# rule-#10 ask fallback on every Edit/Write (real user-impact today per
+# captured #222). Per ADR-0030 D1: detect, then OS-specific install if missing.
+# Best-effort warn-and-continue; idempotent (skip if installed).
+#
+# OS detection: $OSTYPE works on bash; fall back to `uname`.
+if command -v jq >/dev/null 2>&1; then
+    log "jq present: $(jq --version 2>/dev/null | head -1)"
+    note "✓ jq: present (skipped install)"
+else
+    case "$OSTYPE" in
+        msys*|cygwin*|win32*)
+            JQ_OS="windows"
+            ;;
+        darwin*)
+            JQ_OS="macos"
+            ;;
+        linux*)
+            JQ_OS="linux"
+            ;;
+        *)
+            # Fallback to uname if OSTYPE not informative.
+            UN=$(uname -s 2>/dev/null || echo "")
+            case "$UN" in
+                MINGW*|MSYS*|CYGWIN*) JQ_OS="windows" ;;
+                Darwin)               JQ_OS="macos" ;;
+                Linux)                JQ_OS="linux" ;;
+                *)                    JQ_OS="unknown" ;;
+            esac
+            ;;
+    esac
+    log "jq missing; attempting install for OS=$JQ_OS"
+    JQ_INSTALL_RC=1
+    case "$JQ_OS" in
+        windows)
+            if command -v winget >/dev/null 2>&1; then
+                # --silent + acceptance flags avoid interactive prompts.
+                winget install --id jqlang.jq --silent --accept-source-agreements --accept-package-agreements >/dev/null 2>&1 && JQ_INSTALL_RC=0
+            else
+                warn "winget not available on Windows; cannot auto-install jq."
+                warn "  Manual: download from https://stedolan.github.io/jq/download/ and add to PATH."
+            fi
+            ;;
+        macos)
+            if command -v brew >/dev/null 2>&1; then
+                brew install jq >/dev/null 2>&1 && JQ_INSTALL_RC=0
+            else
+                warn "brew not available on macOS; cannot auto-install jq."
+                warn "  Manual: install Homebrew (https://brew.sh) then 'brew install jq'."
+            fi
+            ;;
+        linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                if command -v sudo >/dev/null 2>&1; then
+                    sudo apt-get install -y jq >/dev/null 2>&1 && JQ_INSTALL_RC=0
+                else
+                    apt-get install -y jq >/dev/null 2>&1 && JQ_INSTALL_RC=0
+                fi
+            else
+                warn "apt-get not available; cannot auto-install jq (try yum/dnf/pacman manually)."
+            fi
+            ;;
+        *)
+            warn "Unknown OS for jq install; skipping."
+            ;;
+    esac
+    if [[ "$JQ_INSTALL_RC" -eq 0 ]]; then
+        log "jq install attempted; verify with 'command -v jq' in a new shell (PATH may need refresh)."
+        note "✓ jq: install attempted ($JQ_OS)"
+    else
+        warn "jq install failed or skipped. PreToolUse Edit/Write hook will fall back to rule-#10 ask."
+        note "⚠ jq: missing (install manually for $JQ_OS)"
+    fi
+fi
+
+# ---- step 8: Playwright MCP install (per ADR-0025 D7 / ADR-0030 D2) -------
+
+step 8 "Playwright MCP install (idempotent)"
 
 # Playwright MCP is required by the qa-tester subagent's ui-mode (per
-# ADR-0025 D1 + D7) for screenshot-judged UI acceptance testing. We try a
-# zero-state probe via `npx -y @playwright/mcp@latest --version`; npx caches
-# the package locally on first download. Subsequent runs are instant.
+# ADR-0025 D1 + D7) for screenshot-judged UI acceptance testing.
+# Per ADR-0030 D2 (completing ADR-0025 D7 OQ-4): detect via `--version` probe;
+# if missing, install via `npx -y @playwright/mcp@latest install`.
+# npx caches the package locally on first download; subsequent runs are instant.
 #
-# Cross-platform notes (OQ-4 in PRD #215):
+# Cross-platform notes:
 #   - Verified on Windows Git Bash 2026-05-25 (Node v22.x, npm 11.13.0) —
 #     `npx -y @playwright/mcp@latest --version` returned "Version 0.0.75".
 #   - Linux/macOS unverified at bootstrap-time; same `npx` invocation should
@@ -328,14 +414,20 @@ step 7 "Playwright MCP dep check (idempotent)"
 if command -v npx >/dev/null 2>&1; then
     if npx -y @playwright/mcp@latest --version >/dev/null 2>&1; then
         PW_MCP_VERSION=$(npx -y @playwright/mcp@latest --version 2>/dev/null | head -1)
-        log "Playwright MCP callable: ${PW_MCP_VERSION}"
-        note "✓ Playwright MCP: callable (${PW_MCP_VERSION})"
+        log "Playwright MCP callable: ${PW_MCP_VERSION} (skipped install)"
+        note "✓ Playwright MCP: present (${PW_MCP_VERSION})"
     else
-        warn "npx present but 'npx -y @playwright/mcp@latest --version' failed."
-        warn "  Required by qa-tester ui-mode (ADR-0025 D1). Try running manually for diagnostics:"
-        warn "    npx -y @playwright/mcp@latest --version"
-        warn "  Network access required on first run (downloads package to npx cache)."
-        note "⚠ Playwright MCP: probe failed (qa-tester ui-mode degraded)"
+        # Probe failed → attempt install per ADR-0030 D2.
+        log "Playwright MCP probe failed; attempting install via 'npx -y @playwright/mcp@latest install'"
+        if npx -y @playwright/mcp@latest install >/dev/null 2>&1; then
+            log "Playwright MCP install attempted; verify with 'npx -y @playwright/mcp@latest --version'."
+            note "✓ Playwright MCP: install attempted"
+        else
+            warn "Playwright MCP install failed. Try running manually:"
+            warn "    npx -y @playwright/mcp@latest install"
+            warn "  Network access required (downloads package to npx cache)."
+            note "⚠ Playwright MCP: install failed (qa-tester ui-mode degraded)"
+        fi
     fi
 else
     warn "npx not on PATH. Required by qa-tester ui-mode (ADR-0025 D1)."

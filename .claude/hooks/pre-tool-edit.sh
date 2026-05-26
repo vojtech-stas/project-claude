@@ -1,17 +1,23 @@
 #!/bin/bash
-# PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate.
+# PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
+# restructured per ADR-0030 D3 to run allowlist BEFORE jq-fallback for Windows
+# Git Bash robustness (jq is not installed by default on Windows; previous
+# layering escalated rule-#10 ask on every edit, including gitignored ones).
 #
 # Layered behavior (in order):
 #  1. Subagent context skip (CLAUDE_AGENT_TYPE set) — exit 0; subagents ARE the PR pipeline.
-#  2. tool-results/ + .claude/projects/ allowlist — exit 0.
-#  3. Tracked-file check; non-tracked files → exit 0.
-#  4. Spec-gate (ADR-0028 D1+D2): for main-agent edits to tracked files, parse branch and
-#     verify an in-flight PRD/slice issue exists. DENY when no matching issue / no matching
-#     branch pattern / issue closed. Fall through to rule-#10 ask when issue exists+open.
-#     Soft-degrades to ask if `gh` is unavailable OR returns a network error (ADR-0028 D4).
-#  5. Rule-#10 escalate-to-ask fallback (preserved from ADR-0023 D3).
-#
-# Soft-degrades if `jq` is missing → always emit "ask" (escalate, don't silently allow).
+#  2. Pre-jq allowlist (ADR-0030 D3) — read raw stdin substring, POSIX-portable
+#     path matching (handles `/` AND `\` separators). Exits silently for
+#     gitignored scratch dirs even when jq is missing.
+#  3. jq-missing fallback — emit "ask" (cannot parse stdin reliably without jq).
+#  4. File-path extract via jq.
+#  5. Tracked-file check; non-tracked files → exit 0.
+#  6. Spec-gate (ADR-0028 D1+D2, PRESERVED UNCHANGED): for main-agent edits to tracked files,
+#     parse branch and verify an in-flight PRD/slice issue exists. DENY when no matching
+#     issue / no matching branch pattern / issue closed. Fall through to rule-#10 ask when
+#     issue exists+open. Soft-degrades to ask if `gh` is unavailable OR returns a network
+#     error (ADR-0028 D4).
+#  7. Rule-#10 escalate-to-ask fallback (preserved from ADR-0023 D3).
 
 set -uo pipefail
 
@@ -47,18 +53,27 @@ if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
   exit 0
 fi
 
+# ADR-0030 D3: Pre-jq allowlist — read raw stdin substring, POSIX-portable
+# path matching that handles both `/` (POSIX) and `\` (Windows) separators.
+# Runs BEFORE the jq-missing fallback so gitignored scratch dirs exit silently
+# even on Windows Git Bash where jq is not installed by default.
+# Capped at 4096 bytes to bound memory; tool_input.file_path appears early.
+STDIN_RAW=$(head -c 4096 </dev/stdin 2>/dev/null || echo "")
+case "$STDIN_RAW" in
+  *tool-results*|*.claude/projects*|*.claude/logs*|*.claude\\projects*|*.claude\\logs*) exit 0 ;;
+esac
+
 # Missing jq → cannot parse stdin reliably; escalate (default-conservative per OQ-1 fallback).
 if ! command -v jq >/dev/null 2>&1; then
   emit_ask
 fi
 
-FP=$(jq -r '.tool_input.file_path // ""' </dev/stdin 2>/dev/null || echo "")
+# Re-parse: STDIN_RAW already consumed /dev/stdin; pipe it into jq instead.
+FP=$(printf '%s' "$STDIN_RAW" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo "")
 [ -z "$FP" ] && exit 0
 
-# Allowlist: transcripts / tool-results / paths the user explicitly excludes.
-case "$FP" in
-  */.claude/projects/*|*/tool-results/*|*.claude/projects/*|*tool-results/*) exit 0 ;;
-esac
+# (Post-jq allowlist removed per ADR-0030 D3 — pre-jq allowlist at line ~62
+# handles all scratch-dir cases now, including Windows backslash paths.)
 
 # Tracked-file check; if NOT tracked → exit cleanly (no spec-gate, no ask).
 REL="${FP#"$PWD"/}"

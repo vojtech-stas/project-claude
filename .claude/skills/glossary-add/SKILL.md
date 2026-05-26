@@ -19,7 +19,9 @@ Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extensio
 
 2. **Draft the entry markdown.** Use the canonical shape from [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2: term + one-sentence definition + authority + (optional) see-also.
 
-   Always append to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position. Before drafting, count existing entries; if the count is at or above the ~35 soft cap per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D5, surface a warning but proceed (the cap is soft, not mechanically enforced). `glossary-critic`'s rule 5 (inclusion threshold) is the load-bearing gate per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2.
+   Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D2 + D10 step 1 (executed in PRD #245), glossary entries live in TWO places: (a) a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` (the canonical home; 50-100 LoC body + YAML frontmatter + typed edges per ADR-0031 D4+D5+D3), and (b) a single-line INDEX row appended to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position, pointing to the atomic note. The skill MUST write both. Before drafting, count existing INDEX rows; if the count is at or above the ~35 soft cap per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D5, surface a warning but proceed (the cap is soft, not mechanically enforced). `glossary-critic`'s rule 5 (inclusion threshold) is the load-bearing gate per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2.
+
+   Transitional note: 5 of 22 pre-existing terms have been migrated to the atomic-note + INDEX shape in PRD #245 slice 1; sibling slices 2 and 3 migrate the remaining 17. From PRD #245 merge forward, new terms ship in the new shape per bootstrap-mode ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D13). Full skill thinning to the new shape is deferred to T5 per ADR-0031 D10.
 
 3. **Invoke the critic.** State the round number explicitly (start at round 1). Pass the drafted entry inline — `glossary-critic` no longer requires a target-zone argument (single-tier per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D1). Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5 as partially superseded by [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D4, the critic runs a 5-rule rubric: scope category (a/b/c), no duplicate, one-sentence definition, authority field, inclusion threshold (≥3 citations across ≥2 of {decisions/, .claude/agents/, .claude/skills/}).
 
@@ -34,8 +36,8 @@ Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extensio
    git checkout main
    git pull --ff-only origin main
    git checkout -b hotfix/glossary-<kebab-term>
-   # apply the entry edit
-   git add CLAUDE.md
+   # apply BOTH edits: new docs/current/concepts/glossary/<slug>.md atomic note + CLAUDE.md INDEX row
+   git add docs/current/concepts/glossary/<slug>.md CLAUDE.md
    git commit -m "docs(glossary): add <term>" -m "<one-sentence why>" -m "Co-authored-by: Claude <noreply@anthropic.com>"
    git push -u origin hotfix/glossary-<kebab-term>
    gh pr create --title "docs(glossary): add <term>" --body "<see template below>" --label trivial
@@ -60,7 +62,7 @@ Per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extensio
 
 - It does NOT add multiple terms in one invocation. One term per `/glossary-add` per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. For batch backfills, invoke once per term.
 - It does NOT bypass the critic. The `glossary-critic` is the sole authority on entry shape; this skill's self-checks during step 1 are a fast-path convenience, not a substitute.
-- It does NOT edit any file other than `CLAUDE.md`. ADR edits, README edits, and Map-table edits are out of scope.
+- It does NOT edit any files other than `CLAUDE.md` and the one new `docs/current/concepts/glossary/<slug>.md` atomic note. ADR edits, README edits, and Map-table edits are out of scope.
 - It does NOT open a PR on round-3 BLOCK. The skill is the gatekeeper for the trivial-lane PR; a thrice-blocked entry never reaches `reviewer`.
 
 ## References

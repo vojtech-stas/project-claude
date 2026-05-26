@@ -57,9 +57,9 @@ The draft must declare a scope category and that category must fit. Per [ADR-000
 
 ### 2. No duplicate
 
-The term must not already exist.
+The term must not already exist in either location of the consolidated glossary surface.
 
-**How to check:** `Grep` for the literal term (case-insensitive, whole-word) against the `## Glossary` section of `CLAUDE.md`. If a matching entry exists → FAIL with `"duplicate: '<X>' already exists in CLAUDE.md glossary; this PR would create a second entry"`.
+**How to check:** `Grep` for the literal term (case-insensitive, whole-word) against BOTH (a) the `## Glossary` section of `CLAUDE.md` (the INDEX) AND (b) the atomic notes under `docs/current/concepts/glossary/*.md` (the canonical bodies) — both locations introduced by [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) D2 + D10 step 1 (PRD #245). If a matching entry exists in either location → FAIL with `"duplicate: '<X>' already exists in <CLAUDE.md glossary INDEX | docs/current/concepts/glossary/<slug>.md atomic note>; this PR would create a second entry"`. Transitional note per PRD #245: the 17 still-inline CLAUDE.md entries (slated for migration in slices 2-3) count as existing entries for duplicate-detection purposes.
 
 ### 3. One-sentence definition
 

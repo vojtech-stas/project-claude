@@ -78,133 +78,23 @@ BLOCK on any commit not matching `<type>(<optional scope>): <subject>` where typ
 ### 5. [R-NO-MAIN](../../docs/current/concepts/rules/r-no-main.md) — Commits to `main`
 BLOCK when the branch IS `main` or the diff contains direct commits to `main` (force-push or misconfigured branch). Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-no-main.md](../../docs/current/concepts/rules/r-no-main.md).
 
-### 6. Secrets or sensitive data committed
-Look for: `.env*` files (other than `.env.example`), API keys, tokens, credentials, private keys.
+### 6. [R-SECRETS](../../docs/current/concepts/rules/r-secrets.md) — Secrets or sensitive data committed
+BLOCK on `.env*` files (other than `.env.example`), API keys, tokens, credentials, private keys, or secret-shaped strings (`sk_`, `gho_`, `gh[ps]_`, `AKIA`, `BEGIN RSA PRIVATE KEY`, `password\s*=`, `api_key\s*=`) in the diff. Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-secrets.md](../../docs/current/concepts/rules/r-secrets.md).
 
-**How to check:** Scan the diff for patterns like `sk_`, `gho_`, `gh[ps]_`, `AKIA`, `BEGIN RSA PRIVATE KEY`, `password\s*=`, `api_key\s*=`. Any hit → BLOCK with "secret leak: <pattern> at <file>:<line>".
+### 7. [R-PR-BODY](../../docs/current/concepts/rules/r-pr-body.md) — PR body missing required sections
+BLOCK when the PR body lacks any of the required `Scope`, `Out-of-scope`, or `Verification` headings per CLAUDE.md "Finishing a slice". Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-pr-body.md](../../docs/current/concepts/rules/r-pr-body.md).
 
-### 7. PR body missing required sections
-Per CLAUDE.md, every PR body MUST include: **Scope**, **Out-of-scope**, **Verification**. If any of those headings are missing → BLOCK.
+### 8. [R-ADR-CONFLICT](../../docs/current/concepts/rules/r-adr-conflict.md) — ADR conflict
+BLOCK when the PR's changes contradict a decision recorded in an existing ADR and no new ADR superseding the old one is included in the PR. Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-adr-conflict.md](../../docs/current/concepts/rules/r-adr-conflict.md).
 
-### 8. ADR conflict
-If the PR's changes contradict a decision recorded in an existing ADR, and there's no new ADR superseding the old one in the PR → BLOCK with "ADR conflict: PR contradicts decision <ADR-NNNN> but no superseding ADR is included".
+### 9. [R-LOC](../../docs/current/concepts/rules/r-loc.md) — slice PR exceeds runtime-artifact LoC cap
+BLOCK when a slice PR's diff exceeds **300 LoC of runtime-artifact code** (files under `.claude/agents/` or `.claude/skills/` — the canonical "runtime artifact" definition). Full rule + how-to-check + exemptions (trivial-lane, prd-label): see [../../docs/current/concepts/rules/r-loc.md](../../docs/current/concepts/rules/r-loc.md).
 
-### 9. R-LOC — slice PR exceeds runtime-artifact LoC cap
+### 10. [R-CLOSES](../../docs/current/concepts/rules/r-closes.md) — PR body must close a valid slice issue
+BLOCK when the PR body does not contain a `Closes #<n>` line referencing a valid `slice`-labeled issue. Full rule + how-to-check + exemptions (trivial-lane, prd-label tier-match): see [../../docs/current/concepts/rules/r-closes.md](../../docs/current/concepts/rules/r-closes.md).
 
-**Rule:** Slice PR diff exceeds **300 LoC of runtime-artifact code** → BLOCK.
-
-**Canonical definition of "runtime artifact"** (this file is the canonical source; CLAUDE.md cross-references it):
-
-- **Runtime artifact** = any file under `.claude/agents/` or `.claude/skills/`. These are read and executed by the agent at runtime; their size directly affects agent behavior and context budget.
-- **Non-runtime (uncapped)** = `decisions/*.md`, `README.md`, `CLAUDE.md`, anything under `docs/`. Documentation edits are uncapped.
-
-**How to check:**
-
-```bash
-gh pr diff <PR> --patch | <count added/removed lines under .claude/agents/ and .claude/skills/ only>
-```
-
-A practical recipe: run `gh pr view <PR> --json files --jq '.files[] | select(.path | startswith(".claude/agents/") or startswith(".claude/skills/")) | .additions + .deletions'` and sum. Count ONLY runtime-artifact paths; ignore non-runtime paths entirely (do not count them, do not blend them).
-
-If the total exceeds 300 → BLOCK with "R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 300. Split the slice or move non-runtime content out of `.claude/`".
-
-**Exemptions:** Trivial-lane PRs labeled `trivial` (≤10 LoC runtime diff, no behavior change) are not subject to this cap; they fast-path independently. PRs labeled `prd` (PRD itself, not a slice) are docs-only and exempt.
-
-### 10. R-CLOSES — PR body must close a valid slice issue
-
-**Rule:** PR body does not contain a `Closes #<n>` line referencing a valid slice-labeled issue → BLOCK.
-
-**How to check:**
-
-1. Grep PR body for `Closes #<n>` (case-insensitive; also accept `Fixes #<n>` / `Resolves #<n>` per GitHub's keyword set).
-2. The referenced issue must exist: `gh issue view <n> --json number,labels` returns a real issue.
-3. The issue's labels must include `slice` (verify in the JSON output).
-
-If any of those checks fail → BLOCK with one of:
-- "R-CLOSES: PR body missing `Closes #<n>` line; every slice PR must close exactly one slice-labeled issue."
-- "R-CLOSES: referenced issue #<n> does not exist."
-- "R-CLOSES: referenced issue #<n> is not labeled `slice` (labels: <list>); slice PRs must close a slice-labeled issue."
-
-**Exemptions:** Trivial-lane PRs labeled `trivial` and PRD PRs labeled `prd` may use `Closes #<n>` against issues of the corresponding label tier instead. If the PR is unlabeled and clearly fits the slice tier (modifies `.claude/agents/` or `.claude/skills/`), apply R-CLOSES.
-
-### 11. R-META — new ADR additions must show subagent provenance
-
-**Policy source:** [ADR-0004 D4](../../decisions/0004-bypass-prevention.md) — main-agent meta-output discipline, **as superseded by [ADR-0009 D1](../../decisions/0009-discipline-tightening.md)** which broadens rule #10's scope from an enumerated path list to ANY tracked file. The main agent must not hand-author any tracked file; all edits flow through the PRD/slice/PR pipeline. R-META is the heuristic mechanical enforcement at PR time for the narrowest, highest-signal slice of that policy: NEW files in `decisions/`.
-
-**Why R-META retains narrow ADR-only scope despite ADR-0009 D1's universal rule #10** (implementer judgment per slice #77, reviewer-approved at PR time): the provenance signals (`Closes #N` to a slice/prd issue; `Co-Authored-By: Claude` trailer) are tuned to additions of *high-signal canonical decision artifacts*. Broadening R-META to fire on every NEW tracked file would create false positives on legitimate non-ADR additions (config files, scripts, `.githooks/*`, build artifacts) where the provenance signal is weaker and the cost of a missed addition is lower. ADR-0009 D1's universal scope is enforced at the *policy* layer (CLAUDE.md rule #10 covers any tracked file) and at the *PR-tier mechanical* layer by R-CLOSES (every slice PR must close a `slice`-labeled issue, which proves pipeline flow for the PR as a whole regardless of which file types it adds). R-META adds an ADR-specific provenance check on top of that base; widening it would dilute the signal that motivated ADR-0004 D4 to scope R-META narrowly in the first place. Per [ADR-0009 §Open questions deferred](../../decisions/0009-discipline-tightening.md), both interpretations (broaden vs retain narrow) honor D1's spirit; the implementer's call is to retain narrow.
-
-**Rule:** A PR that *adds* a new ADR file matching `decisions/[0-9]+-*.md` must show provenance evidence in the PR body or commit chain. If none is present → BLOCK with reason `META-OUTPUT-PROVENANCE`.
-
-**Provenance signals (layered defense — EITHER alone suffices for APPROVE on R-META):**
-
-- **Signal A — `Closes #<N>` referencing a `slice`- or `prd`-labeled issue.** The PR body contains a GitHub closing keyword pointing to an issue whose labels include `slice` or `prd`. This proves the ADR addition flowed through the PRD→slice→PR pipeline.
-- **Signal B — `Co-Authored-By: Claude` trailer in any commit on the PR head.** Case-insensitive substring match `co-authored-by: claude` in any commit message body. This proves an implementer Agent (subagent) participated in authoring.
-
-Either signal alone passes R-META. Both absent → BLOCK.
-
-**Scope (CRITICAL — DO NOT WIDEN):**
-
-- R-META applies ONLY to NEW files (git status `A` — additions-only, zero deletions) matching the regex `^decisions/[0-9]+-.*\.md$`. The leading `[0-9]+-` discriminator means the rule fires for ADR files (e.g., `decisions/0005-foo.md`) and never for `decisions/README.md` or `decisions/branch-protection-config.json`.
-- R-META does NOT apply to *edits* of existing ADR files. Existing ADRs are immutable per `decisions/README.md`; any change to a pre-existing `decisions/NNNN-*.md` is already blocked by the immutability convention plus rule 1 (Scope drift) and rule 8 (ADR conflict).
-- R-META does NOT apply to additions in `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, `README.md`, or anywhere else. Those paths are covered by R-LOC and R-CLOSES.
-
-**How to check:**
-
-1. List NEW ADR files added in the PR (additions-only, ADR pattern):
-
-   ```bash
-   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^decisions/[0-9]+-.*\\.md$")) | select(.additions > 0 and .deletions == 0) | .path'
-   ```
-
-   If the output is empty → R-META is `[PASS]` trivially (rule does not fire). Move on.
-
-2. Check Signal A — `Closes #N` referencing a `slice`- or `prd`-labeled issue:
-
-   ```bash
-   gh pr view <PR> --json body --jq '.body' | grep -i -E '(closes|fixes|resolves) #[0-9]+'
-   ```
-
-   For each `#N` extracted, verify the label:
-
-   ```bash
-   gh issue view <N> --json labels --jq '.labels[].name' | grep -E '^(slice|prd)$'
-   ```
-
-   If any referenced issue carries `slice` or `prd` → Signal A satisfied.
-
-3. Check Signal B — `Co-Authored-By: Claude` trailer in any commit:
-
-   ```bash
-   gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-authored-by: claude'
-   ```
-
-   Any hit → Signal B satisfied.
-
-4. **Verdict:**
-   - Signal A OR Signal B → R-META `[PASS]`.
-   - Neither Signal A nor Signal B → BLOCK with: "R-META: PR adds new ADR file(s) `<list-of-paths>` but the PR body lacks a `Closes #N` reference to a `slice`/`prd`-labeled issue AND no commit carries a `Co-Authored-By: Claude` trailer. New ADRs must flow through the PRD/slice/PR pipeline per ADR-0004 D4."
-
-**R-META-OVERRIDE recovery (false-positive escape hatch):**
-
-A contributor whose PR legitimately adds a new ADR but trips R-META (e.g., a one-time bootstrap, an externally-authored ADR being absorbed, a hand-fix where provenance was inadvertently lost) MAY add a single line to the PR body:
-
-```
-R-META-OVERRIDE: <one-line rationale>
-```
-
-**Detection:**
-
-```bash
-gh pr view <PR> --json body --jq '.body' | grep -i -E '^R-META-OVERRIDE: .+'
-```
-
-When the override line is present AND has a non-empty rationale on the same line:
-
-- R-META is recorded as `[OVERRIDE]` (NOT `[PASS]`, NOT `[FAIL]`) in the rule checklist.
-- The override does NOT change the verdict for any OTHER rule. If another hard rule fails, the PR is still BLOCK'd — R-META-OVERRIDE relaxes R-META specifically and nothing else.
-- The verdict comment MUST include a clearly-labeled `### R-META override notice` section quoting the override rationale verbatim and naming the new ADR file(s) it covers, so the human sees the override in QA review and at PRD-level qa-plan handoff.
-
-The override is a soft-pass, not a silent bypass: it costs the contributor one visible line in the PR body and one visible section in the reviewer comment. That visibility is the point.
+### 11. [R-META](../../docs/current/concepts/rules/r-meta.md) — new ADR additions must show subagent provenance
+BLOCK when a PR adds a NEW ADR file matching `decisions/[0-9]+-*.md` without either Signal A (`Closes #<N>` to a `slice`/`prd`-labeled issue) OR Signal B (`Co-Authored-By: Claude` trailer in any commit). Full rule + how-to-check + R-META-OVERRIDE escape hatch + scope carveouts: see [../../docs/current/concepts/rules/r-meta.md](../../docs/current/concepts/rules/r-meta.md).
 
 ### 12. R-TRUTH-DOC — truth-doc currency on ADR-touching PRs
 
@@ -244,37 +134,11 @@ The override is a soft-pass, not a silent bypass: it costs the contributor one v
 
 ---
 
-## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
+## Discretionary rule — [R-BOY-SCOUT](../../docs/current/concepts/rules/r-boy-scout.md) (per-PR drift detection)
 
-Per [ADR-0018](../../decisions/0018-boy-scout-reviewer-rule.md). Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline per D4). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (reviewer rule extension, NOT a new critic).
+Per [ADR-0018](../../decisions/0018-boy-scout-reviewer-rule.md). Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline). Honors the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (reviewer rule extension, NOT a new critic).
 
-### R-BOY-SCOUT — per-PR drift detection on audit-relevant files
-
-**Trigger:** the PR's diff touches any file matching the patterns in the table below.
-
-| Trigger pattern | Audit checks to apply |
-|---|---|
-| `.claude/agents/*.md` | /audit-subagents rubric (all 10 checks per [ADR-0011](../../decisions/0011-subagent-quality-framework.md) D4) applied to the touched files only |
-| `.claude/skills/*/SKILL.md` | /audit-meta `--structure` rubric STRUCT-1, STRUCT-2, STRUCT-7 + frontmatter shape (per [ADR-0017](../../decisions/0017-audit-meta-consolidation.md) D2) |
-| `decisions/*.md` | /audit-meta `--docs` rubric DOCS-1, DOCS-2, DOCS-7, DOCS-8 (cross-reference checks, per [ADR-0017](../../decisions/0017-audit-meta-consolidation.md) D3) |
-| `CLAUDE.md` | /audit-meta `--docs` rubric DOCS-3, DOCS-4, DOCS-5, DOCS-9, DOCS-10 |
-| `README.md` | /audit-meta `--docs` rubric DOCS-5, DOCS-6, DOCS-10 |
-
-Multiple matching paths in one PR → run all applicable rubrics; consolidate findings in the verdict's `Findings` section.
-
-**Inline-execution constraint (per ADR-0018 D3):** apply the rubric criteria INLINE using your own Bash + Grep tool access. Do NOT shell out to `/audit-subagents` or `/audit-meta` — they are session-interactive skills the reviewer cannot invoke. The rubrics are mechanical (grep-based per [ADR-0011](../../decisions/0011-subagent-quality-framework.md) D2) and self-contained; reading each touched file and running the relevant grep patterns is feasible directly.
-
-**Severity discretion (per ADR-0018 D4):** emit each R-BOY-SCOUT finding at one of two severities:
-
-- **BLOCK** when ALL of:
-  - The audit rule has zero documented false-positive cases against current main (currently *excludes* DOCS-5, DOCS-6, DOCS-7 from BLOCK eligibility per backlog [#142](https://github.com/vojtech-stas/project-claude/issues/142) calibration carve-out — those rules emit as Recommendation only until #142 ships).
-  - The fix is mechanical and small (one-line, hotfix-shape).
-  - The drift would materially impact future readers (e.g., a stale ADR D-ID reference, a known-bad pattern like `N=3` in narrative docs post-[ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md)).
-- **Recommendation** otherwise — surface in verdict but do NOT block merge; user/implementer fixes via trivial-lane post-merge.
-
-**Default-conservative-toward-REC** (per ADR-0018 D4, inverting [ADR-0009](../../decisions/0009-discipline-tightening.md) D3's hard-block default): when uncertain whether a finding meets all three BLOCK criteria, emit as Recommendation. R-BOY-SCOUT is additive defense-in-depth; the cost of a false-positive BLOCK exceeds the cost of a false-negative REC (the 12 hard-block rules remain the primary gate).
-
-**Verdict integration:** R-BOY-SCOUT findings appear as a 13th rule line in the Rubric (e.g., `[PASS] 13. R-BOY-SCOUT: no audit-relevant files touched` OR `[FAIL] 13. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)`); BLOCK-grade findings appear in `Findings` numbered with rule prefix `R-BOY-SCOUT`; Recommendation-grade findings appear in the existing Recommendations section. (R-BOY-SCOUT moved from 12th to 13th rubric position when R-TRUTH-DOC per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D5 became the 12th hard-block rule.)
+When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`), apply the matching audit-subagents / audit-meta rubric checks INLINE — emit as BLOCK only when the rule has zero documented false-positive cases AND the fix is mechanical AND the drift would materially impact future readers; otherwise emit as Recommendation. Default-conservative-toward-REC (inverting the hard-block default). Full trigger table + per-rule audit-check mapping + inline-execution constraint + severity discretion + verdict integration: see [../../docs/current/concepts/rules/r-boy-scout.md](../../docs/current/concepts/rules/r-boy-scout.md).
 
 ---
 

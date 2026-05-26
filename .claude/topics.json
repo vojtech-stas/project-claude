@@ -1,4 +1,5 @@
 {
   "qa-automation": ["qa-tester", "qa-plan", "qa automation", "acceptance test"],
-  "subagents": ["subagent", "subagents", "agent capability", "which model", "haiku vs sonnet", "tool boundaries"]
+  "subagents": ["subagent", "subagents", "agent capability", "which model", "haiku vs sonnet", "tool boundaries"],
+  "hooks": ["hook", "hooks", "PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "Stop hook", "spec-gate"]
 }

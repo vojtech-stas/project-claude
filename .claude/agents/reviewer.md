@@ -142,119 +142,23 @@ When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude
 
 ---
 
-## Recommend-only criteria (do NOT block; mention in comment)
+## Recommend-only criteria
 
-Subjective items. Leave a recommendation in your comment but APPROVE the PR.
+See [reviewer-philosophy](../../docs/current/topics/reviewer-philosophy.md) for the full recommend-only list + the non-blocking-follow-ups → captured-issue convention.
 
-- Code style preferences (naming, formatting that linters didn't catch)
-- Refactoring opportunities ("this could be DRYer")
-- Documentation improvements ("CLAUDE.md could mention X")
-- Test coverage that could be more thorough (more edge cases)
-- Architectural suggestions for FUTURE work
-- Performance optimizations that aren't critical
-- Spelling, grammar in non-user-facing text
-
-**Non-blocking follow-ups → captured issue (per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../decisions/0009-discipline-tightening.md) D2, originating from [ADR-0006](../../decisions/0006-backlog-and-session-continuity.md) D4 write-convention pattern).** When non-blocking recommendations during a PR review represent meaningful follow-ups (not just nitpicks or style preferences), the reviewer MUST capture them as `captured`-labeled GitHub Issues (`gh issue create --label captured --title "..." --body "..."`) and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 inline-firing convention. **Mandatory** per CLAUDE.md rule #11; the autopilot's `backlog-critic` decides quality downstream, not the reviewer. Lives in the Recommendations section of the verdict comment; surfaced for human/orchestrator awareness but does not gate APPROVE.
+Summary: subjective items (style, refactoring, doc-improvement, future architectural suggestions, performance non-critical, spelling in non-user-facing text) surface as Recommendations — do NOT block. Meaningful non-blocking follow-ups MUST be captured as `captured`-labeled GitHub issues per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + CLAUDE.md rule #11, with inline `/promote-to-backlog <N>` invocation per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3.
 
 ---
 
 ## Output format
 
-Conforms to the canonical verdict template + CRITIC trailer per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and CLAUDE.md "Output-shape standard for subagents and output-emitting skills". 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. R-META override notice, Recommendations (non-blocking), and MERGE_STATUS (reviewer-specific — `reviewer` is the only critic that auto-merges) are permitted critic-specific extensions, appended after Summary and before the CRITIC trailer.
+See [output-shapes](../../docs/current/topics/output-shapes.md) for the canonical verdict template + CRITIC trailer field schema + GENERATOR trailer schema + permitted critic-specific extensions.
 
-### PRD #28 §6 OQ#1 resolution (verdict-comment vs return-block)
-
-The **posted PR comment** (via `gh pr comment <PR> --body-file <tempfile>`) is the **canonical verdict-template instance** — the full 5-section body + permitted extensions + CRITIC trailer. The **return-block to the calling agent** is the **derived trailer-only summary** — same CRITIC-trailer fields (plus the `MERGE_STATUS` permitted extension), with no body sections — for parsing efficiency. The two emissions carry the same trailer fields verbatim; the difference is only that the posted comment additionally renders the 5-section human-readable body above the trailer.
-
-### Posted PR comment template (canonical verdict-template instance)
-
-Post a comment on the PR using `gh pr comment <PR> --body-file <tempfile>` (use a tempfile to preserve markdown formatting; PowerShell single-line `--body` mangles multiline). The comment MUST follow this exact structure:
-
-```markdown
-## reviewer verdict: **[APPROVE | BLOCK]** (round <N>/3)
-
-### Subject of review
-<2-4 sentences. State what THIS PR was supposed to accomplish, drawn from the PR body's stated scope, linked GitHub issues' acceptance criteria, any referenced ADRs, and the PRD if linked. This is the spec contract you are judging the diff against — making your interpretation visible to the human at QA time. If you couldn't form a clear picture, BLOCK with "task intent unclear".>
-
-### Rubric
-- [PASS/FAIL] 1. Scope: <one-line verdict>
-- [PASS/FAIL] 2. YAGNI: <one-line verdict>
-- [PASS/FAIL] 3. Tests for new behavior: <one-line verdict>
-- [PASS/FAIL] 4. Conventional Commits: <one-line verdict>
-- [PASS/FAIL] 5. No commits to main: <one-line verdict>
-- [PASS/FAIL] 6. No secrets: <one-line verdict>
-- [PASS/FAIL] 7. PR body complete (scope/out-of-scope/verification): <one-line verdict>
-- [PASS/FAIL] 8. No ADR conflicts: <one-line verdict>
-- [PASS/FAIL] 9. R-LOC (≤300 LoC runtime-artifact diff): <one-line verdict, include the counted N>
-- [PASS/FAIL] 10. R-CLOSES (`Closes #<n>` references a valid slice-labeled issue): <one-line verdict>
-- [PASS/FAIL/OVERRIDE] 11. R-META (new ADR additions show subagent provenance via `Closes #N` to slice/prd issue OR `Co-Authored-By: Claude` trailer): <one-line verdict; mark [PASS] when no new ADR file is added or when a signal is satisfied, [OVERRIDE] when `R-META-OVERRIDE: <rationale>` is present in PR body, [FAIL] otherwise>
-- [PASS/FAIL] 12. R-TRUTH-DOC (ADR-touching PR also updates `docs/current/<topic>.md` truth-doc per ADR-0026 D5): <one-line verdict; mark [PASS] when no ADR-body file is changed OR when ≥1 `docs/current/*.md` also changes; [FAIL] when ADR-body file changed without any `docs/current/*.md` change>
-
-### Findings
-<On BLOCK: numbered list. For each blocked rule: rule number + file:line reference + 1-3 sentence diagnosis + concrete fix the implementer can apply mechanically. Be specific.
-On APPROVE: "None.">
-
-### Summary
-<One paragraph. State verdict, key reason. If BLOCK: what the implementer should fix. If APPROVE: confirm you will auto-merge after this comment posts.>
-
-### R-META override notice (only if R-META is `[OVERRIDE]`)
-<Permitted critic-specific extension. Quote the `R-META-OVERRIDE: <rationale>` line verbatim and list the new ADR file paths it covers. Omit this section entirely if R-META is `[PASS]` or `[FAIL]`.>
-
-### Recommendations (non-blocking)
-<Optional permitted extension. 1-5 bullets. Each on its own line.>
-
-### Merge status (only on APPROVE, populated after the merge attempt completes)
-<Permitted reviewer-specific extension per ADR-0005 D1 — `reviewer` is the only critic that auto-merges. One line: "merged (commit <sha>)" on success, or "failed: <error>" on auto-merge failure. Omit on BLOCK.>
-
-<CRITIC trailer — see "CRITIC trailer field schema" below>
-
----
-*Posted by `reviewer` subagent. Auto-merge follows on APPROVE per ADR-0002. Human checkpoint is at PRD-level via the `qa-plan` skill.*
-```
-
-`[PASS/FAIL]` is placeholder syntax — write either literal `[PASS]` or `[FAIL]` for each line in the actual comment. Plain text is used (not emoji) for terminal portability across Windows/Linux/macOS.
+Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 12 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
 
 ---
 
-## After posting the comment — take the post-verdict action
-
-The return-block emitted to the calling agent is the **derived trailer-only summary** per the OQ#1 resolution above: same CRITIC-trailer fields as the posted comment, no body sections. Field schema is canonical per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1b (`VERDICT / REASON / ROUND`, on BLOCK add `FAILED_RULES / FINDINGS_COUNT`, on round-max BLOCK add `ESCALATE: needs-human`). `MERGE_STATUS` is preserved as a permitted reviewer-specific extension after `FINDINGS_COUNT` (or after `ROUND` on APPROVE).
-
-### CRITIC trailer field schema (used in BOTH the posted comment and the return-block)
-
-Append as a fenced code block at the end of the posted comment, and emit the same fields verbatim as the return-block.
-
-#### On APPROVE
-
-```
-VERDICT: APPROVE
-REASON: <one sentence>
-ROUND: <N>/3
-MERGE_STATUS: merged (commit <sha>) | failed: <error>
-```
-
-#### On BLOCK (rounds 1-2)
-
-```
-VERDICT: BLOCK
-REASON: <one sentence>
-ROUND: <N>/3
-FAILED_RULES: <comma-separated rule numbers, e.g. "2,5,7">
-FINDINGS_COUNT: <integer>
-```
-
-#### On round-max BLOCK (round 3 BLOCK)
-
-Add an `ESCALATE` line to the BLOCK trailer:
-
-```
-VERDICT: BLOCK
-REASON: <one sentence>
-ROUND: 3/3
-FAILED_RULES: <comma-separated rule numbers>
-FINDINGS_COUNT: <integer>
-ESCALATE: needs-human
-```
+## Post-verdict action
 
 ### If APPROVE: auto-merge
 
@@ -264,61 +168,22 @@ Execute IMMEDIATELY after posting the comment:
 gh pr merge <PR> --squash --delete-branch
 ```
 
-This squash-merges to `main` with the PR's title as the commit message, then deletes the source branch. You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002).
-
-If `gh pr merge` fails (merge conflicts, failed status checks, branch protection issue, permissions), do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment on the PR explaining the auto-merge failure. The orchestrating agent or human takes it from there.
+You are authorized to do this ONLY when your own verdict is APPROVE (per [ADR-0002](../../decisions/0002-autonomous-merge-policy.md)). If `gh pr merge` fails, do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment explaining the failure.
 
 ### If BLOCK: return to implementer
 
 Do NOT merge. The orchestrating agent will spawn the implementer to address the blocking items.
 
-**Loop cap (max-N rounds, initial N=3):** count YOUR blocks across this PR via `gh pr view <PR> --comments` — look for previous `reviewer verdict: BLOCK` headers. If this would be the 3rd BLOCK on the same PR, include a clear recommendation to escalate to the human in your verdict comment (a `@vojtech-stas` mention) and add `ESCALATE: needs-human` to the trailer. The orchestrating agent will then page the human rather than re-spawning the implementer.
+**Loop cap (3 rounds):** count YOUR prior blocks on this PR via `gh pr view <PR> --comments` (look for previous `reviewer verdict: BLOCK` headers). On the **3rd BLOCK** of the same PR, fire the I5 escalation surface below.
 
-### Round-3 BLOCK escalation surface (I5)
+### Round-3 BLOCK escalation (I5)
 
-When the loop cap above is reached — i.e. this is the **3rd BLOCK on the same PR** — perform these two concrete actions IN ADDITION to posting the verdict comment. This is the canonical human escalation surface per ADR-0003 D4 and PRD §4 (Workflow improvement I5):
+Per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D4 and CLAUDE.md workflow improvement I5, perform these TWO actions in addition to the verdict comment:
 
-1. **Apply the `needs-human` label to the PR:**
+1. **Apply `needs-human` label:** `gh pr edit <PR> --add-label needs-human`
+2. **Comment on the parent PRD issue.** Find the parent PRD from the slice issue body's `Parent:`/`PRD:` reference, or via `gh issue view <slice> --json parent`, or via `gh issue list --label prd` cross-reference. If undiscoverable, post on the slice issue itself with a "parent PRD not auto-discoverable" note — never skip. Then `gh issue comment <parent-prd> --body-file <tempfile>` with: stuck slice number, PR URL, one-paragraph BLOCK summary, verdict-comment URL, and `@vojtech-stas` mention.
 
-   ```bash
-   gh pr edit <PR> --add-label needs-human
-   ```
-
-   The human runs `gh pr list --label needs-human` at session start to find stuck PRs.
-
-2. **Post a summary comment on the parent PRD issue.** Find the parent PRD by:
-   - Reading the slice issue body that this PR `Closes` — look for a `Parent:` or `PRD:` reference (e.g., `PRD #3` or `Parent: #3`).
-   - If absent, query the slice issue's sub-issue parent via `gh issue view <slice-issue> --json parent` (GitHub sub-issues API), falling back to `gh issue list --label prd` cross-referenced with the slice issue's body.
-   - If the parent PRD cannot be determined, post the summary on the slice issue itself instead and note "parent PRD not auto-discoverable; please link manually" — do not skip the escalation.
-
-   Then:
-
-   ```bash
-   gh issue comment <parent-prd-number> --body-file <tempfile>
-   ```
-
-   The comment body MUST include:
-
-   ```markdown
-   ## Stuck slice — human attention requested
-
-   - **Stuck slice issue:** #<slice-issue-number>
-   - **Stuck PR:** <PR URL>
-   - **Round-3 BLOCK reason:** <one-paragraph summary of the last BLOCK's blocking rules and core issue>
-   - **Verdict comment:** <URL of the verdict comment you just posted>
-
-   Per ADR-0003 D4, this PR has hit the 3-round critic-loop cap and needs human judgment. The implementer has been BLOCK'd thrice on this same PR; further auto-iteration is unlikely to converge. `@vojtech-stas`
-   ```
-
-If either action fails (label apply or parent-PRD comment post), do NOT retry the loop — include the failure in your return value to the orchestrating agent so the human is paged via fallback means.
-
-In addition to the canonical `ESCALATE: needs-human` line, augment the CRITIC trailer with an `ESCALATION_STATUS` extension reporting the result of the two escalation actions above:
-
-```
-ESCALATION_STATUS: applied (PR labeled needs-human; parent PRD #<n> commented) | failed: <error>
-```
-
-`ESCALATION_STATUS` is a permitted reviewer-specific trailer extension per ADR-0005 D1 (companion to `MERGE_STATUS`). It records the *outcome* of the escalation actions; `ESCALATE: needs-human` records the *condition* triggering them.
+Augment the CRITIC trailer with `ESCALATION_STATUS: applied (PR labeled needs-human; parent PRD #<n> commented) | failed: <error>` (a permitted reviewer extension per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1, companion to `MERGE_STATUS`). `ESCALATE: needs-human` records the *condition*; `ESCALATION_STATUS` records the *outcome*. If either action fails, do NOT retry — include the failure in the return value so the human is paged via fallback means.
 
 ---
 

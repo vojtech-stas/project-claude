@@ -2,7 +2,7 @@
 name: slicer-critic
 description: Score the slicer's N=3 decompositions of a PRD, pick the best with explicit rationale, then run a single revision loop on the chosen one. Use after `slicer` has produced its N=3 output and before slices are posted to GitHub. Final output is one approved decomposition ready for issue creation.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: sonnet
 ---
 
 # Slicer-critic subagent — best-of-N + single revision

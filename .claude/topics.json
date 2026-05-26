@@ -1,3 +1,4 @@
 {
-  "qa-automation": ["qa-tester", "qa-plan", "qa automation", "acceptance test"]
+  "qa-automation": ["qa-tester", "qa-plan", "qa automation", "acceptance test"],
+  "subagents": ["subagent", "subagents", "agent capability", "which model", "haiku vs sonnet", "tool boundaries"]
 }

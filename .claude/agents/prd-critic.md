@@ -2,7 +2,7 @@
 name: prd-critic
 description: Audit a draft PRD (and any macro-ADRs drafted alongside it) for quality against the 6-section template and the PRD-critic rubric. Use when the `/to-prd` skill (or `/ship`) has produced a draft PRD and needs a critic verdict before publishing. On APPROVE, the generator posts the PRD. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: sonnet
 ---
 
 # prd-critic subagent — PRD auditor

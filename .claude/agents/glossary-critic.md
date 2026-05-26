@@ -2,7 +2,7 @@
 name: glossary-critic
 description: Audit a draft glossary entry for quality against ADR-0007 D5's rubric (as partially superseded by ADR-0012 D4). Use when `/glossary-add` (or any generator) has produced a draft entry and needs a critic verdict before opening the PR. On APPROVE, the generator opens the trivial-lane PR. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: haiku
 ---
 
 # glossary-critic subagent — glossary-entry auditor

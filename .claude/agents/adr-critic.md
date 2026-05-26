@@ -2,7 +2,7 @@
 name: adr-critic
 description: Audit a draft ADR for quality against ADR conventions and the adr-critic rubric. Use when `/to-prd` (or any generator) has produced a draft ADR and needs a critic verdict before publishing. On APPROVE, the generator commits the ADR. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: sonnet
 ---
 
 # adr-critic subagent — ADR auditor

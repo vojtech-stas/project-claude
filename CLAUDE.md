@@ -113,12 +113,9 @@ The project's knowledge base lives under `docs/current/` (compiled atomic notes 
 
 ## Glossary (key terms)
 
-Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D1 (single-tier consolidation per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D1). Soft cap ~35 entries (per ADR-0012 D5). Each entry follows the canonical shape from [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 (term + one-sentence definition + authority + see-also). To add a term, run `/glossary-add`; [`glossary-critic`](.claude/agents/glossary-critic.md) gates each addition against the 5-rule rubric (including ADR-0012 D2's ≥3-citations-across-≥2-directories inclusion threshold).
+Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5). **Transitional state:** 5 of 22 terms migrated to INDEX rows in slice 1 of PRD #245; remaining 17 terms keep inline shape until slices 2-3 cut them per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 sequencing.
 
-- **PRD** — a feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`, with the 6-section template (Problem / Goal / Non-goals / Appetite / Solution sketch / Rabbit-holes & Open questions); the top tier of the PRD → Slice → PR hierarchy.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
-  - *See also:* slice; PR
+- **PRD** — feature-sized Product Requirements Document; top tier of PRD→Slice→PR hierarchy → [docs/current/concepts/glossary/prd.md](docs/current/concepts/glossary/prd.md)
 - **ADR** — an Architecture Decision Record stored as `decisions/NNNN-<slug>.md`, immutable after acceptance and superseded by a new ADR rather than edited in place.
   - *Scope:* (b) external standard adopted
   - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D8
@@ -139,10 +136,7 @@ Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary
   - *Scope:* (b) external standard adopted
   - *Authority:* https://www.conventionalcommits.org/en/v1.0.0/
   - *See also:* trivial lane
-- **critic** — a subagent whose sole job is adversarial scope/quality audit of another stage's output, emitting an APPROVE/BLOCK verdict in the canonical 5-section template; never edits artifacts directly.
-  - *Scope:* (c) common word with narrowed meaning here
-  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2
-  - *See also:* subagent; joint-APPROVE gate; CRITIC trailer
+- **critic** — adversarial subagent gating another stage's output via APPROVE/BLOCK verdict; never edits → [docs/current/concepts/glossary/critic.md](docs/current/concepts/glossary/critic.md)
 - **CRITIC trailer** — the canonical fenced field-schema block (`VERDICT`, `REASON`, `ROUND`, optional `FAILED_RULES`/`FINDINGS_COUNT`/`ESCALATE`) appended at the end of every critic verdict so consumers can parse it programmatically.
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
@@ -155,10 +149,7 @@ Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary
   - *Scope:* (b) external standard adopted
   - *Authority:* https://gojko.net/2012/05/01/the-hamburger-method/
   - *See also:* SPIDR; walking-skeleton; slice
-- **INVEST** — Bill Wake's six-property check for a well-formed user story (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the shape criterion for a slice.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
-  - *See also:* slice; SPIDR
+- **INVEST** — Bill Wake's six-property check (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the slice shape criterion → [docs/current/concepts/glossary/invest.md](docs/current/concepts/glossary/invest.md)
 - **joint-APPROVE gate** — the rule that when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts anything.
   - *Scope:* (a) project jargon coined here
   - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D1
@@ -179,14 +170,8 @@ Auto-loaded project vocabulary per [ADR-0007](decisions/0007-vocabulary-glossary
   - *Scope:* (c) common word with narrowed meaning here
   - *Authority:* [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D2
   - *See also:* backlog
-- **slice** — a single INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), completable in one PR with ≤300 LoC runtime-artifact diff; the middle tier of the PRD → Slice → PR hierarchy.
-  - *Scope:* (c) common word with narrowed meaning here
-  - *Authority:* [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1
-  - *See also:* PRD; INVEST; trivial lane; R-LOC
-- **SPIDR** — Mike Cohn's five split-fallback techniques (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules) used here as split hints when a slice approaches the LoC cap, with S/I/R most applicable to this agent-workflow domain.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D2
-  - *See also:* slice; hamburger method; INVEST
+- **slice** — INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), one PR ≤300 runtime LoC; middle tier of PRD→Slice→PR → [docs/current/concepts/glossary/slice.md](docs/current/concepts/glossary/slice.md)
+- **SPIDR** — Mike Cohn's 5 slice-split fallbacks (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules); S/I/R dominant in this project → [docs/current/concepts/glossary/spidr.md](docs/current/concepts/glossary/spidr.md)
 - **subagent** — a specialist agent invoked via the `Agent` tool with its own model, restricted tool set, and isolated context window, defined under `.claude/agents/<name>.md`.
   - *Scope:* (c) common word with narrowed meaning here
   - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D6

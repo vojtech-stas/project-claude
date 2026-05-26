@@ -12,9 +12,7 @@ sources:
 
 # best-practices — Claude Code workflow
 
-The canonical KB-layer home of docs-first authoritative guidance for Claude Code **workflow questions** (slash-commands, skill invocation, settings hierarchy, sub-agent vs skill choice, project structure). Authority: [ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) D1 (4-section shape) and D2 (Tier-1 source priority). This topic page is content-equivalent to [`.claude/skills/best-practice-workflow/SKILL.md`](../../../.claude/skills/best-practice-workflow/SKILL.md) on origin/main as of 2026-05-27.
-
-Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 of 9, the canonical home of this synthesis is **here in `docs/current/topics/`**, not in the skill body. T5-S8 (#315) thins the skill body to a thin dispatcher shell pointing here; until that ships, edits to either location must update both to prevent drift.
+The canonical KB-layer home of docs-first authoritative guidance for Claude Code **workflow questions** (slash-commands, skill invocation, settings hierarchy, sub-agent vs skill choice, project structure). Authority: [ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) D1 (4-section shape) and D2 (Tier-1 source priority). Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 + D12, this topic page is the canonical home of the synthesis; [`.claude/skills/best-practice-workflow/SKILL.md`](../../../.claude/skills/best-practice-workflow/SKILL.md) is the thin dispatcher shell that points here (T5-S8 #315 shipped the thinning).
 
 This synthesis encapsulates the rules Anthropic publishes at `docs.claude.com` so the project doesn't re-derive them per session or per critic round. On-demand-loaded per ADR-0022 D2 Tier-1 source priority — **zero CLAUDE.md bloat** per the rationale in ADR-0022 Context.
 

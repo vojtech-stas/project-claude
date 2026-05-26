@@ -12,9 +12,7 @@ sources:
 
 # best-practices — Claude Code subagents
 
-The canonical KB-layer home of docs-first authoritative guidance for Claude Code **subagent-design questions** (frontmatter, tools, model, preloaded skills, the no-nested-spawn rule). Authority: [ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) D1 (4-section shape) and D8 (PRD-A → siblings DAG; this is the subagents-sibling). This topic page is content-equivalent to [`.claude/skills/best-practice-subagents/SKILL.md`](../../../.claude/skills/best-practice-subagents/SKILL.md) on origin/main as of 2026-05-27.
-
-Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 of 9, the canonical home of this synthesis is **here in `docs/current/topics/`**, not in the skill body. T5-S8 (#315) thins the skill body to a thin dispatcher shell pointing here; until that ships, edits to either location must update both to prevent drift.
+The canonical KB-layer home of docs-first authoritative guidance for Claude Code **subagent-design questions** (frontmatter, tools, model, preloaded skills, the no-nested-spawn rule). Authority: [ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) D1 (4-section shape) and D8 (PRD-A → siblings DAG; this is the subagents-sibling). Per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 + D12, this topic page is the canonical home of the synthesis; [`.claude/skills/best-practice-subagents/SKILL.md`](../../../.claude/skills/best-practice-subagents/SKILL.md) is the thin dispatcher shell that points here (T5-S8 #315 shipped the thinning).
 
 This synthesis encapsulates the rules Anthropic publishes at `docs.claude.com/en/docs/claude-code/sub-agents` so this project doesn't re-derive them per session or per critic round. Sibling to [`best-practices-workflow`](best-practices-workflow.md), which covers cross-cutting workflow questions; this topic is the **subagent-specific deep cut**.
 

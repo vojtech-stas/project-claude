@@ -32,7 +32,7 @@ Per [ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) D1, every `best
 
 ## The 6 rules (distilled from docs.claude.com)
 
-Brief summary; the canonical text + Grep/Target hooks live in [`.claude/skills/best-practice-workflow/SKILL.md`](../../../.claude/skills/best-practice-workflow/SKILL.md):
+Brief summary; the canonical text + Grep/Target hooks live in the topic synthesis [`docs/current/topics/best-practices-workflow.md`](../../topics/best-practices-workflow.md) (per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 + D12; the skill body is a thin dispatcher post-T5-S8 #315):
 
 1. Every skill MUST declare a `description:` explaining both what it does AND when to use it.
 2. Skill body content stays in context for every subsequent turn — keep it concise.

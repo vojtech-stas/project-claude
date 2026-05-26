@@ -23,7 +23,7 @@ Same shape as the other on-demand best-practice skills per [ADR-0022](../../../d
 
 ## The 6 rules (distilled from docs.claude.com/sub-agents)
 
-Brief summary; canonical text + audit hooks live in [`.claude/skills/best-practice-subagents/SKILL.md`](../../../.claude/skills/best-practice-subagents/SKILL.md):
+Brief summary; canonical text + audit hooks live in the topic synthesis [`docs/current/topics/best-practices-subagents.md`](../../topics/best-practices-subagents.md) (per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 5 + D12; the skill body is a thin dispatcher post-T5-S8 #315):
 
 1. **Design focused subagents** — each subagent should excel at one specific task.
 2. **Limit tool access** — grant only the tools the subagent's job requires (explicit `tools:` allowlist or `disallowedTools:` denylist; omitting inherits everything).

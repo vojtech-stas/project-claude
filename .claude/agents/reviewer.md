@@ -63,41 +63,20 @@ Always read these in order before forming a verdict:
 
 These are non-negotiable. Block immediately; explain which rule and which file/line.
 
-### 1. Scope drift
-Changes outside the PR's stated scope. Any change to a file or area not justified by the scope is a BLOCK.
+### 1. [R-SCOPE](../../docs/current/concepts/rules/r-scope.md) — Scope drift
+BLOCK on changes outside the PR's stated scope. Per-file check: "is this file's modification justified by the PR body's scope?" Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-scope.md](../../docs/current/concepts/rules/r-scope.md).
 
-**How to check:** For each changed file, ask "is this file's modification justified by the PR body's scope?" If no, BLOCK.
+### 2. [R-YAGNI](../../docs/current/concepts/rules/r-yagni.md) — YAGNI violation
+BLOCK on code added that is NOT strictly necessary for the stated scope (new abstractions, speculative config knobs, "just in case" parameters, dead code). Per-line check: "if I removed this line, would the stated scope still be deliverable?" Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-yagni.md](../../docs/current/concepts/rules/r-yagni.md).
 
-### 2. YAGNI violation
-Code added that is NOT strictly necessary for the stated scope. Examples:
-- New abstractions, interfaces, or helper functions not used by the stated scope
-- Configuration knobs for features that don't exist yet
-- "Just in case" parameters or fields
-- Speculative generality ("we might need this later")
-- Dead code or commented-out code
+### 3. [R-TESTS](../../docs/current/concepts/rules/r-tests.md) — Missing tests for new behavior
+BLOCK when the PR introduces new BEHAVIOR (not just docs/config/refactor) without tests that exercise it. Full rule + how-to-check + exemptions (docs-only, config-only, pure refactor, narrative-only `.md`): see [../../docs/current/concepts/rules/r-tests.md](../../docs/current/concepts/rules/r-tests.md).
 
-**How to check:** For each added line, ask "if I removed this line, would the stated scope still be deliverable?" If yes → BLOCK with "YAGNI: unused addition at <file>:<line>".
+### 4. [R-CONV-COMMITS](../../docs/current/concepts/rules/r-conv-commits.md) — Conventional Commits format violation
+BLOCK on any commit not matching `<type>(<optional scope>): <subject>` where type ∈ {`feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`}. Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-conv-commits.md](../../docs/current/concepts/rules/r-conv-commits.md).
 
-### 3. Missing tests for new behavior
-If the PR introduces new BEHAVIOR (not just docs/config/refactor), the diff MUST include tests that exercise that behavior.
-
-**Exemptions** (no test required):
-- Docs-only changes: `.md` files containing only narrative documentation; comments
-- Config-only changes: `.gitignore`, LICENSE
-- Pure refactors with no behavior change
-- Skill/agent definition files **only if** they contain ONLY narrative documentation. If a `SKILL.md` or agent `.md` contains executable shell snippets, hook configuration, or runtime-loadable instructions that ALTER agent behavior, it IS behavior — require a smoke test (e.g., a test that the instructions parse and produce the expected agent output on a known input).
-
-**How to check:** Identify new behavior in the diff. For each, find a corresponding test in the diff. If new behavior with no test → BLOCK.
-
-### 4. Conventional Commits format violation
-Every commit on the branch must follow `<type>(<optional scope>): <subject>` where type is one of: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`.
-
-**How to check:** `gh pr view <PR> --json commits` — inspect each commit message. Any non-conforming commit → BLOCK.
-
-### 5. Commits to `main`
-The branch must NOT be `main` and the diff must NOT contain direct commits to `main` (this would indicate `--force` to main or a misconfigured branch). Branch protection should prevent this, but verify.
-
-**How to check:** `gh pr view <PR> --json baseRefName,headRefName` — base should be `main`, head should NOT be `main`.
+### 5. [R-NO-MAIN](../../docs/current/concepts/rules/r-no-main.md) — Commits to `main`
+BLOCK when the branch IS `main` or the diff contains direct commits to `main` (force-push or misconfigured branch). Full rule + how-to-check + exemptions: see [../../docs/current/concepts/rules/r-no-main.md](../../docs/current/concepts/rules/r-no-main.md).
 
 ### 6. Secrets or sensitive data committed
 Look for: `.env*` files (other than `.env.example`), API keys, tokens, credentials, private keys.

@@ -72,9 +72,15 @@ Subjective items: code style, refactoring opportunities, doc improvements, broad
 
 ---
 
-## Output format + post-verdict action
+## Output format
 
-See [output-shapes](../../docs/current/topics/output-shapes.md) for the canonical verdict template + CRITIC trailer + GENERATOR trailer schemas + permitted critic-specific extensions (R-META override notice, MERGE_STATUS, ESCALATION_STATUS). Post the verdict via `gh pr comment <PR> --body-file <tempfile>`. **APPROVE** → auto-merge IMMEDIATELY: `gh pr merge <PR> --squash --delete-branch` (ONLY on YOUR APPROVE, per ADR-0002; on failure populate `MERGE_STATUS: failed: <error>`, do NOT retry). **BLOCK** → return to implementer; count prior BLOCKs via `gh pr view <PR> --comments`; on the **3rd BLOCK** apply `needs-human` label AND comment on the parent PRD issue per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D4 / I5, adding `ESCALATE: needs-human` + `ESCALATION_STATUS: applied|failed: <error>` to the trailer.
+See [output-shapes](../../docs/current/topics/output-shapes.md) for the canonical verdict template + CRITIC trailer + GENERATOR trailer schemas + permitted critic-specific extensions (R-META override notice, MERGE_STATUS, ESCALATION_STATUS). Post the verdict via `gh pr comment <PR> --body-file <tempfile>` (tempfile preserves multiline markdown).
+
+---
+
+## Post-verdict action
+
+**APPROVE** → auto-merge IMMEDIATELY: `gh pr merge <PR> --squash --delete-branch` (ONLY on YOUR APPROVE, per ADR-0002; on failure populate `MERGE_STATUS: failed: <error>`, do NOT retry). **BLOCK** → return to implementer; count prior BLOCKs via `gh pr view <PR> --comments`; on the **3rd BLOCK** apply `needs-human` label AND comment on the parent PRD issue per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D4 / I5, adding `ESCALATE: needs-human` + `ESCALATION_STATUS: applied|failed: <error>` to the trailer.
 
 ---
 

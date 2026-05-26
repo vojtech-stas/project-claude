@@ -2,7 +2,7 @@
 name: reviewer
 description: Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash`. On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: sonnet
 ---
 
 # Reviewer subagent — PR auditor

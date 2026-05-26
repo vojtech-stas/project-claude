@@ -2,7 +2,7 @@
 name: current-state-reader
 description: Read the materialized truth-doc for a single architectural topic and return a thin synthesis to the caller. Generic per-topic reader parametrized by a `<topic>` string (e.g., `qa-automation`, `pipeline`, `slicing`). Dispatched by the main agent — typically after the UserPromptSubmit topic-nudge hook (per ADR-0026 D4) injects an additionalContext instruction matching the prompt's keywords. The reader opens `docs/current/<topic>.md`, distills the active synthesis into ≤15 lines, and emits a canonical GENERATOR trailer per ADR-0005 D1c with per-agent extensions `TOPIC` and `SOURCES_READ`. Use this proactively whenever the user asks "what's the current state of X?" / "what's our current X architecture?" / "how does X work today?" — instead of reading source ADRs / skills / subagent bodies inline into main-agent context, dispatch this reader to keep main slim per ADR-0026 D1.
 tools: Read, Glob, Grep
-model: sonnet
+model: haiku
 ---
 
 # current-state-reader subagent — per-topic truth-doc reader

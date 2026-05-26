@@ -2,7 +2,7 @@
 name: slicer
 description: Given a PRD (GitHub issue body or markdown text), produce N=3 alternative vertical-slice decompositions of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs candidate decompositions for the slicer-critic to score. Output is the three decompositions side-by-side, NOT GitHub issues — posting is downstream.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: sonnet
 ---
 
 # Slicer subagent — N=3 decomposition generator

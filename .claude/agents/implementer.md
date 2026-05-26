@@ -2,7 +2,7 @@
 name: implementer
 description: Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
 tools: Read, Edit, Write, Bash, Glob, Grep
-model: opus
+model: sonnet
 ---
 
 # Implementer subagent — slice → PR generator

@@ -2,7 +2,7 @@
 name: backlog-critic
 description: Audit a freshly-written `captured`-labeled issue and decide whether the autopilot should promote it to `backlog` or leave it in the captured tier. Use immediately after an agent runs `gh issue create --label captured` (per ADR-0008 D3, inline firing in same agent context). On APPROVE, the invoking context performs the label swap `captured` → `backlog`. On BLOCK, the captured item stays put and the user reviews on whatever cadence they prefer.
 tools: Read, Glob, Grep, Bash
-model: opus
+model: haiku
 ---
 
 # backlog-critic subagent — captured→backlog autopilot

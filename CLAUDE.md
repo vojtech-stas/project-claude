@@ -113,53 +113,29 @@ The project's knowledge base lives under `docs/current/` (compiled atomic notes 
 
 ## Glossary (key terms)
 
-Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5). **Transitional state:** 14 of 22 terms migrated to INDEX rows (5 in slice 1 + 9 in slice 2 of PRD #245); remaining 8 terms keep inline shape until slice 3 cuts them per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 sequencing.
+Auto-loaded project vocabulary INDEX. Each term has a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5).
 
 - **PRD** — feature-sized Product Requirements Document; top tier of PRD→Slice→PR hierarchy → [docs/current/concepts/glossary/prd.md](docs/current/concepts/glossary/prd.md)
 - **ADR** — Architecture Decision Record (immutable, supersession-based) → [docs/current/concepts/glossary/adr.md](docs/current/concepts/glossary/adr.md)
 - **backlog** — forward-looking work queue of `backlog`-labeled GitHub Issues + project board #2 Backlog column → [docs/current/concepts/glossary/backlog.md](docs/current/concepts/glossary/backlog.md)
 - **bootstrap-mode** — new conventions bind FORWARD from the slice that ships them; no retroactive sweep → [docs/current/concepts/glossary/bootstrap-mode.md](docs/current/concepts/glossary/bootstrap-mode.md)
-- **cascade-doc check** — the slicer's responsibility to identify docs (README, CLAUDE.md Map rows, ADR index rows) that *should* update to reflect a new feature even when not strictly required by acceptance criteria, and add or fold a slice to cover them.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3
-  - *See also:* slice
+- **cascade-doc check** — the slicer's responsibility to identify docs that should update to reflect a new feature even when not strictly required by acceptance criteria → [docs/current/concepts/glossary/cascade-doc-check.md](docs/current/concepts/glossary/cascade-doc-check.md)
 - **Conventional Commits** — `<type>(<optional scope>): <subject>` format; tightened with lowercase + ≤72-char + Co-authored-by trailer → [docs/current/concepts/glossary/conventional-commits.md](docs/current/concepts/glossary/conventional-commits.md)
 - **critic** — adversarial subagent gating another stage's output via APPROVE/BLOCK verdict; never edits → [docs/current/concepts/glossary/critic.md](docs/current/concepts/glossary/critic.md)
-- **CRITIC trailer** — the canonical fenced field-schema block (`VERDICT`, `REASON`, `ROUND`, optional `FAILED_RULES`/`FINDINGS_COUNT`/`ESCALATE`) appended at the end of every critic verdict so consumers can parse it programmatically.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
-  - *See also:* GENERATOR trailer; critic
-- **GENERATOR trailer** — the canonical fenced field-schema block (`RESULT`, `REASON`, `ARTIFACTS`, plus per-agent extensions) appended at the end of every output-emitting generator's output (`slicer`, `qa-plan`, `ship`).
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1
-  - *See also:* CRITIC trailer
+- **CRITIC trailer** — canonical fenced field-schema block (`VERDICT`/`REASON`/`ROUND` + optionals) appended to every critic verdict for programmatic parsing → [docs/current/concepts/glossary/critic-trailer.md](docs/current/concepts/glossary/critic-trailer.md)
+- **GENERATOR trailer** — canonical fenced field-schema block (`RESULT`/`REASON`/`ARTIFACTS` + per-agent extensions) appended to every output-emitting generator's output → [docs/current/concepts/glossary/generator-trailer.md](docs/current/concepts/glossary/generator-trailer.md)
 - **hamburger method** — Gojko's vertical-slicing technique; slice 1 of any PRD must cut through every layer end-to-end → [docs/current/concepts/glossary/hamburger-method.md](docs/current/concepts/glossary/hamburger-method.md)
 - **INVEST** — Bill Wake's six-property check (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the slice shape criterion → [docs/current/concepts/glossary/invest.md](docs/current/concepts/glossary/invest.md)
-- **joint-APPROVE gate** — the rule that when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts anything.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D1
-  - *See also:* critic; ADR
-- **R-CLOSES** — the reviewer rule that every slice PR's body must contain a `Closes #<n>` line pointing to a valid `slice`-labeled issue (with exemptions for `trivial`/`prd` PRs against issues of the matching tier).
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) rule 10
-  - *See also:* R-LOC; R-META; slice
-- **R-LOC** — the reviewer rule that caps a slice PR's diff at ≤300 LoC of runtime-artifact code (canonical definition of "runtime artifact" lives in `reviewer.md`).
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) rule 9
-  - *See also:* R-CLOSES; R-META; slice
-- **R-META** — the reviewer rule that NEW ADR files (`decisions/NNNN-*.md`) must show subagent provenance via a `Closes #N` link to a `slice`/`prd` issue OR a `Co-Authored-By: Claude` commit trailer, enforcing main-agent meta-output discipline.
-  - *Scope:* (a) project jargon coined here
-  - *Authority:* [ADR-0004](decisions/0004-bypass-prevention.md) D4
-  - *See also:* R-LOC; R-CLOSES; ADR
+- **joint-APPROVE gate** — when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts anything → [docs/current/concepts/glossary/joint-approve-gate.md](docs/current/concepts/glossary/joint-approve-gate.md)
+- **R-CLOSES** — reviewer rule 10: every slice PR body must contain `Closes #<n>` pointing to a valid `slice`-labeled issue (trivial/prd exemptions) → [docs/current/concepts/glossary/r-closes.md](docs/current/concepts/glossary/r-closes.md)
+- **R-LOC** — reviewer rule 9: caps slice PR diff at ≤300 LoC of runtime-artifact code (canonical definition lives in `reviewer.md`) → [docs/current/concepts/glossary/r-loc.md](docs/current/concepts/glossary/r-loc.md)
+- **R-META** — reviewer rule 11: NEW ADR files must show subagent provenance via `Closes #N` to slice/prd issue OR `Co-Authored-By: Claude` trailer → [docs/current/concepts/glossary/r-meta.md](docs/current/concepts/glossary/r-meta.md)
 - **session** — a single Claude Code conversation; cross-session continuity via live state reconstruction (no formal handoff) → [docs/current/concepts/glossary/session.md](docs/current/concepts/glossary/session.md)
 - **slice** — INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), one PR ≤300 runtime LoC; middle tier of PRD→Slice→PR → [docs/current/concepts/glossary/slice.md](docs/current/concepts/glossary/slice.md)
 - **SPIDR** — Mike Cohn's 5 slice-split fallbacks (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules); S/I/R dominant in this project → [docs/current/concepts/glossary/spidr.md](docs/current/concepts/glossary/spidr.md)
 - **subagent** — specialist agent invoked via `Agent` tool with own model, restricted tool set, isolated context window → [docs/current/concepts/glossary/subagent.md](docs/current/concepts/glossary/subagent.md)
 - **trivial lane** — fast-path (I3) for PRs ≤10 LoC with no behavior change; `hotfix/` branch + `trivial` label, no PRD/slice ceremony → [docs/current/concepts/glossary/trivial-lane.md](docs/current/concepts/glossary/trivial-lane.md)
-- **walking-skeleton** — the practice of shipping the smallest possible end-to-end version of the whole pipeline first and then iterating on the weakest stage, rather than perfecting each primitive in isolation.
-  - *Scope:* (b) external standard adopted
-  - *Authority:* [ADR-0001](decisions/0001-foundational-design.md) D10
-  - *See also:* YAGNI; hamburger method
+- **walking-skeleton** — practice of shipping the smallest end-to-end version of the whole pipeline first, then iterating on the weakest stage → [docs/current/concepts/glossary/walking-skeleton-glossary.md](docs/current/concepts/glossary/walking-skeleton-glossary.md)
 - **YAGNI** — "You Aren't Gonna Need It"; rule #1 — no code outside the current slice's scope, reviewer-enforced → [docs/current/concepts/glossary/yagni.md](docs/current/concepts/glossary/yagni.md)
 
 ---

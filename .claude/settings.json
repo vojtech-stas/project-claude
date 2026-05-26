@@ -87,6 +87,10 @@
           {
             "type": "command",
             "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" '{ts: $ts, event: \"session_stop\"}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-reviewer-gate.sh\""
           }
         ]
       }

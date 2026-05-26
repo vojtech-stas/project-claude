@@ -15,6 +15,8 @@ sources:
 
 The `slicer` subagent is the **decomposition generator** at stage 3.5 of the autonomous pipeline. Given a PRD (issue reference or inline body), it emits N=3 alternative vertical-slice decompositions of the work, which the downstream [`slicer-critic`](slicer-critic.md) scores, picks one of, and runs a single revision loop over before any GitHub issues get posted. The slicer does not post issues, does not pick the winner, and does not run any revision loop itself — it generates the alternatives and stops.
 
+This entity note is the **canonical full role synthesis** for the slicer subagent. After the T3 knowledge-architecture migration ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md)), the operational `.claude/agents/slicer.md` carries only the prompt-level operational mechanics (mandatory reading order, output format, tool boundaries) and links here for methodology depth, the N=1 carveout pattern, and per-technique deep-dives.
+
 ## Role and responsibility
 
 The slicer has two jobs, in strict priority order:

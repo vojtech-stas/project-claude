@@ -80,6 +80,7 @@ ENTRIES_DEFERRED: <count DEFERRED (below threshold)>
 
 ## References
 
+- Entity note (full role synthesis, non-goals rationale, edges): [entities/skills/glossary-fold](../../../docs/current/entities/skills/glossary-fold.md).
 - [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) — D1 (section convention), D2 (this skill), D3 (conflict resolution), D4 (no new critic), D5 (no auto-trigger), D6 (bootstrap-mode).
 - [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) — D1 (single-tier), D2 (≥3-citation inclusion threshold applied at step 3), D5 (~35-entry soft cap).
 - [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2 — entry shape.

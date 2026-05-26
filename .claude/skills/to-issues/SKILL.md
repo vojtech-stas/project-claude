@@ -68,6 +68,7 @@ Or "None — can start immediately" if no blockers.
 
 ## References
 
+- Entity note (full role synthesis, invocation contract, edges): [entities/skills/to-issues](../../../docs/current/entities/skills/to-issues.md).
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (five-stage pipeline), D3 (N=3 at slicer + single revision loop), D6 (skills vs subagents).
 - Subagents this skill orchestrates: [`.claude/agents/slicer.md`](../../agents/slicer.md), [`.claude/agents/slicer-critic.md`](../../agents/slicer-critic.md).
 - Sibling skill: [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) — calls this skill as stage 3 of the pipeline.

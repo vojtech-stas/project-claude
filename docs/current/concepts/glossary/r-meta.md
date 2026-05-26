@@ -19,6 +19,7 @@ sources:
 - **related-to:** [[concepts/glossary/r-loc]]
 - **related-to:** [[concepts/glossary/r-closes]]
 - **part-of:** [[entities/subagents/reviewer]]
+- **defines:** [[concepts/rules/r-meta]] (this glossary stub points to the full rule-content note per PRD #253 §5A coexistence DECISION)
 
 ## What
 

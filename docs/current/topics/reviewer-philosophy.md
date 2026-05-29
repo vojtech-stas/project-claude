@@ -3,7 +3,7 @@ title: reviewer philosophy — adversarial mindset, recommend-only criteria, con
 summary: The reviewer's adversarial paranoid-SRE mindset, the recommend-only criteria that surface without blocking, and the conduct rules that keep verdict comments specific and calibrated.
 tags: [reviewer, philosophy, topic, adversarial-mindset]
 type: topic
-last_updated: 2026-05-26
+last_updated: 2026-05-30
 sources:
   - .claude/agents/reviewer.md
   - decisions/0009-discipline-tightening.md
@@ -60,6 +60,42 @@ Pulled verbatim from `.claude/agents/reviewer.md`:
 > - Trust the implementer's intent but verify against the rules.
 
 These conduct rules are the surface manifestation of the adversarial mindset. The "be specific" rule pairs with the [Findings section's mechanical-actionable requirement](output-shapes.md) — every BLOCK finding must cite rule + file:line + concrete fix the implementer can apply mechanically. The "never editorialize" rule pairs with the conservative-default — the reviewer states the evidence and the verdict, not its opinion.
+
+## R-DOCS-CURRENT — README currency gate (ADR-0034 D5/D6)
+
+Added by the PRD #348 / slice #362 enforcement layer. Documents both layers of the defense-in-depth model for README currency.
+
+### The gate: R-DOCS-CURRENT reviewer rule (unbypassable)
+
+Per [ADR-0034 D5](../../../decisions/0034-build-orchestrator-and-generated-docs.md), `R-DOCS-CURRENT` is a hard-block rule (rule 13 in the rubric) on the existing `reviewer` critic. On every PR, the reviewer runs:
+
+```bash
+python dashboard/server.py --generate-readme
+git diff --exit-code README.md
+```
+
+If the committed `README.md` differs from the freshly-generated one → **BLOCK**. Catches two drift modes: (a) direct hand-edit of `README.md`; (b) source change (new skill/agent/hook/ADR) without regenerating.
+
+Because branch protection forces everything through a reviewer-gated PR (ADR-0004 D3), R-DOCS-CURRENT **guarantees** no stale README reaches `main`. It is unbypassable: `git commit --no-verify` skips the pre-commit hook but does NOT skip the reviewer rule.
+
+This rule honors the ADR-0008 D7 6-critic-cap — R-DOCS-CURRENT is a rule extension on the existing `reviewer` critic, NOT a new critic.
+
+### The fast local catch: pre-commit hook (bypassable, defense-in-depth)
+
+Per [ADR-0034 D6](../../../decisions/0034-build-orchestrator-and-generated-docs.md), `.githooks/pre-commit` is extended: on commit, regenerate README; if it changed, block with message "README out of sync — run `python dashboard/server.py --generate-readme` and re-stage README.md before committing."
+
+This gives fast local feedback before PR time. It can be bypassed with `git commit --no-verify`. The reviewer rule (above) is the unbypassable safety net.
+
+### Defense-in-depth layering
+
+| Layer | Mechanism | Bypassable? | When it fires |
+|---|---|---|---|
+| Pre-commit hook | `.githooks/pre-commit` extended per ADR-0034 D6 | Yes — `--no-verify` | On every local commit |
+| Reviewer rule | R-DOCS-CURRENT hard-block per ADR-0034 D5 | No — reviewer is the merge gate | On every PR, before merge |
+
+Together these layers make README drift mechanically impossible to merge: the pre-commit catches it early; the reviewer rule is the unbypassable guarantee. Per [ADR-0034 D4](../../../decisions/0034-build-orchestrator-and-generated-docs.md): "`README.md` is a build artifact — committed (so GitHub renders it) but never hand-edited."
+
+**Bootstrap-mode (per ADR-0034 D9):** R-DOCS-CURRENT binds FORWARD from the PR that ships it. The PR activating this rule is responsible for also committing a generator-current `README.md` to avoid spurious blocks on subsequent PRs.
 
 ## How Recommendations differ from BLOCKs
 

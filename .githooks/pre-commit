@@ -63,4 +63,61 @@ if ! expr "$branch" : "$pattern" >/dev/null 2>&1; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# README currency check — ADR-0034 D6 (pre-commit doc-generation gate)
+# ---------------------------------------------------------------------------
+# Regenerate README.md from docs/readme.template.md + filesystem; if the
+# committed README differs from the freshly-generated one, block the commit.
+#
+# Fail-open cases (warn + exit 0, consistent with branch-name check above):
+#   - Python not found
+#   - Generator script not found
+#   - Generator fails (e.g., template missing)
+#
+# Bypass note: `git commit --no-verify` skips this check. That is accepted per
+# ADR-0034 D9 / ADR-0004 Consequences — the R-DOCS-CURRENT reviewer rule
+# (the unbypassable merge gate) catches what --no-verify skips.
+#
+# Cross-platform (ADR-0030): try python3 first, then python.
+
+PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) || PYTHON=""
+
+if [ -z "$PYTHON" ]; then
+    echo "pre-commit: warning: python not found; skipping README currency check (fail-open). See ADR-0034 D6." >&2
+    exit 0
+fi
+
+# Locate the repo root (the directory containing .githooks/).
+# Use `git rev-parse --show-toplevel`; handle paths with spaces via quoting.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT=""
+
+if [ -z "$REPO_ROOT" ]; then
+    echo "pre-commit: warning: could not determine repo root; skipping README currency check (fail-open). See ADR-0034 D6." >&2
+    exit 0
+fi
+
+GENERATOR="$REPO_ROOT/dashboard/server.py"
+
+if [ ! -f "$GENERATOR" ]; then
+    echo "pre-commit: warning: generator not found at '$GENERATOR'; skipping README currency check (fail-open). See ADR-0034 D6." >&2
+    exit 0
+fi
+
+# Run the generator. Capture stderr; on non-zero exit, fail-open with warning.
+if ! "$PYTHON" "$GENERATOR" --generate-readme >/dev/null 2>&1; then
+    echo "pre-commit: warning: README generator exited non-zero; skipping README currency check (fail-open). See ADR-0034 D6." >&2
+    exit 0
+fi
+
+# If README.md changed relative to HEAD, the committed version is out of sync.
+# Use `git diff --exit-code` on the worktree state (not staged vs HEAD, but
+# worktree vs HEAD — generator wrote to the worktree file).
+if ! git -C "$REPO_ROOT" diff --exit-code README.md >/dev/null 2>&1; then
+    echo "pre-commit: ERROR: README out of sync — run \`python dashboard/server.py --generate-readme\` and re-stage README.md before committing." >&2
+    echo "pre-commit: (ADR-0034 D6 — defense-in-depth pre-commit doc-generation gate)" >&2
+    # Restore README.md so the working tree is clean after blocking.
+    git -C "$REPO_ROOT" checkout README.md >/dev/null 2>&1 || true
+    exit 1
+fi
+
 exit 0

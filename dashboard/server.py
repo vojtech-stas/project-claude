@@ -854,5 +854,237 @@ def main():
         server.server_close()
 
 
+# ---------------------------------------------------------------------------
+# README generator  (--generate-readme CLI mode)
+# ---------------------------------------------------------------------------
+
+# Fixed pipeline diagram — canonical Mermaid block; static because the diagram
+# represents the *designed* pipeline topology, not a runtime-derived graph.
+# Reuse discover_* for the component-map and counts sections.
+
+_PIPELINE_DIAGRAM = """\
+```mermaid
+flowchart TD
+  subgraph S1["Stage 1: Idea capture"]
+    U1[User] --> GM["/grill-me"]
+    GM -->|settled design| SHIP["/ship"]
+  end
+  subgraph S2["Stage 2: PRD authoring"]
+    SHIP --> TOPRD["/to-prd"]
+    TOPRD --> PRDC[prd-critic]
+    TOPRD -.if ADR.-> ADRC[adr-critic]
+    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
+    ADRC -->|joint APPROVE| PRDISSUE
+    PRDC -.BLOCK ≤3 rounds.-> TOPRD
+    ADRC -.BLOCK ≤3 rounds.-> TOPRD
+  end
+  subgraph S3["Stage 3: Slice decomposition"]
+    PRDISSUE --> TOISSUES["/to-issues"]
+    TOISSUES --> SLICER[slicer]
+    SLICER -->|N alternatives| SLICERC[slicer-critic]
+    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
+    SLICERC -.BLOCK ≤1 revision.-> SLICER
+  end
+  subgraph S4["Stage 4: Implementation"]
+    SLICEISSUES --> IMPL[implementer]
+    IMPL --> PR[(PR with Closes #N)]
+    PR --> REV[reviewer]
+    REV -->|APPROVE| MERGE[(merged on main)]
+    REV -.BLOCK ≤3 rounds.-> IMPL
+    REV -.round-3 BLOCK.-> NH[needs-human label]
+  end
+  subgraph S5["Stage 5: Acceptance"]
+    MERGE --> QA["/qa-plan"]
+    QA --> U2[User accepts PRD]
+  end
+  subgraph SS["Side workflows"]
+    AUTO["/audit-subagents"] -.periodic.- REV
+    GA["/glossary-add"] --> GC[glossary-critic]
+    GC -->|APPROVE| GAPR[(glossary PR)]
+    GAPR --> REV
+    CAP[captured issue] --> PTB["/promote-to-backlog"]
+    PTB --> BC[backlog-critic]
+    BC -->|APPROVE| BL[backlog label]
+    BC -->|BLOCK| CAPSTAY[stays in captured tier]
+  end
+  classDef human fill:#3b82f6,color:#fff
+  classDef skill fill:#14b8a6,color:#fff
+  classDef gen fill:#22c55e,color:#fff
+  classDef critic fill:#f97316,color:#fff
+  classDef reviewer fill:#ef4444,color:#fff
+  classDef artifact fill:#9ca3af,color:#fff
+  class U1,U2 human
+  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
+  class SLICER,IMPL gen
+  class PRDC,ADRC,SLICERC,GC,BC critic
+  class REV reviewer
+  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
+```"""
+
+
+def _build_component_map() -> str:
+    """Build the component-map section from filesystem discovery."""
+    skills = discover_skills()
+    agents = discover_agents()
+    hooks = discover_hooks()
+    adrs = discover_adrs()
+
+    lines = []
+
+    # Skills
+    lines.append("### Skills\n")
+    lines.append("User-invocable commands under `.claude/skills/`:\n")
+    if skills:
+        for s in skills:
+            name = s.get("name") or s["path"].split("/")[-2]
+            desc = s.get("description", "")
+            path = s["path"]
+            if desc:
+                lines.append(f"- **[`/{name}`]({path})** — {desc}")
+            else:
+                lines.append(f"- **[`/{name}`]({path})**")
+    else:
+        lines.append("_(no skills found)_")
+    lines.append("")
+
+    # Agents
+    lines.append("### Subagents\n")
+    lines.append("Specialist agents under `.claude/agents/`:\n")
+    critics = [a for a in agents if a.get("type") == "critic"]
+    generators = [a for a in agents if a.get("type") != "critic"]
+    if critics:
+        lines.append("**Critics** (adversarial gates):\n")
+        for a in critics:
+            name = a.get("name") or a["stem"]
+            desc = a.get("description", "")
+            path = a["path"]
+            if desc:
+                lines.append(f"- **[`{name}`]({path})** — {desc}")
+            else:
+                lines.append(f"- **[`{name}`]({path})**")
+        lines.append("")
+    if generators:
+        lines.append("**Generators** (output-producing agents):\n")
+        for a in generators:
+            name = a.get("name") or a["stem"]
+            desc = a.get("description", "")
+            path = a["path"]
+            if desc:
+                lines.append(f"- **[`{name}`]({path})** — {desc}")
+            else:
+                lines.append(f"- **[`{name}`]({path})**")
+        lines.append("")
+
+    # Hooks
+    lines.append("### Hooks\n")
+    lines.append(
+        "Claude Code session hooks configured in `.claude/settings.json`"
+        " (scripts in `.claude/hooks/`):\n"
+    )
+    if hooks:
+        seen_hooks = set()
+        for h in hooks:
+            key = (h["name"], h["event"])
+            if key in seen_hooks:
+                continue
+            seen_hooks.add(key)
+            name = h["name"]
+            event = h["event"]
+            desc = h.get("description", "")
+            path = h.get("path", ".claude/settings.json")
+            if desc:
+                lines.append(f"- **[`{name}`]({path})** (`{event}`) — {desc}")
+            else:
+                lines.append(f"- **[`{name}`]({path})** (`{event}`)")
+    else:
+        lines.append("_(no hooks configured)_")
+    lines.append("")
+
+    # ADRs (just count + link)
+    lines.append("### Architecture Decision Records\n")
+    lines.append(
+        f"[`decisions/`](decisions/) holds {len(adrs)} ADR(s)."
+        " See [`decisions/README.md`](decisions/README.md) for the full index."
+    )
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _build_counts() -> str:
+    """Build the counts summary line."""
+    skills = discover_skills()
+    agents = discover_agents()
+    hooks = discover_hooks()
+    adrs = discover_adrs()
+
+    critics = [a for a in agents if a.get("type") == "critic"]
+    generators = [a for a in agents if a.get("type") != "critic"]
+
+    # Deduplicate hooks by (name, event)
+    seen = set()
+    unique_hooks = []
+    for h in hooks:
+        key = (h["name"], h["event"])
+        if key not in seen:
+            seen.add(key)
+            unique_hooks.append(h)
+
+    lines = [
+        f"> **Auto-generated component counts** (as of last generator run):"
+        f" {len(skills)} skill(s),"
+        f" {len(critics)} critic(s) + {len(generators)} generator(s),"
+        f" {len(unique_hooks)} hook(s),"
+        f" {len(adrs)} ADR(s)."
+    ]
+    return "\n".join(lines)
+
+
+def generate_readme() -> None:
+    """Read docs/readme.template.md, substitute placeholders, write README.md.
+
+    Placeholders:
+      {{GENERATED:pipeline-diagram}}  — fixed Mermaid diagram block
+      {{GENERATED:component-map}}     — filesystem-derived skills/agents/hooks/ADR map
+      {{GENERATED:counts}}            — one-line component count summary
+
+    Idempotent: running twice produces the same README.md.
+    No LLM calls — pure stdlib + pathlib.
+    """
+    template_path = REPO_ROOT / "docs" / "readme.template.md"
+    readme_path = REPO_ROOT / "README.md"
+
+    if not template_path.exists():
+        print(
+            f"ERROR: template not found at {template_path}",
+            file=sys.stderr, flush=True,
+        )
+        sys.exit(1)
+
+    template = template_path.read_text(encoding="utf-8")
+
+    substitutions = {
+        "{{GENERATED:pipeline-diagram}}": _PIPELINE_DIAGRAM,
+        "{{GENERATED:component-map}}": _build_component_map().rstrip("\n"),
+        "{{GENERATED:counts}}": _build_counts(),
+    }
+
+    result = template
+    for placeholder, value in substitutions.items():
+        result = result.replace(placeholder, value)
+
+    header = (
+        "<!-- AUTO-GENERATED from docs/readme.template.md"
+        " — edit the template, run the generator. -->\n"
+    )
+    final = header + result
+
+    readme_path.write_text(final, encoding="utf-8")
+    print(f"README.md written ({len(final)} bytes)", flush=True)
+
+
 if __name__ == "__main__":
-    main()
+    if "--generate-readme" in sys.argv:
+        generate_readme()
+    else:
+        main()

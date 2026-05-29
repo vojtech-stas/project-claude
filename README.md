@@ -273,7 +273,7 @@ Operating manual: [`docs/current/topics/kb-schema.md`](docs/current/topics/kb-sc
 
 ### Dashboard
 
-Run `python dashboard/server.py` from the project root; open `http://localhost:8765` for **Architecture** and **Health** views. Architecture tab shows the pipeline mermaid diagram and an auto-discovered component graph (skills, agents, hooks, ADRs) with click-to-view file content. Health tab shows pass/fail grids for DOCS-1..DOCS-10 (audit-meta) and AS-* (audit-subagents) with expandable FAIL rows. Python stdlib only — no `pip install` needed. Live event stream + auto-start hook ship in [slice 2 of PRD #345](https://github.com/vojtech-stas/project-claude/issues/345). See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
+Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionStart hook (per [ADR-0033](decisions/0033-tooling-spawn-hook-scope.md)). Visit `http://localhost:8765` — **Architecture**, **Live event stream**, and **Health** tabs. Architecture shows the pipeline diagram and auto-discovered component graph (skills, agents, hooks, ADRs) with click-to-view file content. Live streams real-time events from `.claude/logs/workflow-events.jsonl` with filter chips (Critics / Generators / Skills / Hooks / Bash) and click-to-expand detail. Health shows pass/fail grids for DOCS-1..DOCS-10 and AS-* checks. Python stdlib only — no `pip install` needed. Manual start: `python dashboard/server.py`. See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
 
 ## Subagent-quality maintenance
 

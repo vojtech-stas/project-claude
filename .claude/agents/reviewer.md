@@ -257,7 +257,7 @@ gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-autho
 
 Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
 
-**Trigger:** When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`), apply the matching audit-subagents / audit-meta rubric checks INLINE.
+**Trigger:** When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`, `dashboard/*`), apply the matching audit-subagents / audit-meta rubric checks INLINE.
 
 **Trigger → checks mapping:**
 
@@ -268,6 +268,7 @@ Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BO
 | `decisions/*.md` | `/audit-meta --docs` DOCS-1, DOCS-2, DOCS-7, DOCS-8 |
 | `CLAUDE.md` | `/audit-meta --docs` DOCS-3, DOCS-4, DOCS-5, DOCS-9, DOCS-10 |
 | `README.md` | `/audit-meta --docs` DOCS-5, DOCS-6, DOCS-10 |
+| `dashboard/*` | verify ADR-0033 D1 criteria: no LLM imports, no `0.0.0.0` binding, no `$CLAUDE_PROJECT_DIR` absent from hook, idempotent curl-check present |
 
 **Inline-execution constraint (per ADR-0018 D3):** Apply rubric criteria INLINE using own Bash + Grep. Do NOT shell out to `/audit-subagents` or `/audit-meta` — they are session-interactive skills the reviewer cannot invoke.
 

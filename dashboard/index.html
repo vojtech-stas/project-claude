@@ -175,13 +175,56 @@
   .agent-card .card-name { font-size: 12px; color: var(--text); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
   .agent-card .card-desc { font-size: 10px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .loading { color: var(--muted); padding: 20px 0; }
+  /* Live tab */
+  .live-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .chip {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  .chip.active { color: var(--text); border-color: var(--green); background: #1a2e1a; }
+  .chip:hover { color: var(--text); }
+  .live-stream {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow-y: auto;
+    max-height: calc(100vh - 200px);
+    min-height: 300px;
+  }
+  .event-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 6px 12px;
+    border-bottom: 1px solid #21262d;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .event-row:hover { background: #1c2128; }
+  .event-row:last-child { border-bottom: none; }
+  .event-ts { color: var(--muted); font-size: 10px; flex-shrink: 0; padding-top: 2px; min-width: 170px; }
+  .event-type-icon { font-size: 10px; flex-shrink: 0; padding-top: 2px; }
+  .event-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-detail { display: none; grid-column: 1 / -1; padding: 8px 12px; background: #0d1117; }
+  .event-detail pre { font-size: 10px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+  .status-bar { color: var(--muted); font-size: 10px; padding: 6px 12px; border-top: 1px solid var(--border); }
+  .type-critic { color: var(--orange); }
+  .type-generator { color: var(--teal); }
+  .type-skill { color: var(--green); }
+  .type-hook { color: var(--gray); }
+  .type-bash { color: var(--blue); }
 </style>
 </head>
 <body>
 
 <header>
   <h1>project-claude dashboard</h1>
-  <span>Architecture + Health views &mdash; slice 1 of PRD #345</span>
+  <span>Architecture + Health + Live event stream &mdash; PRD #345</span>
 </header>
 
 <nav>
@@ -278,11 +321,23 @@ flowchart TD
 
 <!-- LIVE TAB -->
 <div id="tab-live" class="tab">
-  <div class="placeholder">
-    <strong>Live event stream</strong>
-    <span>Available in slice 2 of PRD #345</span>
-    <span style="font-size:11px;">Will show real-time events from .claude/logs/workflow-events.jsonl</span>
+  <div class="live-toolbar">
+    <h2 style="margin:0;margin-right:4px;">Live events</h2>
+    <button class="chip active" onclick="setFilter('all', this)">All</button>
+    <button class="chip" onclick="setFilter('critic', this)">Critics</button>
+    <button class="chip" onclick="setFilter('generator', this)">Generators</button>
+    <button class="chip" onclick="setFilter('skill', this)">Skills</button>
+    <button class="chip" onclick="setFilter('hook', this)">Hooks</button>
+    <button class="chip" onclick="setFilter('bash', this)">Bash</button>
   </div>
+  <div class="live-stream" id="live-stream">
+    <div class="placeholder" id="live-empty">
+      <strong>No events yet.</strong>
+      <span>Run /ship or any pipeline command to see events stream in.</span>
+      <span style="font-size:10px;margin-top:4px;color:var(--muted)">Streaming from .claude/logs/workflow-events.jsonl</span>
+    </div>
+  </div>
+  <div class="status-bar" id="live-status">Connecting…</div>
 </div>
 
 <!-- HEALTH TAB -->
@@ -458,6 +513,124 @@ function toggleDetail(id) {
 
 // Auto-load architecture tab on start
 window.addEventListener('load', () => { loadArchitecture(); });
+
+// --- Live event stream ---
+let liveFilter = 'all';
+let liveEvents = [];  // [{id, ts, eventType, name, raw}]
+let liveEs = null;
+let liveLastSeen = 0;
+
+const CRITICS = new Set(['reviewer','prd-critic','adr-critic','slicer-critic','glossary-critic','backlog-critic']);
+const GENERATORS = new Set(['slicer','implementer','qa-tester','current-state-reader']);
+
+function classifyEvent(obj) {
+  const ev = (obj.event || '').toLowerCase();
+  if (ev === 'bash_complete') return 'bash';
+  if (ev === 'session_stop' || ev.startsWith('hook')) return 'hook';
+  if (ev === 'agent_complete') {
+    const sub = (obj.subagent_type || '').toLowerCase();
+    if (CRITICS.has(sub)) return 'critic';
+    if (GENERATORS.has(sub)) return 'generator';
+    return 'generator';
+  }
+  // skill-complete or unknown
+  return 'skill';
+}
+
+function typeIcon(t) {
+  const map = { critic: '●', generator: '◆', skill: '▶', hook: '⚙', bash: '$' };
+  return map[t] || '·';
+}
+
+function typeCss(t) {
+  const map = { critic: 'type-critic', generator: 'type-generator', skill: 'type-skill', hook: 'type-hook', bash: 'type-bash' };
+  return map[t] || '';
+}
+
+function eventName(obj, t) {
+  if (t === 'bash') return (obj.command || '').slice(0, 80);
+  if (t === 'hook' && obj.event === 'session_stop') return 'session_stop';
+  return obj.subagent_type || obj.event || 'event';
+}
+
+function renderLiveEvents() {
+  const container = document.getElementById('live-stream');
+  const empty = document.getElementById('live-empty');
+  const visible = liveFilter === 'all' ? liveEvents : liveEvents.filter(e => e.eventType === liveFilter);
+
+  if (visible.length === 0) {
+    empty.style.display = 'flex';
+    const existing = container.querySelectorAll('.event-row, .event-detail');
+    existing.forEach(el => el.remove());
+    return;
+  }
+  empty.style.display = 'none';
+
+  // Rebuild all rows (newest at top = reversed)
+  const reversed = [...visible].reverse();
+  let html = '';
+  for (const ev of reversed) {
+    const ts = ev.ts ? ev.ts.replace('T', ' ').slice(0, 19) : '';
+    html += `<div class="event-row" onclick="toggleLiveDetail('det-${ev.id}')">`;
+    html += `<span class="event-ts">${escHtml(ts)}</span>`;
+    html += `<span class="event-type-icon ${typeCss(ev.eventType)}">${typeIcon(ev.eventType)}</span>`;
+    html += `<span class="event-name ${typeCss(ev.eventType)}">${escHtml(ev.name)}</span>`;
+    html += `</div>`;
+    html += `<div class="event-detail" id="det-${ev.id}"><pre>${escHtml(JSON.stringify(ev.raw, null, 2))}</pre></div>`;
+  }
+  container.innerHTML = html + (empty.outerHTML);
+  document.getElementById('live-empty').style.display = 'none';
+}
+
+function toggleLiveDetail(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+function setFilter(f, btn) {
+  liveFilter = f;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  renderLiveEvents();
+}
+
+function startLiveStream() {
+  if (liveEs) return; // already connected
+  liveEs = new EventSource('/api/events');
+
+  liveEs.onopen = () => {
+    document.getElementById('live-status').textContent = 'Connected — streaming live.';
+  };
+
+  liveEs.onmessage = (e) => {
+    liveLastSeen = Date.now();
+    let obj;
+    try { obj = JSON.parse(e.data); } catch(_) { return; }
+    const t = classifyEvent(obj);
+    liveEvents.push({ id: e.lastEventId || liveEvents.length, ts: obj.ts, eventType: t, name: eventName(obj, t), raw: obj });
+    renderLiveEvents();
+  };
+
+  liveEs.onerror = () => {
+    document.getElementById('live-status').textContent = 'reconnecting…';
+    // EventSource auto-reconnects; status updated on next onopen
+  };
+
+  // Stale-connection warning: if no event in 5s show reconnecting note
+  setInterval(() => {
+    if (liveEs && liveEs.readyState === 1 && liveLastSeen && Date.now() - liveLastSeen > 5000) {
+      document.getElementById('live-status').textContent = 'reconnecting… (no events for 5s)';
+    }
+  }, 3000);
+}
+
+// Patch switchTab to start stream when Live tab is first opened
+const _origSwitchTab = switchTab;
+window.switchTab = function(name, btn) {
+  _origSwitchTab(name, btn);
+  if (name === 'live') startLiveStream();
+};
 </script>
 </body>
 </html>

@@ -18,6 +18,7 @@ The dogfood atomic-notes pattern for this KB. Walking-skeleton is the project's 
 
 - **defines:** [[../../../CLAUDE.md]] (cross-cutting rule #2 is the canonical statement of the practice in this project)
 - **depends-on:** [[concepts/glossary/yagni]] (rule #1; walking-skeleton is meaningless without rule-#1 scope discipline — link points to future content per [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D6 forward-binding)
+- **related-to:** [[concepts/glossary/walking-skeleton-glossary]] (glossary entry for this practice; back-ref so cascade-finder surfaces this pattern as a dependent)
 - **related-to:** [[cascade-doc-check]] (sister slicing-time practice; future pattern note)
 - **part-of:** [[../topics/slicing]] (the slicing topic synthesis; future content)
 - **references:** [[../../../decisions/0001-foundational-design.md]] (D10 — original adoption of the practice)

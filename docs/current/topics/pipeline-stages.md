@@ -1,14 +1,15 @@
 ---
 title: pipeline stages — the autonomous PRD-to-merge chain
-summary: The HOW of every stage in the autonomous pipeline — from /grill-me intake to /qa-plan acceptance — synthesizing CLAUDE.md "Pipeline operational logic" and the /ship orchestrator's stage map; each generation stage is paired with an adversarial critic per ADR-0003 D2.
-tags: [pipeline, orchestration, ship, topic]
+summary: The HOW of every stage in the autonomous pipeline — from /grill-me intake to /qa-plan acceptance — synthesizing CLAUDE.md "Pipeline operational logic" and the /ship orchestrator's stage map; each generation stage is paired with an adversarial critic per ADR-0003 D2. Amended 2026-05-30 to describe the /build single-entry-point orchestrator (ADR-0034 D1) and generated-docs currency model (ADR-0034 D4).
+tags: [pipeline, orchestration, ship, build, topic]
 type: topic
-last_updated: 2026-05-26
+last_updated: 2026-05-30
 sources:
   - CLAUDE.md
   - .claude/skills/ship/SKILL.md
   - decisions/0003-autonomous-pipeline-with-critics.md
   - decisions/0010-implementer-subagent-auto-pipeline.md
+  - decisions/0034-build-orchestrator-and-generated-docs.md
 ---
 
 # pipeline stages
@@ -21,6 +22,34 @@ The canonical synthesis of the autonomous pipeline's operational logic — the H
 Until T6 ships, edits to ANY of the three locations (this page + CLAUDE.md "Pipeline operational logic" + ship.md stages) must update all three to prevent drift.
 
 **Out of scope (deferred to sibling topic).** The canonical output-shape standard (verdict template, CRITIC trailer, GENERATOR trailer) lives in [[topics/output-shapes]] — this topic links there rather than restating it. Per PRD #273 §6 rabbit-holes ("defer disambiguation to topic-cleanup PRD if needed"), pipeline-stages.md focuses on stage operational logic; output-shapes.md focuses on the schema each agent emits.
+
+## `/build` — single-entry-point orchestrator (ADR-0034 D1)
+
+Per [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) D1, a new skill `/build` (`.claude/skills/build/SKILL.md`, ships in PRD #348 slice 3) is the **single everyday entry point** for "implement or grill something." It is a thin orchestrator (~60-80 LoC) that invokes the existing atomic skills in sequence via the Skill tool:
+
+1. **Ensure dashboard running** (idempotent) — reuse `dashboard-autostart.sh` from PRD #345 slice 2
+2. **Assess + grill** (conditional) — invoke `/grill-me` if the input is vague (D3: auto-assess + announce + proceed, no blocking confirmation question)
+3. **Ship** — invoke `/ship` unchanged (the existing autonomous middle per ADR-0003 D7 + ADR-0010 D2)
+4. **Regenerate docs** — run `python dashboard/server.py --generate-readme` so the PR arrives doc-current (D4)
+5. **QA** — invoke `/qa-plan` (HITL acceptance)
+
+**Sub-skills remain atomic and individually invocable** (D2): `/grill-me`, `/ship`, `/qa-plan` are NOT absorbed or deleted. `/build` is the convenience conductor layered on top; the five pipeline stages themselves (ADR-0003 D2) are unchanged.
+
+**Forward-ref:** `/build` skill ships in PRD #348 slice 3. The CLAUDE.md Map has a forward-ref row pointing to `.claude/skills/build/SKILL.md`.
+
+## Generated-docs currency model — pipeline-wide invariant (ADR-0034 D4)
+
+Per [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) D4, `README.md` is now a **build artifact** — generated, not hand-maintained:
+
+- **Source of truth**: `docs/readme.template.md` — static hand-written prose + `{{GENERATED:*}}` injection points
+- **Generator**: `python dashboard/server.py --generate-readme` — reads filesystem (`.claude/agents/`, `.claude/skills/`, `.claude/hooks/`, `.claude/settings.json`, `decisions/`) + the template → writes `README.md`; Python stdlib only; no LLM calls; idempotent
+- **Output**: `README.md` carries a leading header comment `<!-- AUTO-GENERATED from docs/readme.template.md — edit the template, run the generator. -->`
+- **Enforcement** (ships in PRD #348 slice 2):
+  - `R-DOCS-CURRENT` reviewer hard-block rule (D5): regenerate + `git diff --exit-code` on every PR; BLOCK on drift
+  - Pre-commit doc-generation check (D6): regenerate on commit; block with message if out of sync
+- **Idempotency**: running the generator twice produces the same `README.md` (deterministic output from deterministic inputs)
+
+This model makes mechanical doc content **drift-proof by construction** — a stale README literally cannot merge once slice 2's enforcement ships. Until then (current state: slice 1 only), the generator is idempotent and the header comment signals to editors to use the template.
 
 ## The chain (high-level)
 
@@ -230,3 +259,4 @@ Per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md), t
 - **related_to:** [[patterns/walking-skeleton]]
 - **related_to:** [[patterns/cascade-doc-check]]
 - **related_to:** [[patterns/n1-degenerate-carveout]]
+- **extended_by:** [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) — `/build` orchestrator D1 + generated-docs currency D4

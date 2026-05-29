@@ -102,6 +102,9 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | Backlog (forward queue) | `gh issue list --label backlog` + Backlog column on project board #2 | curated by `backlog-critic` |
 | Captured tier | `gh issue list --label captured` + Captured column on project board #2 | autopilot pre-backlog |
 | Workflow dashboard | `dashboard/` | local web visualizer (architecture + health); see [dashboard/README.md](dashboard/README.md) |
+| `/build` orchestrator skill | `.claude/skills/build/SKILL.md` | **forward-ref; skill ships in slice #363** — thin conductor wrapping `/grill-me` → `/ship` → doc-generator → `/qa-plan`; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D1 |
+| README template | `docs/readme.template.md` | source of truth for README.md — static prose + `{{GENERATED:*}}` placeholders; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D4 |
+| README generator | `dashboard/server.py --generate-readme` | reads template + filesystem → writes `README.md`; reuses dashboard's `discover_*` engine; no LLM calls; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D7 |
 
 ---
 

@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED from docs/readme.template.md — edit the template, run the generator. -->
 # project-claude
 
 A clone-as-template starter for AI-coded projects, replicating the workflow of a **senior engineer overseeing a small team of developers** — but with AI agents instead of humans. Built on 20-year-old software engineering practices (small slices, fast feedback, git-tracked changes, PR review, scope discipline) and heavy borrowing from [Matt Pocock's skills repo](https://github.com/mattpocock/skills).
@@ -109,63 +108,7 @@ The reviewer applies `needs-human` on round-3 BLOCK ([ADR-0003](decisions/0003-a
 
 The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot, and the topic-nudge `UserPromptSubmit` hook that dispatches `current-state-reader` per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4) live in their own subgraph or fire transparently around the main pipeline.
 
-```mermaid
-flowchart TD
-  subgraph S1["Stage 1: Idea capture"]
-    U1[User] --> GM["/grill-me"]
-    GM -->|settled design| SHIP["/ship"]
-  end
-  subgraph S2["Stage 2: PRD authoring"]
-    SHIP --> TOPRD["/to-prd"]
-    TOPRD --> PRDC[prd-critic]
-    TOPRD -.if ADR.-> ADRC[adr-critic]
-    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
-    ADRC -->|joint APPROVE| PRDISSUE
-    PRDC -.BLOCK ≤3 rounds.-> TOPRD
-    ADRC -.BLOCK ≤3 rounds.-> TOPRD
-  end
-  subgraph S3["Stage 3: Slice decomposition"]
-    PRDISSUE --> TOISSUES["/to-issues"]
-    TOISSUES --> SLICER[slicer]
-    SLICER -->|N alternatives| SLICERC[slicer-critic]
-    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
-    SLICERC -.BLOCK ≤1 revision.-> SLICER
-  end
-  subgraph S4["Stage 4: Implementation"]
-    SLICEISSUES --> IMPL[implementer]
-    IMPL --> PR[(PR with Closes #N)]
-    PR --> REV[reviewer]
-    REV -->|APPROVE| MERGE[(merged on main)]
-    REV -.BLOCK ≤3 rounds.-> IMPL
-    REV -.round-3 BLOCK.-> NH[needs-human label]
-  end
-  subgraph S5["Stage 5: Acceptance"]
-    MERGE --> QA["/qa-plan"]
-    QA --> U2[User accepts PRD]
-  end
-  subgraph SS["Side workflows"]
-    AUTO["/audit-subagents"] -.periodic.- REV
-    GA["/glossary-add"] --> GC[glossary-critic]
-    GC -->|APPROVE| GAPR[(glossary PR)]
-    GAPR --> REV
-    CAP[captured issue] --> PTB["/promote-to-backlog"]
-    PTB --> BC[backlog-critic]
-    BC -->|APPROVE| BL[backlog label]
-    BC -->|BLOCK| CAPSTAY[stays in captured tier]
-  end
-  classDef human fill:#3b82f6,color:#fff
-  classDef skill fill:#14b8a6,color:#fff
-  classDef gen fill:#22c55e,color:#fff
-  classDef critic fill:#f97316,color:#fff
-  classDef reviewer fill:#ef4444,color:#fff
-  classDef artifact fill:#9ca3af,color:#fff
-  class U1,U2 human
-  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
-  class SLICER,IMPL gen
-  class PRDC,ADRC,SLICERC,GC,BC critic
-  class REV reviewer
-  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
-```
+{{GENERATED:pipeline-diagram}}
 
 ### Legend
 
@@ -278,64 +221,7 @@ Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionS
 
 ## Component map
 
-### Skills
-
-User-invocable commands under `.claude/skills/`:
-
-- **[`/audit-meta`](.claude/skills/audit-meta/SKILL.md)** — Periodic mechanical audit of codebase structure + doc-currency. Subcommand architecture — `/audit-meta` (no-args = both), `/audit-meta --structure`, `/audit-meta --docs`. Sibling skill to /audit-subagents per ADR-0017. Mechanical/grep-only rubric; emits a single Markdown PASS/WARN/FAIL report. Advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect structural bloat or doc drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
-- **[`/audit-subagents`](.claude/skills/audit-subagents/SKILL.md)** — Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 10-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
-- **[`/best-practice-hooks`](.claude/skills/best-practice-hooks/SKILL.md)** — On-demand authoritative guidance for Claude Code hooks — when to use PreToolUse vs PostToolUse, where hook scripts live, whether a hook can invoke a skill, what scope (project/user/local) fits a given rule, how to block a tool call from a hook, and how SessionStart `additionalContext` injects state. Auto-loads when the user asks "should I use a PreToolUse or PostToolUse hook?", "where do hook scripts live?", "can a hook invoke a skill or subagent?", "what hook scope should I use (project/user/local)?", "how do I block a tool call from a hook?", "how do I inject session-start context?", or similar hook-shape questions. Distilled from `docs.claude.com/en/docs/claude-code/{hooks-guide,hooks}` per ADR-0022 D1 (4-section shape) with mechanical Grep+Target audit hooks per ADR-0022 D1's audit-consumability schema for future `/audit-against-best-practices` (PRD-D).
-- **[`/best-practice-subagents`](.claude/skills/best-practice-subagents/SKILL.md)** — On-demand authoritative guidance for Claude Code subagent-design questions — frontmatter fields, tool boundaries, model choice, preloaded skills, the no-nested-spawn rule, and the description-driven delegation contract. Auto-loads when the user asks "how should I write a subagent?", "what tools should this subagent have?", "should this be a subagent or a skill?", "what model should this subagent use?", "can a subagent spawn another subagent?", "how do I preload skills into a subagent?", or any similar subagent-shape question. Distilled from `docs.claude.com/en/docs/claude-code/sub-agents` per ADR-0022 D1 (4-section shape) with mechanical Grep+Target audit hooks per ADR-0022 D1's audit-consumability schema for future `/audit-against-best-practices` (PRD-D).
-- **[`/best-practice-workflow`](.claude/skills/best-practice-workflow/SKILL.md)** — On-demand authoritative guidance for Claude Code workflow questions — slash-commands, skill invocation, settings hierarchy, sub-agent vs skill choice, project structure. Auto-loads when the user asks "should I use a slash-command or a skill here?", "where do project settings go?", "how does Claude pick which skill to load?", "is this a subagent or a skill job?", "what belongs in CLAUDE.md vs in a skill?", or any similar workflow-shape question. Distilled from `docs.claude.com/en/docs/claude-code/{slash-commands,sub-agents,settings,skills,hooks-guide,overview}` per ADR-0022 D1 (4-section shape) with mechanical Grep+Target audit hooks per ADR-0022 D1's audit-consumability schema for future `/audit-against-best-practices` (PRD-D).
-- **[`/distill-video`](.claude/skills/distill-video/SKILL.md)** — Fetch a YouTube video transcript via yt-dlp and distill it into a referenceable best-practices entry under `docs/best-practices/`. Input is one YouTube video ID. Output is two tracked artifacts (raw `.vtt` + distilled `.md`) following the slug + authority-chain conventions of ADR-0019. Use when adding a new entry to the project's external-content KB from an authorized source (`@claude` or `@anthropic-ai` YouTube channels per ADR-0019 scope). Re-runs OVERWRITE both artifacts.
-- **[`/glossary-add`](.claude/skills/glossary-add/SKILL.md)** — Add a single glossary term — interactive single-term flow that captures definition, scope category, and authority, then invokes glossary-critic before opening a trivial-lane PR. Use when the user (or a discretionary-surfacing agent) wants to land a new vocabulary term.
-- **[`/glossary-fold`](.claude/skills/glossary-fold/SKILL.md)** — Bulk-fold mechanism for skill-local `## Local vocabulary` sections per ADR-0014. User-invokable; scans all skills, runs each candidate entry through glossary-critic, and opens one PR proposing APPROVE'd entries to CLAUDE.md. Sibling to `/glossary-add` (single-entry interactive flow).
-- **[`/grill-me`](.claude/skills/grill-me/SKILL.md)** — Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions "grill me".
-- **[`/promote-to-backlog`](.claude/skills/promote-to-backlog/SKILL.md)** — Run the captured→backlog autopilot on a single `captured`-labeled GitHub issue. Invoked INLINE by whatever agent (subagent, skill, or main Claude) just wrote the capture via `gh issue create --label captured`, per ADR-0008 D3. Calls `backlog-critic`; on APPROVE swaps labels `captured` → `backlog` and posts the verdict as an audit-trail comment; on BLOCK posts the verdict and leaves the captured label in place.
-- **[`/qa-plan`](.claude/skills/qa-plan/SKILL.md)** — Writer/orchestrator for QA automation per ADR-0020. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment for audit, dispatches the qa-tester subagent to execute, renders JUDGMENT and EXTRACT_FAILED rows via AskUserQuestion, and auto-closes the PRD on all-PASS + all-judgment-ACCEPT. Invoke at PRD acceptance — the terminal human checkpoint refined per ADR-0020 D10. Backward-compatible with /ship invocation surface.
-- **[`/ship`](.claude/skills/ship/SKILL.md)** — Run the autonomous pipeline from grilled context to posted PRD-and-slices on GitHub. Use after /grill-me when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand off the grilled idea to the autonomous pipeline.
-- **[`/to-issues`](.claude/skills/to-issues/SKILL.md)** — Break a PRD into independently-grabbable vertical-slice issues on GitHub. Delegates to the `slicer` and `slicer-critic` subagents under the hood. Invocation shape preserved — use when the user says `/to-issues`, asks to break a PRD into slices, or convert a plan into implementation tickets.
-- **[`/to-prd`](.claude/skills/to-prd/SKILL.md)** — Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
-
-### Subagents
-
-Specialist agents under `.claude/agents/`:
-
-**Critics** (adversarial gates):
-
-- **[`adr-critic`](.claude/agents/adr-critic.md)** — Audit a draft ADR for quality against ADR conventions and the adr-critic rubric. Use when `/to-prd` (or any generator) has produced a draft ADR and needs a critic verdict before publishing. On APPROVE, the generator commits the ADR. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
-- **[`backlog-critic`](.claude/agents/backlog-critic.md)** — Audit a freshly-written `captured`-labeled issue and decide whether the autopilot should promote it to `backlog` or leave it in the captured tier. Use immediately after an agent runs `gh issue create --label captured` (per ADR-0008 D3, inline firing in same agent context). On APPROVE, the invoking context performs the label swap `captured` → `backlog`. On BLOCK, the captured item stays put and the user reviews on whatever cadence they prefer.
-- **[`glossary-critic`](.claude/agents/glossary-critic.md)** — Audit a draft glossary entry for quality against ADR-0007 D5's rubric (as partially superseded by ADR-0012 D4). Use when `/glossary-add` (or any generator) has produced a draft entry and needs a critic verdict before opening the PR. On APPROVE, the generator opens the trivial-lane PR. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
-- **[`prd-critic`](.claude/agents/prd-critic.md)** — Audit a draft PRD (and any macro-ADRs drafted alongside it) for quality against the 6-section template and the PRD-critic rubric. Use when the `/to-prd` skill (or `/ship`) has produced a draft PRD and needs a critic verdict before publishing. On APPROVE, the generator posts the PRD. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
-- **[`reviewer`](.claude/agents/reviewer.md)** — Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash`. On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
-- **[`slicer-critic`](.claude/agents/slicer-critic.md)** — Score the slicer's N=3 decompositions of a PRD, pick the best with explicit rationale, then run a single revision loop on the chosen one. Use after `slicer` has produced its N=3 output and before slices are posted to GitHub. Final output is one approved decomposition ready for issue creation.
-
-**Generators** (output-producing agents):
-
-- **[`current-state-reader`](.claude/agents/current-state-reader.md)** — Read the materialized truth-doc for a single architectural topic and return a thin synthesis to the caller. Generic per-topic reader parametrized by a `<topic>` string (e.g., `qa-automation`, `pipeline`, `slicing`). Dispatched by the main agent — typically after the UserPromptSubmit topic-nudge hook (per ADR-0026 D4) injects an additionalContext instruction matching the prompt's keywords. The reader opens `docs/current/<topic>.md`, distills the active synthesis into ≤15 lines, and emits a canonical GENERATOR trailer per ADR-0005 D1c with per-agent extensions `TOPIC` and `SOURCES_READ`. Use this proactively whenever the user asks "what's the current state of X?" / "what's our current X architecture?" / "how does X work today?" — instead of reading source ADRs / skills / subagent bodies inline into main-agent context, dispatch this reader to keep main slim per ADR-0026 D1.
-- **[`implementer`](.claude/agents/implementer.md)** — Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
-- **[`qa-tester`](.claude/agents/qa-tester.md)** — Dual-mode executor subagent for the QA writer/executor pipeline (per ADR-0020 + ADR-0025). bash-mode (default; per ADR-0020 D3): given a structured QA-plan (Markdown table — `criterion # | bash check or "JUDGMENT" | expected result`), walks it row-by-row, runs each bash check, returns per-criterion verdict table + canonical GENERATOR trailer; mechanical execution only — no semantic judgment, no file mutation, no nested subagent dispatch. ui-mode (per ADR-0025 D1): given LLM-extracted click recipes from PRD §2, runs a Playwright MCP-driven dogfood self-test first, then drives each click recipe step (navigate/click/fill/screenshot), LLM-judges each screenshot per ADR-0025 D3 (PASS / PROVISIONAL_PASS / FAIL), aggregates per-step into per-criterion verdicts; PROVISIONAL_PASS rows auto-capture a `captured`-labeled issue per ADR-0025 D4 + CLAUDE.md rule #13. Dispatched by `/qa-plan` (writer skill in main-agent context) after the writer has classified the PRD's §2 acceptance shape and prepared a structured plan or click recipes.
-- **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce N=3 alternative vertical-slice decompositions of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs candidate decompositions for the slicer-critic to score. Output is the three decompositions side-by-side, NOT GitHub issues — posting is downstream.
-
-### Hooks
-
-Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
-
-- **[`session-start.sh`](.claude/hooks/session-start.sh)** (`SessionStart`) — SessionStart hook — inject live workflow state per ADR-0023 D2.
-- **[`dashboard-autostart.sh`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
-- **[`user-prompt-submit.sh`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
-- **[`user-prompt-submit-topic-nudge.sh`](.claude/hooks/user-prompt-submit-topic-nudge.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — topic-nudge per ADR-0026 D4.
-- **[`pre-tool-edit.sh`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
-- **[`pre-tool-bash.sh`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
-- **[`FILE_PATH=$(jq -r '.tool_input.file_path' </dev/stdin); if e`](.claude/settings.json)** (`PostToolUse`) — logs agent file edits; suggests /audit-subagents on agent .md changes
-- **[`STDIN=$(cat /dev/stdin); SUB=$(echo "$STDIN" | jq -r '.tool_`](.claude/settings.json)** (`PostToolUse`) — logs agent completions to workflow-events.jsonl
-- **[`STDIN=$(cat /dev/stdin); CMD=$(echo "$STDIN" | jq -r '.tool_`](.claude/settings.json)** (`PostToolUse`) — logs bash completions to workflow-events.jsonl
-- **[`mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs" && jq -cn --arg `](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
-- **[`stop-reviewer-gate.sh`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
-
-### Architecture Decision Records
-
-[`decisions/`](decisions/) holds 33 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+{{GENERATED:component-map}}
 
 ## Subagent-quality maintenance
 
@@ -357,7 +243,7 @@ Walking-skeleton phase. The pipeline is being built incrementally **on the proje
 
 [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 migration program completed steps T1–T6: atomic-notes-based KB migrated; CLAUDE.md slimmed from 988 → ~155 LoC. T7–T9 (impact-analyst, kb-maintainer, knowledge-gateway generator subagents) remain future work per parent PRD [#242](https://github.com/vojtech-stas/project-claude/issues/242).
 
-> **Auto-generated component counts** (as of last generator run): 14 skill(s), 6 critic(s) + 4 generator(s), 11 hook(s), 33 ADR(s).
+{{GENERATED:counts}}
 
 ## License
 

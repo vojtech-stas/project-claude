@@ -271,6 +271,10 @@ Operating manual: [`docs/current/topics/kb-schema.md`](docs/current/topics/kb-sc
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
 
+### Dashboard
+
+Run `python dashboard/server.py` from the project root; open `http://localhost:8765` for **Architecture** and **Health** views. Architecture tab shows the pipeline mermaid diagram and an auto-discovered component graph (skills, agents, hooks, ADRs) with click-to-view file content. Health tab shows pass/fail grids for DOCS-1..DOCS-10 (audit-meta) and AS-* (audit-subagents) with expandable FAIL rows. Python stdlib only — no `pip install` needed. Live event stream + auto-start hook ship in [slice 2 of PRD #345](https://github.com/vojtech-stas/project-claude/issues/345). See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
+
 ## Subagent-quality maintenance
 
 Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies a 10-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap (skill ownership, not a 7th critic). Invoke periodically or after merging a convention-changing ADR.

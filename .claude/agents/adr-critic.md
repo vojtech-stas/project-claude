@@ -59,9 +59,9 @@ Each criterion is PASS or FAIL. Any FAIL → BLOCK. Be specific; cite the offend
 
 ## Additional responsibility — flag affected truth-doc topics (non-blocking)
 
-When auditing a draft ADR that cites or extends prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md`, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR per [ADR-0026](../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2. The reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time; your flagging makes the topic candidate set visible at ADR-draft time.
+When auditing a draft ADR that cites or extends prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md`, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D2. The reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time; your flagging makes the topic candidate set visible at ADR-draft time.
 
-**How to check:** parse the draft for `ADR-NNNN` references; read `.claude/topics.json` (keyword→topic mapping per [ADR-0026](../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D4); for each topic with an existing `docs/current/<topic>.md`, check whether any cited ADR appears as a source. Soft-degrade if either is absent (pre-ADR-0026-merge bootstrap state or topic not yet backfilled). Full body + boundary clarity: [entities/subagents/adr-critic § Truth-doc topic flagging](../../docs/current/entities/subagents/adr-critic.md).
+**How to check:** parse the draft for `ADR-NNNN` references; read `.claude/topics.json` (keyword→topic mapping per [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D4); for each topic with an existing `docs/current/<topic>.md`, check whether any cited ADR appears as a source. Soft-degrade if either is absent (pre-ADR-0026-merge bootstrap state or topic not yet backfilled). Full body + boundary clarity: [entities/subagents/adr-critic § Truth-doc topic flagging](../../docs/current/entities/subagents/adr-critic.md).
 
 Tool budget: 1-2 `Read` calls; honors the read-only critic contract. The 6-rule rubric count is preserved per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap; this responsibility is non-blocking and does not count as a 7th critic.
 
@@ -121,6 +121,6 @@ This subagent ships in slice 2 of PRD-B per [ADR-0004](../../decisions/0004-bypa
 - [ADR-0004](../../decisions/0004-bypass-prevention.md) D1 (joint critic gate with prd-critic) + D2 (bootstrap-mode policy)
 - [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 (5-section verdict template + CRITIC trailer schema)
 - [ADR-0009](../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
-- [ADR-0026](../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2 (truth-doc flagging) + D4 (topics.json) + D5 (R-TRUTH-DOC enforcement)
+- [ADR-0026](../../decisions/0026-knowledge-architecture-truth-docs.md) D2 (truth-doc flagging) + D4 (topics.json) + D5 (R-TRUTH-DOC enforcement)
 - [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full rule bodies live in `docs/current/concepts/rules/ac-*.md` atomic notes; full role synthesis lives in `docs/current/entities/subagents/adr-critic.md`.
 - [`.claude/skills/to-prd/SKILL.md`](../skills/to-prd/SKILL.md) — primary caller via joint-APPROVE gate with `prd-critic`.

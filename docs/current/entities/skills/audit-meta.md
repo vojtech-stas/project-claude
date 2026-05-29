@@ -3,7 +3,7 @@ title: audit-meta — mechanical drift-detector for codebase structure + docs cu
 summary: /audit-meta skill with subcommand architecture (--structure / --docs / both); applies 10 STRUCT-* + 10 DOCS-* checks per ADR-0017 D2/D3 against repo structure (file counts, sizes, naming) and documentation references (dangling links, stale convention text); emits a single advisory Markdown PASS/WARN/FAIL report.
 tags: [skill, audit, generator, mechanical, audit-meta]
 type: entity
-last_updated: 2026-05-27
+last_updated: 2026-05-29
 sources:
   - .claude/skills/audit-meta/SKILL.md
   - decisions/0017-audit-meta-consolidation.md
@@ -37,7 +37,14 @@ Like `/audit-subagents`, the skill is **advisory output only** per [ADR-0011](..
 
 ## Default-conservative rendering
 
-When a grep pattern is ambiguous against file content (e.g., a forbidden literal appears inside a quoted example block), the skill renders **FAIL**. Asymmetric-cost rationale: a spurious FAIL costs one user-glance round; a wrong-PASS lets real drift slip undetected. Mirrors `/audit-subagents` per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D2 precedent.
+When a grep pattern is ambiguous against file content, the skill renders **FAIL**. Asymmetric-cost rationale: a spurious FAIL costs one user-glance round; a wrong-PASS lets real drift slip undetected. Mirrors `/audit-subagents` per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D2 precedent.
+
+**Allowlist exceptions** (calibrated via PRD #334 / slice #335 to eliminate false-FAILs on legitimate content):
+
+- **DOCS-5** — `N=3` in README.md is PASS if an `ADR-0013` reference appears within ±2 lines (proximity check). Rationale: `README.md` L90 legitimately cites `(N=3 or N=1 decompositions per ADR-0013)` with contextual reference.
+- **DOCS-6** — `GLOSSARY.md` references in `decisions/*` (wholesale allowlist — ADRs document the file's historical lifecycle and are immutable per ADR-0001 D8) and in 5 named files (`.claude/skills/audit-meta/SKILL.md`, `.claude/skills/grill-me/SKILL.md`, `docs/current/concepts/rules/am-docs-literal-drift.md`, `docs/current/entities/skills/audit-meta.md`, `docs/current/topics/knowledge-architecture.md`) are PASS. These are the known-legitimate carriers; any other file hitting is genuine drift.
+- **DOCS-7** — Fake-example slugs matching `decisions/00[0-9]{2}-(old-name|fictional|fictional-adr|new-adr|new-decision)\.md` are allowlisted by slug-shape regex. These slug shapes are never real (real slugs are descriptive kebab nouns); rule-body atomic notes embed them as pedagogical examples.
+- **DOCS-10** — `backlog-critic.md` (ADR-0011 ALL-4 precedent) and `promote-to-backlog/SKILL.md` (ADR-0008 D3 label-swap operator) are allowlisted. The `/promote-to-backlog` skill IS the captured→backlog gate; its `--label backlog` usage is the intended operation, not drift.
 
 ## Ownership choice rationale
 

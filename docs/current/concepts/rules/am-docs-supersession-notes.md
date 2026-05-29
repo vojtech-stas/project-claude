@@ -1,9 +1,9 @@
 ---
 title: AM-DOCS-SUPERSESSION-NOTES — audit-meta docs check, decisions/README.md Status column carries "superseded by ADR-NNNN" notes (DOCS-8)
-summary: The audit-meta docs-subcommand mechanical check that for every ADR D-ID carrying a supersession header, the decisions/README.md Status column has the matching "superseded by ADR-NNNN" annotation.
+summary: The audit-meta docs-subcommand mechanical check that for every ADR D-ID carrying a supersession header, the decisions/README.md Status column has the matching "superseded by ADR-NNNN" annotation. Uses `grep -nE '^- \*\*Supersedes:\*\*'` to match the actual ADR line-prefix format.
 tags: [rule, audit-meta-rubric, docs]
 type: concept
-last_updated: 2026-05-27
+last_updated: 2026-05-29
 sources:
   - .claude/skills/audit-meta/SKILL.md DOCS-8
   - decisions/0017-audit-meta-consolidation.md D3
@@ -19,12 +19,13 @@ Emits WARN (not FAIL) on missing annotation — the supersession chain in the AD
 
 The check fires under the `docs` subcommand. Mechanics:
 
-- Enumerate every `Supersedes:` header across `decisions/*.md` ADR files; extract each superseded D-ID (e.g., "ADR-0004 D4 superseded by ADR-0009 D1" → superseded = `ADR-0004 D4`, superseder = `ADR-0009`).
+- Enumerate every supersession declaration across `decisions/*.md` ADR files using the **actual ADR line-prefix format**: `grep -nE '^- \*\*Supersedes:\*\*' decisions/*.md`. This matches the bullet-prefixed bold-label format `- **Supersedes:** ADR-NNNN Dx` that all project ADRs use. (Note: the previously-documented pattern `^\*\*Supersedes:\*\*` — without the leading `- ` — silently never fired because no ADR uses a bare-header format.)
+- For each matched line, extract the superseded D-ID (the ADR number cited after `Supersedes:`).
 - For each superseded D-ID, grep the `decisions/README.md` Status column for the literal `superseded by` annotation referencing the superseder.
 - If all annotations are present → **PASS**.
 - If any are missing → **WARN** (list the missing annotations with their canonical superseder).
 
-The WARN level reflects that supersession is **dual-tracked**: the ADR body has the authoritative declaration (`Supersedes:` header), and the README index has a discoverability hint. A missing hint reduces discoverability but doesn't invalidate the supersession itself.
+The WARN level reflects that supersession is **dual-tracked**: the ADR body has the authoritative declaration (`- **Supersedes:**` line), and the README index has a discoverability hint. A missing hint reduces discoverability but doesn't invalidate the supersession itself.
 
 ## Why
 
@@ -33,17 +34,20 @@ ADR supersession is the project's primary mechanism for evolving decisions witho
 The README annotation is the **discoverability layer**: a reader scanning the index sees "STATUS: superseded by ADR-0009" and skips to the current one without opening the deprecated file. Missing the annotation forces the reader to open every ADR to check its status — death by a thousand clicks at scale.
 
 WARN-level (not FAIL) because:
-- The ADR body has the authoritative `Supersedes:` header (source of truth).
+- The ADR body has the authoritative `- **Supersedes:**` line (source of truth).
 - Adding the README annotation is a recurring micro-task that's easy to defer, not a hard contract violation.
 - A FAIL here would noise-up the audit on every supersession PR until the README is updated, which is anti-flow.
+
+The mechanic re-spec from `^\*\*Supersedes:\*\*` → `^- \*\*Supersedes:\*\*` fixes a silent never-fire: the previous pattern required a bare header format that no ADR uses. With the corrected pattern, DOCS-8 now actually runs. Results will be PASS or WARN depending on the current annotation state of `decisions/README.md`.
 
 ## How to check
 
 When `--docs` is active:
 
-1. Grep every `decisions/*.md` for `Supersedes:` headers; extract (superseded, superseder) pairs.
-2. For each pair, grep `decisions/README.md` Status column for the matching `superseded by` annotation.
-3. PASS if all annotations present; WARN with missing-annotation list otherwise.
+1. Run `grep -nE '^- \*\*Supersedes:\*\*' decisions/*.md` to enumerate supersession declarations (using the actual ADR line-prefix format).
+2. For each matched line, extract the superseded D-ID referenced after `Supersedes:`.
+3. For each pair, grep `decisions/README.md` Status column for the matching `superseded by` annotation.
+4. PASS if all annotations present (or if no supersessions found); WARN with missing-annotation list otherwise.
 
 ## Examples
 

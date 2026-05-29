@@ -10,21 +10,21 @@ sources:
   - decisions/0004-bypass-prevention.md D1
   - decisions/0005-output-shape-and-slicing-methodology.md D1
   - decisions/0009-discipline-tightening.md D3
-  - decisions/0026-truth-docs-and-r-truth-doc-rule.md D2
+  - decisions/0026-knowledge-architecture-truth-docs.md D2
 ---
 
 # adr-critic
 
 The `adr-critic` subagent is the **adversarial gate at stage 2.6** of the autonomous pipeline, running alongside [`prd-critic`](prd-critic.md) whenever a macro-ADR is drafted with a PRD. It receives a draft ADR (inline markdown or a path to an already-committed `decisions/NNNN-*.md`), applies the 6-criterion rubric, and emits APPROVE (the calling generator commits the ADR) or BLOCK (with itemized findings the generator mechanically addresses in a ≤3-round revision loop). When a macro-ADR ships alongside a PRD, adr-critic and `prd-critic` form a **joint-APPROVE gate** per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1 — BOTH must APPROVE before [`/to-prd`](../../../.claude/skills/to-prd/SKILL.md) posts anything.
 
-This entity note is the **canonical full role synthesis** for the adr-critic subagent. After the T4 knowledge-architecture migration ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 4 of 9, PRD #283 slice 2), the operational [`.claude/agents/adr-critic.md`](../../../.claude/agents/adr-critic.md) carries only the prompt-level operational mechanics (mandatory reading order, rubric trigger lines, output-format pointer, tool boundaries, conduct) and links here for the rubric-criterion full bodies (each shipped as a `docs/current/concepts/rules/ac-*.md` atomic note in this slice), the iteration shape, the truth-doc-flagging sub-responsibility per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2, and the joint-gate relationship to `prd-critic`.
+This entity note is the **canonical full role synthesis** for the adr-critic subagent. After the T4 knowledge-architecture migration ([ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D10 step 4 of 9, PRD #283 slice 2), the operational [`.claude/agents/adr-critic.md`](../../../.claude/agents/adr-critic.md) carries only the prompt-level operational mechanics (mandatory reading order, rubric trigger lines, output-format pointer, tool boundaries, conduct) and links here for the rubric-criterion full bodies (each shipped as a `docs/current/concepts/rules/ac-*.md` atomic note in this slice), the iteration shape, the truth-doc-flagging sub-responsibility per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D2, and the joint-gate relationship to `prd-critic`.
 
 ## Role and responsibility
 
 The adr-critic has three jobs, in strict priority order:
 
 1. **Hard-block** any draft ADR that violates a rubric criterion. Emit itemized findings the generator can mechanically address.
-2. **Flag affected truth-doc topics** per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2 as non-blocking Recommendations so the implementer knows which `docs/current/<topic>.md` to regenerate or amend alongside the ADR.
+2. **Flag affected truth-doc topics** per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D2 as non-blocking Recommendations so the implementer knows which `docs/current/<topic>.md` to regenerate or amend alongside the ADR.
 3. **Recommend** other non-blocking improvements after the verdict body, before the trailer (the canonical `Recommendations` extension per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1).
 
 It does NOT write or edit any file (including auto-creating a missing ADR — see [AC-SUPERSEDES-BY-D-ID](../../concepts/rules/ac-supersedes-by-d-id.md) sub-check). It does NOT modify any file under `decisions/` — not even to flip a `Status` field; that is the merging tool's job, not the critic's.
@@ -61,11 +61,11 @@ Each linked rule note expands the criterion's What / Why / How-to-check / Exampl
 
 This is a **non-blocking** responsibility — surfaced in the Recommendations section of the verdict, never as a Rubric rule (the 6-rule rubric count is preserved per the established critic discipline; the 6-critic-cap per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 is honored, not breached).
 
-When auditing a draft ADR that **cites or extends** prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md` (canonical knowledge surface per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D1), adr-critic flags *"this ADR affects topics X, Y"* in the verdict's Recommendations section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR. The implementer is bound by CLAUDE.md cross-cutting rule #14 (truth-doc currency) and the reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D5 — adr-critic's flagging makes the topic candidate set visible at ADR-draft time so the implementer doesn't discover the requirement at PR time.
+When auditing a draft ADR that **cites or extends** prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md` (canonical knowledge surface per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D1), adr-critic flags *"this ADR affects topics X, Y"* in the verdict's Recommendations section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR. The implementer is bound by CLAUDE.md cross-cutting rule #14 (truth-doc currency) and the reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D5 — adr-critic's flagging makes the topic candidate set visible at ADR-draft time so the implementer doesn't discover the requirement at PR time.
 
-**How to check:** parse the draft for `ADR-NNNN` references; read `.claude/topics.json` (keyword→topic mapping per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D4); for each topic with an existing `docs/current/<topic>.md`, check whether any cited ADR appears as a source. Soft-degrade if either is absent (pre-ADR-0026-merge bootstrap state or topic not yet backfilled). Tool budget: 1-2 `Read` calls; honors the read-only critic contract.
+**How to check:** parse the draft for `ADR-NNNN` references; read `.claude/topics.json` (keyword→topic mapping per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D4); for each topic with an existing `docs/current/<topic>.md`, check whether any cited ADR appears as a source. Soft-degrade if either is absent (pre-ADR-0026-merge bootstrap state or topic not yet backfilled). Tool budget: 1-2 `Read` calls; honors the read-only critic contract.
 
-**Boundary clarity:** flagging is adr-critic's job; deciding which truth-doc to actually amend (or whether to ship a NEW truth-doc) is the implementer's judgment per [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2 + OQ-7. Do NOT propose specific truth-doc edits; do NOT BLOCK if the implementer's slice plan omits a truth-doc edit (that is R-TRUTH-DOC's job at PR review time).
+**Boundary clarity:** flagging is adr-critic's job; deciding which truth-doc to actually amend (or whether to ship a NEW truth-doc) is the implementer's judgment per [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D2 + OQ-7. Do NOT propose specific truth-doc edits; do NOT BLOCK if the implementer's slice plan omits a truth-doc edit (that is R-TRUTH-DOC's job at PR review time).
 
 ## Joint-APPROVE gate with prd-critic
 
@@ -84,7 +84,7 @@ The adr-critic subagent ships in slice 2 of PRD-B per [ADR-0004](../../../decisi
 - **Joint-gate partner of** [`prd-critic`](prd-critic.md). Both must APPROVE before `/to-prd` posts per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1.
 - **Sibling critic of** [`reviewer`](reviewer.md), [`slicer-critic`](slicer-critic.md), [`prd-critic`](prd-critic.md), [`glossary-critic`](../../../.claude/agents/glossary-critic.md), [`backlog-critic`](../../../.claude/agents/backlog-critic.md). All 6 critics conform to the same verdict template + CRITIC trailer ([[topics/output-shapes]]).
 - **Honors the 6-critic-cap** per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7. The truth-doc-flagging sub-responsibility is non-blocking and does not count as a 7th critic.
-- **Authority:** [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D2 (critic loop pattern), [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1 (joint gate), [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1 (output shape), [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 (default-BLOCK + adversarial-mindset bounding), [ADR-0026](../../../decisions/0026-truth-docs-and-r-truth-doc-rule.md) D2 (truth-doc flagging).
+- **Authority:** [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D2 (critic loop pattern), [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1 (joint gate), [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1 (output shape), [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 (default-BLOCK + adversarial-mindset bounding), [ADR-0026](../../../decisions/0026-knowledge-architecture-truth-docs.md) D2 (truth-doc flagging).
 
 ## Edges
 

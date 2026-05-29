@@ -48,11 +48,11 @@ Each criterion's full mechanic + literal pattern + rationale + examples lives in
 
 - [AM-DOCS-ADR-INDEX](../../../docs/current/concepts/rules/am-docs-adr-index.md) — covers DOCS-1/2 — bidirectional sync between `decisions/README.md` index and on-disk `decisions/NNNN-*.md` files.
 - [AM-DOCS-CLAUDE-MD-MAP](../../../docs/current/concepts/rules/am-docs-claude-md-map.md) — covers DOCS-3/4 — every `.claude/agents/*.md` and `.claude/skills/*/SKILL.md` ref in `CLAUDE.md` Map resolves.
-- [AM-DOCS-LITERAL-DRIFT](../../../docs/current/concepts/rules/am-docs-literal-drift.md) — covers DOCS-5/6 — no `N=3` literal in README (post-ADR-0013); no `GLOSSARY.md` references anywhere (post-ADR-0012).
-- [AM-DOCS-ADR-CITATIONS](../../../docs/current/concepts/rules/am-docs-adr-citations.md) — DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves.
-- [AM-DOCS-SUPERSESSION-NOTES](../../../docs/current/concepts/rules/am-docs-supersession-notes.md) — DOCS-8 — `decisions/README.md` Status column carries supersession annotations.
-- [AM-DOCS-GLOSSARY-CAP](../../../docs/current/concepts/rules/am-docs-glossary-cap.md) — DOCS-9 — `CLAUDE.md` glossary entry count ≤ 35 (ADR-0012 D5 cap).
-- [AM-DOCS-BACKLOG-SURFACING](../../../docs/current/concepts/rules/am-docs-backlog-surfacing.md) — DOCS-10 — no `backlog`-label surfacing instructions in subagent/skill files (PR #105 + #107 drift detector).
+- [AM-DOCS-LITERAL-DRIFT](../../../docs/current/concepts/rules/am-docs-literal-drift.md) — covers DOCS-5/6 — no `N=3` in README lacking ADR-0013 proximity (±2-line check); no `GLOSSARY.md` refs outside 5-file allowlist + `decisions/*` wholesale allowlist (post-ADR-0012).
+- [AM-DOCS-ADR-CITATIONS](../../../docs/current/concepts/rules/am-docs-adr-citations.md) — DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation resolves; fake-example slugs (`old-name`, `fictional`, `fictional-adr`, `new-adr`, `new-decision`) allowlisted by slug-shape regex.
+- [AM-DOCS-SUPERSESSION-NOTES](../../../docs/current/concepts/rules/am-docs-supersession-notes.md) — DOCS-8 — `decisions/README.md` Status column carries supersession annotations; mechanic uses `grep -nE '^- \*\*Supersedes:\*\*'` matching actual ADR line-prefix format (WARN not FAIL).
+- [AM-DOCS-GLOSSARY-CAP](../../../docs/current/concepts/rules/am-docs-glossary-cap.md) — DOCS-9 — `CLAUDE.md` glossary entry count ≤ 35 (ADR-0012 D5 cap); awk state-flag pattern `{f=1; next}` avoids false-start on `## Glossary (key terms)` heading (WARN not FAIL).
+- [AM-DOCS-BACKLOG-SURFACING](../../../docs/current/concepts/rules/am-docs-backlog-surfacing.md) — DOCS-10 — no `backlog`-label surfacing in subagent/skill files; `backlog-critic.md` + `promote-to-backlog/SKILL.md` allowlisted as legitimate carriers.
 
 ---
 

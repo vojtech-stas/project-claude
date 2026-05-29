@@ -1,9 +1,9 @@
 ---
 title: AM-DOCS-GLOSSARY-CAP — audit-meta docs check, CLAUDE.md glossary entry count ≤ 35 (DOCS-9)
-summary: The audit-meta docs-subcommand mechanical check that the CLAUDE.md glossary section's top-level entry count stays at or below the ADR-0012 D5 soft cap of 35; exceeding triggers WARN (consolidation candidate).
+summary: The audit-meta docs-subcommand mechanical check that the CLAUDE.md glossary section's top-level entry count stays at or below the ADR-0012 D5 soft cap of 35; exceeding triggers WARN (consolidation candidate). Uses `awk '/^## Glossary/{f=1; next} /^## /{f=0} f'` to avoid false-start matching on section title.
 tags: [rule, audit-meta-rubric, docs]
 type: concept
-last_updated: 2026-05-27
+last_updated: 2026-05-29
 sources:
   - .claude/skills/audit-meta/SKILL.md DOCS-9
   - decisions/0017-audit-meta-consolidation.md D3
@@ -18,11 +18,15 @@ sources:
 
 The check fires under the `docs` subcommand. Mechanics:
 
-- Run: `awk '/^## Glossary/,/^## /' CLAUDE.md | grep -cE '^- \*\*'`.
-- If the count is ≤ 35 → **PASS**.
+- Run: `awk '/^## Glossary/{f=1; next} /^## /{f=0} f' CLAUDE.md | grep -cE '^- \*\*'`.
+- If the count is ≤ 35 → **PASS** (report actual count).
 - If the count is > 35 → **WARN** (consolidation candidate; entries should be reviewed for merging or pruning).
 
-The awk pattern extracts the lines between the `## Glossary` heading and the next H2 heading; the grep counts only top-level glossary bullets (lines beginning with `- **`, the canonical entry shape). Sub-bullets (e.g., `*Scope:*` / `*Authority:*` / `*See also:*` fields per the canonical shape) are excluded — they're part of an entry, not a separate entry.
+The awk pattern uses a state-flag `f` to emit lines strictly BETWEEN the `## Glossary` heading and the next H2: `f=1; next` sets the flag and skips the heading line itself; `/^## /{f=0}` clears the flag on the next heading (so the heading line is not counted). This avoids the false-start bug of the range pattern `/^## Glossary/,/^## /` where both the start and end patterns match the heading line `## Glossary (key terms)`, causing the range to immediately close and producing zero output.
+
+The grep counts only top-level glossary bullets (lines beginning with `- **`, the canonical entry shape). Sub-bullets are excluded — they're part of an entry, not a separate entry.
+
+As of 2026-05-29, the count is **22** (verified via `ls docs/current/concepts/glossary | wc -l` against the actual atomic notes on disk).
 
 ## Why
 
@@ -34,20 +38,23 @@ The 35-entry cap exists because the glossary is **auto-loaded into every Claude 
 
 The WARN level reflects that hitting the cap is **a signal to act, not a failure mode**. Options when WARN fires: consolidate two related entries into one, demote a generic-leaning entry back to skill-local vocabulary, or accept the cap-exceed if the new entry is genuinely load-bearing AND a careful prune of an existing entry isn't viable.
 
+The awk fix (`{f=1; next}` vs the buggy range pattern) ensures DOCS-9 actually detects and reports the count instead of silently returning 0 (a false PASS that masked all glossary-cap violations).
+
 ## How to check
 
 When `--docs` is active:
 
-1. Run `awk '/^## Glossary/,/^## /' CLAUDE.md | grep -cE '^- \*\*'`.
-2. If ≤ 35 → PASS.
+1. Run `awk '/^## Glossary/{f=1; next} /^## /{f=0} f' CLAUDE.md | grep -cE '^- \*\*'`.
+2. If ≤ 35 → PASS (report count).
 3. If > 35 → WARN with the current count and a "consolidation candidate" note.
 
 ## Examples
 
-- **Glossary contains 24 entries** → DOCS-9 PASS (well under 35).
+- **Glossary contains 22 entries (current state)** → DOCS-9 PASS (well under 35).
 - **Glossary contains 35 entries exactly** → DOCS-9 PASS (at the cap, but not over).
 - **Glossary contains 38 entries after a wave of additions** → DOCS-9 WARN (3 over; review for consolidation).
 - **A new entry was added that pushes count to 36** → DOCS-9 WARN (just over).
+- **CLAUDE.md uses heading `## Glossary (key terms)` (with parenthetical)** → awk state-flag pattern handles correctly; range pattern `/,/` would have returned 0 (bug).
 
 ## Edges
 

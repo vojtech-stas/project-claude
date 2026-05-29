@@ -101,6 +101,7 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog (forward queue) | `gh issue list --label backlog` + Backlog column on project board #2 | curated by `backlog-critic` |
 | Captured tier | `gh issue list --label captured` + Captured column on project board #2 | autopilot pre-backlog |
+| Workflow dashboard | `dashboard/` | local web visualizer (architecture + health); see [dashboard/README.md](dashboard/README.md) |
 
 ---
 

@@ -90,6 +90,7 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | best-practice-* skills | `.claude/skills/best-practice-{workflow,hooks,subagents}/SKILL.md` | docs-first on-demand topic guidance; see entities under `docs/current/entities/skills/best-practice-*.md` |
 | glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX; see entities |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
+| Cascade-aware deps | `tools/cascade-finder.py` | advisory tool for cascade-aware workflow; see [tools/README.md](tools/README.md) |
 | Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of agent/bash/stop events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pre-commit hooks | `.githooks/pre-commit`, `.githooks/install.sh` | workflow enforcement |

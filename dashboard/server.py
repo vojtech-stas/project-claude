@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -723,6 +724,11 @@ def main():
     print(f"Dashboard running at http://localhost:{port}", flush=True)
     print(f"Repo root: {REPO_ROOT}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
+    if not os.environ.get("DASH_NO_BROWSER"):
+        try:
+            webbrowser.open(f"http://localhost:{port}")
+        except Exception as e:
+            print(f"(could not open browser: {e})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -23,6 +23,7 @@ Then open `http://localhost:8765` in any modern browser.
 | Variable | Default | Description |
 |---|---|---|
 | `DASH_PORT` | `8765` | Port the server listens on |
+| `DASH_NO_BROWSER` | _(unset)_ | Set to any non-empty value to suppress auto-opening the browser on startup (useful in CI, headless, or automated contexts) |
 
 Example with custom port:
 

@@ -251,11 +251,37 @@ gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-autho
 
 **Default-conservative-toward-BLOCK** per ADR-0009 D3: when uncertain whether an ADR change has a downstream truth-doc impact, BLOCK with the truth-doc-missing finding; a spurious BLOCK costs the implementer one revision cycle, a false-negative APPROVE silently ships stale knowledge.
 
+### R-DOCS-CURRENT — README currency on every PR
+
+**Policy source:** ADR-0034 D5 (R-DOCS-CURRENT is the unbypassable merge gate for generated-docs currency; extends ADR-0004 D3's workflow enforcement stack + ADR-0002's reviewer hard-block rule set). Honors the ADR-0008 D7 6-critic-cap (rule extension on the existing `reviewer` critic, NOT a new critic).
+
+**Rule:** On every PR, the reviewer regenerates `README.md` from `docs/readme.template.md` + the filesystem, then runs `git diff --exit-code README.md`. If the committed README differs from the freshly-generated one → **BLOCK**.
+
+Catches both drift modes: (a) someone hand-edited `README.md` directly; (b) a source (`.claude/agents/`, `.claude/skills/`, `.claude/hooks/`, `decisions/`) changed but README was not regenerated.
+
+**How to check:**
+
+```bash
+# Regenerate README from template + filesystem
+python dashboard/server.py --generate-readme
+
+# If diff is non-empty, block
+git diff --exit-code README.md
+```
+
+If `git diff --exit-code README.md` exits non-zero → BLOCK with: "R-DOCS-CURRENT: committed `README.md` differs from generator output; re-run `python dashboard/server.py --generate-readme` and re-stage `README.md` before pushing."
+
+After checking (whether PASS or FAIL), restore the working tree state with `git checkout README.md` so the reviewer does not leave a dirty worktree. For safety, prefer running this check in a temp worktree or after a `git stash` if the PR branch has uncommitted changes — but for standard reviewer use (post-push, clean working tree) the plain diff + restore is sufficient.
+
+**Verdict:** `[PASS] 13. R-DOCS-CURRENT: README matches generator output` or `[FAIL] 13. R-DOCS-CURRENT: README drift detected`.
+
+**Bootstrap-mode (per ADR-0034 D9):** R-DOCS-CURRENT binds FORWARD from the PR that ships it (this rule). The first PR to merge this rule is responsible for also committing a generator-current `README.md` (to avoid a spurious block on the very next PR). Pre-ADR-0034 PRs are grandfathered.
+
 ---
 
 ## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
 
-Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
+Per ADR-0018. Additive to the 13 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 14th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
 
 **Trigger:** When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`, `dashboard/*`), apply the matching audit-subagents / audit-meta rubric checks INLINE.
 
@@ -276,7 +302,7 @@ Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BO
 - **BLOCK** when ALL THREE hold: (a) rule has zero documented false-positive cases against current `main` (currently excludes DOCS-5, DOCS-6, DOCS-7 — emit as Recommendation per backlog #142 carve-out); (b) fix is mechanical and small (one-line, hotfix-shape); (c) drift would materially impact future readers.
 - **Recommendation** otherwise. **Default-conservative-toward-REC** (inverting ADR-0009 D3's hard-block default): cost of false-positive BLOCK exceeds cost of false-negative REC for this discretionary rule.
 
-**Verdict integration:** `[PASS] 13. R-BOY-SCOUT: no audit-relevant files touched` when no triggers fire; `[FAIL] 13. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)` when BLOCK-grade findings exist. Recommendation-grade findings appear in the Recommendations section.
+**Verdict integration:** `[PASS] 14. R-BOY-SCOUT: no audit-relevant files touched` when no triggers fire; `[FAIL] 14. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)` when BLOCK-grade findings exist. Recommendation-grade findings appear in the Recommendations section.
 
 **Rationale:** Audit-quality drift accumulates silently between scheduled audit runs. R-BOY-SCOUT catches drift at PR-tier — the same moment the reviewer is already inspecting the file. Additive defense-in-depth, not a replacement for scheduled audits.
 
@@ -290,7 +316,7 @@ Subjective items (style, refactoring, doc-improvement, future architectural sugg
 
 ## Output format
 
-Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 12 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
+Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 13 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
 
 The canonical verdict template + CRITIC trailer field schema lives in `docs/current/topics/output-shapes.md`.
 

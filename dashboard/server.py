@@ -6,6 +6,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/architecture -> JSON {skills, agents, hooks, adrs, edges}
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
+        GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -17,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -607,6 +609,54 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str):
         self._send_json({"error": message}, status)
 
+    def _serve_sse(self, query: dict):
+        """SSE stream: tail workflow-events.jsonl from Last-Event-ID offset."""
+        log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+        last_id = self.headers.get("Last-Event-ID", "")
+        try:
+            start_line = int(last_id) if last_id else 0
+        except ValueError:
+            start_line = 0
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        line_index = 0
+        try:
+            while True:
+                if not log_path.exists():
+                    # Empty-state: send a keepalive comment and wait
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    time.sleep(2)
+                    continue
+
+                with log_path.open(encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+
+                for i, raw in enumerate(lines):
+                    if i < start_line:
+                        continue
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    event_id = i + 1
+                    data = raw.replace("\n", " ")
+                    msg = f"id: {event_id}\ndata: {data}\n\n"
+                    self.wfile.write(msg.encode("utf-8"))
+                    line_index = event_id
+
+                self.wfile.flush()
+                start_line = line_index
+                time.sleep(1)
+
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client disconnected — normal
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -636,6 +686,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "cascadeFinder": cascade_finder_summary(),
             }
             self._send_json(data)
+
+        elif path == "/api/events":
+            self._serve_sse(query)
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

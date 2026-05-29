@@ -99,7 +99,8 @@ def discover_skills() -> list:
         skills.append({
             "name": fm.get("name", skill_md.parent.name),
             "description": fm.get("description", ""),
-            "path": str(skill_md.relative_to(REPO_ROOT)),
+            # Fix A: use .as_posix() so paths are forward-slash on Windows
+            "path": skill_md.relative_to(REPO_ROOT).as_posix(),
         })
     return skills
 
@@ -119,9 +120,54 @@ def discover_agents() -> list:
             "stem": stem,
             "type": kind,
             "description": description,
-            "path": str(agent_md.relative_to(REPO_ROOT)),
+            # Fix A: use .as_posix() so paths are forward-slash on Windows
+            "path": agent_md.relative_to(REPO_ROOT).as_posix(),
         })
     return agents
+
+
+def _read_hook_description(cmd: str) -> str:
+    """Derive a human-readable description for a hook command.
+
+    For .sh-script hooks: read the script's leading comment block (lines after
+    the shebang that start with '#').  For inline jq/bash commands: derive a
+    short string from the command pattern.
+    """
+    # .sh script reference: read the script's leading comment block
+    m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
+    if m:
+        script_path = REPO_ROOT / ".claude" / "hooks" / m.group(1)
+        if script_path.exists():
+            try:
+                lines = script_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith("#!"):
+                        continue  # skip shebang
+                    if stripped.startswith("#"):
+                        text = stripped.lstrip("#").strip()
+                        if text:
+                            return text[:100]
+                    elif stripped:
+                        break  # end of leading comment block
+            except Exception:
+                pass
+
+    # Inline command patterns: derive description from content
+    cmd_lower = cmd.lower()
+    if "workflow-events.jsonl" in cmd_lower and "agent_complete" in cmd_lower:
+        return "logs agent completions to workflow-events.jsonl"
+    if "workflow-events.jsonl" in cmd_lower and "bash_complete" in cmd_lower:
+        return "logs bash completions to workflow-events.jsonl"
+    if "workflow-events.jsonl" in cmd_lower and "session_stop" in cmd_lower:
+        return "logs session-stop event to workflow-events.jsonl"
+    if "subagent-edits.log" in cmd_lower:
+        return "logs agent file edits; suggests /audit-subagents on agent .md changes"
+    if "workflow-events.jsonl" in cmd_lower:
+        return "logs workflow event to workflow-events.jsonl"
+
+    # Fallback: truncated raw command
+    return cmd[:80]
 
 
 def discover_hooks() -> list:
@@ -135,14 +181,26 @@ def discover_hooks() -> list:
             for entry in entries:
                 for hook in entry.get("hooks", []):
                     cmd = hook.get("command", "")
-                    # Extract script name if it references a .sh file
+                    # Extract script name; resolve to actual .sh path when available (Fix C)
                     m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
-                    name = m.group(1) if m else cmd[:60]
+                    if m:
+                        script_name = m.group(1)
+                        name = script_name
+                        script_path = REPO_ROOT / ".claude" / "hooks" / script_name
+                        hook_path = (
+                            f".claude/hooks/{script_name}"
+                            if script_path.exists()
+                            else ".claude/settings.json"
+                        )
+                    else:
+                        name = cmd[:60]
+                        hook_path = ".claude/settings.json"
                     hooks.append({
                         "name": name,
                         "event": event,
                         "command": cmd[:120],
-                        "path": ".claude/settings.json",
+                        "description": _read_hook_description(cmd),  # Fix C
+                        "path": hook_path,  # Fix C: resolved .sh path
                     })
     except Exception:
         pass
@@ -166,43 +224,101 @@ def discover_adrs() -> list:
         adrs.append({
             "name": adr_file.stem,
             "title": title,
-            "path": str(adr_file.relative_to(REPO_ROOT)),
+            # Fix A: use .as_posix() so paths are forward-slash on Windows
+            "path": adr_file.relative_to(REPO_ROOT).as_posix(),
         })
     return adrs
 
 
 def discover_edges() -> list:
-    """Invoke tools/cascade-finder.py if available; return edge list."""
-    cascade_script = REPO_ROOT / "tools" / "cascade-finder.py"
-    if not cascade_script.exists():
-        return []
-    try:
-        result = subprocess.run(
-            [sys.executable, str(cascade_script)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(REPO_ROOT),
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            # cascade-finder may output JSON or text; try JSON first
+    """Infer edges from canonical file bodies (body-grep, no cascade-finder).
+
+    Edge types:
+      skill -> agent  : skill SKILL.md body mentions a known agent stem name
+      agent -> adr    : agent body cites ADR-NNNN or decisions/NNNN-
+      hook  -> event  : each hook fires on its declared event
+
+    Conservative: match agent stem names only (not path fragments).
+    Deduplicate. Cap at 50 edges with a stderr warning if exceeded.
+    """
+    edges: list = []
+    seen: set = set()
+
+    def add(source: str, stype: str, target: str, ttype: str, label: str = ""):
+        key = (source, target)
+        if key not in seen:
+            seen.add(key)
+            edges.append({"source": source, "sourceType": stype,
+                          "target": target, "targetType": ttype,
+                          "label": label})
+
+    # Collect agent stems for conservative name matching
+    agents_dir = REPO_ROOT / ".claude" / "agents"
+    agent_stems: set = set()
+    if agents_dir.exists():
+        for agent_md in agents_dir.glob("*.md"):
+            agent_stems.add(agent_md.stem)
+
+    # hook -> event: each configured hook fires on its event (collected first,
+    # small set, so they survive if the cap fires)
+    settings_path = REPO_ROOT / ".claude" / "settings.json"
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+            for event, entries in data.get("hooks", {}).items():
+                for entry in entries:
+                    for hook in entry.get("hooks", []):
+                        cmd = hook.get("command", "")
+                        m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
+                        hook_id = m.group(1) if m else cmd[:40]
+                        add(hook_id, "hook", event, "event", "fires on")
+        except Exception:
+            pass
+
+    # skill -> agent: skill body mentions an agent stem as a standalone word
+    skills_dir = REPO_ROOT / ".claude" / "skills"
+    if skills_dir.exists():
+        for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+            skill_name = skill_md.parent.name
             try:
-                data = json.loads(result.stdout)
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict) and "edges" in data:
-                    return data["edges"]
-            except json.JSONDecodeError:
-                # Return raw lines as edge descriptors
-                edges = []
-                for line in result.stdout.strip().splitlines():
-                    line = line.strip()
-                    if line:
-                        edges.append({"raw": line})
-                return edges
-    except Exception:
-        pass
-    return []
+                body = skill_md.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            for stem in sorted(agent_stems):
+                # Word-boundary on stem (hyphenated stems need explicit boundary)
+                pattern = r'(?<![a-z0-9-])' + re.escape(stem) + r'(?![a-z0-9-])'
+                if re.search(pattern, body):
+                    add(skill_name, "skill", stem, "agent", "invokes")
+
+    # agent -> adr: agent body cites ADR-NNNN or decisions/NNNN-
+    decisions_dir = REPO_ROOT / "decisions"
+    if agents_dir.exists():
+        for agent_md in sorted(agents_dir.glob("*.md")):
+            stem = agent_md.stem
+            try:
+                body = agent_md.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            adr_nums: set = set(re.findall(r'ADR-(\d{4})', body))
+            adr_nums.update(re.findall(r'decisions/(\d{4})-', body))
+            for num in sorted(adr_nums):
+                if decisions_dir.exists():
+                    matching = list(decisions_dir.glob(f"{num}-*.md"))
+                    adr_id = matching[0].stem if matching else f"{num}-unknown"
+                else:
+                    adr_id = f"{num}-unknown"
+                add(stem, "agent", adr_id, "adr", "cites")
+
+    # Cap and log if exceeded (guard against runaway false-positive explosion)
+    EDGE_CAP = 200
+    if len(edges) > EDGE_CAP:
+        print(
+            f"[dashboard] WARNING: {len(edges)} edges inferred; capping at {EDGE_CAP}.",
+            file=sys.stderr, flush=True,
+        )
+        edges = edges[:EDGE_CAP]
+
+    return edges
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +812,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if not rel_path:
                 self._send_error(400, "path parameter required")
                 return
+            # Fix A: normalize any incoming backslashes (Windows round-trip defence)
+            rel_path = rel_path.replace("\\", "/")
             # Path-traversal protection: resolve against repo root
             try:
                 target = (REPO_ROOT / rel_path).resolve()

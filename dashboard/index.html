@@ -395,28 +395,57 @@ async function loadArchitecture() {
 function renderComponentGraph(data) {
   const container = document.getElementById('comp-graph');
   let html = '';
+
+  // Fix C: ADR nodes appear only as edge targets (keeps graph focused)
+  const edgeTargetAdrs = new Set(
+    (data.edges || [])
+      .filter(e => e.targetType === 'adr')
+      .map(e => e.target)
+  );
+  const adrItems = (data.adrs || []).filter(a => edgeTargetAdrs.has(a.name));
+
+  // Fix C: render ALL skills/agents/hooks regardless of edges; ADRs = edge-targets only
   const sections = [
-    { title: 'Skills', items: data.skills, dotClass: 'dot-skill' },
-    { title: 'Agents', items: data.agents, dotClass: null },
-    { title: 'Hooks', items: data.hooks, dotClass: 'dot-hook' },
-    { title: 'ADRs', items: (data.adrs || []).slice(0, 15), dotClass: 'dot-adr' },
+    { title: 'Skills', items: data.skills || [], dotClass: 'dot-skill' },
+    { title: 'Agents', items: data.agents || [], dotClass: null },
+    {
+      title: 'Hooks', items: data.hooks || [], dotClass: 'dot-hook',
+      // Fix C: hooks display "fires on <event> → <description>"
+      descFn: item => `fires on ${item.event}${item.description ? ' → ' + item.description : ''}`,
+    },
+    { title: 'ADRs (edge targets)', items: adrItems, dotClass: 'dot-adr' },
   ];
   for (const s of sections) {
     if (!s.items || s.items.length === 0) continue;
-    html += `<h3>${s.title} (${s.items.length}${s.title==='ADRs'?'+':''})&nbsp;</h3>`;
+    html += `<h3>${s.title} (${s.items.length})&nbsp;</h3>`;
     html += `<div class="agent-grid">`;
     for (const item of s.items) {
       const dotCls = s.dotClass || (item.type === 'critic' ? 'dot-critic' : 'dot-generator');
       const name = item.name || item.stem || item.title || '?';
-      const desc = item.description || item.title || item.command || '';
+      const rawDesc = s.descFn ? s.descFn(item) : (item.description || item.title || item.command || '');
+      const desc = rawDesc.slice(0, 120);
       const path = item.path || '';
       html += `<div class="agent-card" onclick="viewFile('${escHtml(path)}','${escHtml(name)}')">`;
       html += `<div class="card-name"><span class="node-dot ${dotCls}"></span>${escHtml(name)}</div>`;
-      html += `<div class="card-desc">${escHtml(desc.slice(0,120))}</div>`;
+      html += `<div class="card-desc">${escHtml(desc)}</div>`;
       html += `</div>`;
     }
     html += `</div>`;
   }
+
+  // Show inferred edges summary if any
+  if (data.edges && data.edges.length > 0) {
+    html += `<h3 style="margin-top:12px;">Inferred edges (${data.edges.length})</h3>`;
+    html += `<div style="font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:2px;">`;
+    for (const e of data.edges.slice(0, 30)) {
+      html += `<span>${escHtml(e.source)} <span style="color:var(--border)">&#8594;</span> ${escHtml(e.target)} <span style="color:var(--border)">(${escHtml(e.label||'')})</span></span>`;
+    }
+    if (data.edges.length > 30) {
+      html += `<span style="color:var(--muted)">… and ${data.edges.length - 30} more</span>`;
+    }
+    html += `</div>`;
+  }
+
   container.innerHTML = html || '<span style="color:var(--muted)">No components discovered.</span>';
 }
 

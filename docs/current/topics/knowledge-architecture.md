@@ -212,3 +212,5 @@ The synthesis intentionally repeats key narratives from ADR-0031 in readable pro
 - VentureBeat coverage of Karpathy's pattern: https://venturebeat.com/data/karpathy-shares-llm-knowledge-base-architecture-that-bypasses-rag-with-an
 - DAIR.AI Academy summary: https://academy.dair.ai/blog/llm-knowledge-bases-karpathy
 - "Infinite Brain" YouTube creator's pattern (transcript at `tool-results/transcripts/z02Y-1OvWSM-clean.txt`).
+
+> KB layer retired; superseded by ADR-0032 (PRD #341).

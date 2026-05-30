@@ -8,7 +8,11 @@ Usage:
     python tools/cascade-finder.py <target_file> [--json]
 
 Part of the cascade-aware workflow foundation. See tools/README.md and
-decisions/0031-knowledge-architecture-v2.md D7/D8/D10 for context.
+decisions/0032-workflow-only-architecture.md D6 for context.
+
+Discovery substrate (per ADR-0032 D6): .claude/{agents,skills,hooks} + decisions/ +
+CLAUDE.md + README.md + tools/. The typed-edge discovery (docs/current/ parsing) was
+removed when the KB layer was retired; three grep passes remain.
 """
 
 import argparse
@@ -25,9 +29,20 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 CONTEXT_MAX = 80
-REF_WEIGHT = {"edge": 4, "grep-slug": 3, "grep-filename": 2, "grep-concept": 1}
+REF_WEIGHT = {"grep-slug": 3, "grep-filename": 2, "grep-concept": 1}
 
 EXCLUDE_DIRS = {".git", ".claude/worktrees", "tool-results", "transcripts"}
+
+# Discovery substrate per ADR-0032 D6: canonical operational surfaces only.
+# docs/current/ is gone (KB layer retired); substrate is these prefix/path patterns.
+SUBSTRATE_PREFIXES = (
+    ".claude/agents/",
+    ".claude/skills/",
+    ".claude/hooks/",
+    "decisions/",
+    "tools/",
+)
+SUBSTRATE_EXACT = {"CLAUDE.md", "README.md"}
 
 
 def find_repo_root(start: Path) -> Path:
@@ -92,7 +107,8 @@ def enumerate_scope(repo_root: Path, target_rel: str) -> list[str]:
                     rel = rel_dir + "/" + fname
                 files.append(rel)
 
-    # Filter: only searchable text formats; exclude target itself and excluded dirs
+    # Filter: only searchable text formats; exclude target itself and excluded dirs;
+    # restrict to the ADR-0032 D6 substrate (canonical operational surfaces).
     target_posix = Path(target_rel).as_posix()
     EXTENSIONS = {".md", ".py", ".sh", ".json", ".txt", ".yaml", ".yml"}
     scoped = []
@@ -102,20 +118,34 @@ def enumerate_scope(repo_root: Path, target_rel: str) -> list[str]:
             continue
         if p == target_posix:
             continue
-        if Path(f).suffix.lower() in EXTENSIONS:
-            scoped.append(f)
+        if Path(f).suffix.lower() not in EXTENSIONS:
+            continue
+        # Restrict to substrate: prefix match OR exact name match
+        in_substrate = (
+            any(p.startswith(pfx) for pfx in SUBSTRATE_PREFIXES)
+            or p in SUBSTRATE_EXACT
+        )
+        if not in_substrate:
+            continue
+        scoped.append(f)
 
     return scoped
 
 
 def compute_anchors(repo_root: Path, target_rel: str) -> dict:
-    """Compute the 4 search anchors from the target path."""
+    """Compute the 3 search anchors from the target path.
+
+    Per ADR-0032 D6, the typed-edge discovery (docs/current/ parsing) and its
+    concept_title anchor are retired. Three passes remain: grep-slug, grep-filename,
+    grep-concept (concept_title retained for files that happen to have a title:
+    YAML field; harmless no-op when not present).
+    """
     p = Path(target_rel)
     anchors = {
         "path": p.as_posix(),  # repo-relative path
         "filename": p.name,  # basename
         "slug": None,  # ADR-NNNN (if decisions/)
-        "concept_title": None,  # title from YAML frontmatter (if docs/current/concepts/)
+        "concept_title": None,  # title from YAML frontmatter (grep-concept pass)
     }
 
     # Slug anchor: extract ADR-NNNN from decisions/NNNN-*.md
@@ -126,19 +156,19 @@ def compute_anchors(repo_root: Path, target_rel: str) -> dict:
             anchors["slug"] = "ADR-" + m.group(1)
 
     # Concept title anchor: parse ^title: from first 20 lines of YAML frontmatter
-    if posix.startswith("docs/current/concepts/"):
-        full_path = repo_root / p
-        try:
-            with open(full_path, encoding="utf-8", errors="replace") as fh:
-                for i, line in enumerate(fh):
-                    if i >= 20:
-                        break
-                    m = re.match(r"^title:\s*(.+)", line)
-                    if m:
-                        anchors["concept_title"] = m.group(1).strip()
-                        break
-        except OSError:
-            pass
+    # (still useful for any substrate file that carries a title: field)
+    full_path = repo_root / p
+    try:
+        with open(full_path, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i >= 20:
+                    break
+                m = re.match(r"^title:\s*(.+)", line)
+                if m:
+                    anchors["concept_title"] = m.group(1).strip()
+                    break
+    except OSError:
+        pass
 
     return anchors
 
@@ -149,105 +179,6 @@ def truncate_context(line: str) -> str:
     if len(stripped) > CONTEXT_MAX:
         return stripped[:CONTEXT_MAX - 1] + "…"
     return stripped
-
-
-def resolve_edge_path(raw_ref: str, containing_file_rel: str, repo_root: Path) -> str:
-    """
-    Resolve a [[path]] reference to a canonical repo-relative POSIX path (no .md suffix).
-
-    Conventions observed in this project's KB:
-    - Paths starting with '../' are relative to the containing file's directory.
-    - Paths without '../' that look like 'concepts/...', 'topics/...', etc. are
-      relative to docs/current/ (the KB root for atomic notes).
-    - Paths without any '/' separator are bare names (stem-only match only).
-    - Paths like 'decisions/NNNN-*' or 'CLAUDE.md' are repo-root-relative.
-
-    Returns lowercase canonical repo-relative form without .md for comparison.
-    """
-    raw = raw_ref.strip()
-    # Strip leading ./
-    if raw.startswith("./"):
-        raw = raw[2:]
-
-    repo_resolved = repo_root.resolve()
-    containing_dir = (repo_root / containing_file_rel).parent
-
-    if raw.startswith("../"):
-        # Truly relative to containing file's directory
-        try:
-            candidate = (containing_dir / raw).resolve()
-            rel = candidate.relative_to(repo_resolved).as_posix()
-        except ValueError:
-            rel = Path(raw).as_posix()
-    elif "/" in raw:
-        # Could be docs/current/-relative or repo-root-relative.
-        # KB convention for atomic notes: paths like 'concepts/...', 'topics/...',
-        # 'entities/...', 'patterns/...' (without leading '../') are docs/current/-relative.
-        # Paths like 'decisions/...', 'CLAUDE.md', '.claude/...' are repo-root-relative.
-        KB_PREFIXES = ("concepts/", "topics/", "entities/", "patterns/")
-        docs_current = repo_root / "docs" / "current"
-        if any(raw.startswith(pfx) for pfx in KB_PREFIXES):
-            # docs/current/-relative
-            try:
-                candidate = (docs_current / raw).resolve()
-                rel = candidate.relative_to(repo_resolved).as_posix()
-            except ValueError:
-                rel = Path(raw).as_posix()
-        else:
-            # repo-root-relative (decisions/, CLAUDE.md, README.md, .claude/..., etc.)
-            try:
-                candidate2 = (repo_root / raw).resolve()
-                rel = candidate2.relative_to(repo_resolved).as_posix()
-            except ValueError:
-                rel = Path(raw).as_posix()
-    else:
-        # Bare name — no path separator; will only match via stem variant
-        rel = raw
-
-    # Strip .md
-    if rel.lower().endswith(".md"):
-        rel = rel[:-3]
-    return rel.lower()
-
-
-def path_variants(rel_path: str) -> set[str]:
-    """Return normalised variants of a repo-relative path for edge matching."""
-    p = Path(rel_path)
-    base = p.as_posix()
-    variants = set()
-    # Without extension
-    no_ext = base[:-3] if base.lower().endswith(".md") else base
-    variants.add(no_ext.lower())
-    # Basename only (no-ext)
-    variants.add(p.stem.lower())
-    return variants
-
-
-def discover_edges(repo_root: Path, scoped: list[str], anchors: dict) -> list[tuple]:
-    """Pass 1: scan docs/current/**/*.md for **EdgeType:** [[path]] patterns."""
-    target_variants = path_variants(anchors["path"])
-    # Edge pattern: **<word(s)>:** [[<path>]]
-    edge_re = re.compile(r"\*\*[\w-]+(?:\s+[\w-]+)*:\*\*\s+\[\[([^\]]+)\]\]")
-    results = []
-
-    for rel in scoped:
-        if not rel.startswith("docs/current/") or not rel.endswith(".md"):
-            continue
-        full = repo_root / rel
-        try:
-            with open(full, encoding="utf-8", errors="replace") as fh:
-                for lineno, line in enumerate(fh, start=1):
-                    for m in edge_re.finditer(line):
-                        raw_ref = m.group(1)
-                        resolved = resolve_edge_path(raw_ref, rel, repo_root)
-                        if resolved in target_variants:
-                            results.append(
-                                (rel, lineno, "edge", truncate_context(line))
-                            )
-                            break  # one match per line is enough
-        except OSError:
-            pass
-    return results
 
 
 def discover_grep_slug(repo_root: Path, scoped: list[str], anchors: dict) -> list[tuple]:
@@ -397,7 +328,7 @@ def main() -> None:
     scoped = enumerate_scope(repo_root, target_rel)
 
     all_hits = []
-    all_hits.extend(discover_edges(repo_root, scoped, anchors))
+    # typed-edge discovery removed per ADR-0032 D6 (docs/current/ KB layer retired)
     all_hits.extend(discover_grep_slug(repo_root, scoped, anchors))
     all_hits.extend(discover_grep_filename(repo_root, scoped, anchors))
     all_hits.extend(discover_grep_concept(repo_root, scoped, anchors))

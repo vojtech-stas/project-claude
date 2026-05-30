@@ -36,10 +36,14 @@ python tools/cascade-finder.py <target_file> [--json]
 
 | Type | Weight | Description |
 |---|---|---|
-| `edge` | 4 | A typed `**EdgeType:** [[path]]` link in a `docs/current/**/*.md` file |
-| `grep-slug` | 3 | ADR slug literal (e.g. `ADR-0031`) — only for `decisions/` targets |
+| `grep-slug` | 3 | ADR slug literal (e.g. `ADR-0032`) — only for `decisions/` targets |
 | `grep-filename` | 2 | The file's basename appears in the referencing file |
-| `grep-concept` | 1 | The concept's YAML `title:` field appears — only for `docs/current/concepts/` |
+| `grep-concept` | 1 | The file's YAML `title:` field appears in the referencing file |
+
+Note: the `edge` pass (typed `**EdgeType:** [[path]]` links in `docs/current/**/*.md`)
+was removed per ADR-0032 D6 — the KB layer (`docs/current/`) is retired. The three
+grep passes operate on the canonical substrate: `.claude/{agents,skills,hooks}` +
+`decisions/` + `CLAUDE.md` + `README.md` + `tools/`.
 
 Results are deduplicated by `(file, line)` and ranked by weight descending, then by
 file path, then by line number.
@@ -90,19 +94,21 @@ Always 0. Advisory output only — never modifies any file.
 |---|---|---|
 | 1 (this PR) | `cascade-finder.py` — advisory discovery | Done |
 | 2 | `cascade-updater.py` — mechanical dependency update | Future PRD |
-| 3 | `kb-maintainer` generator subagent — LLM-synthesised propagation | Future PRD (ADR-0031 T8) |
-| 4 | Slicer + reviewer integration — `R-CASCADE-CLEAN` gate | Future PRD (new ADR) |
-| 5 | KB simplification — delete duplicate surfaces, collapse redundancy | Future PRD |
+| 3 | Slicer + reviewer integration — `R-CASCADE-CLEAN` gate | Future PRD (new ADR) |
+
+Note: Phases 3 and 4 from the original roadmap (kb-maintainer T8, KB simplification)
+were superseded by ADR-0032 (KB layer retired). The edge pass was removed from
+Phase 1; Phases 2-3 continue as viable future PRDs.
 
 ---
 
 ## Context
 
-This tool is the Phase 1 foundation for the cascade-aware workflow refactor described
-in [ADR-0031](../decisions/0031-knowledge-architecture-v2.md) D7 (`impact-analyst`
-deferred) and D8 (`kb-maintainer` deferred). The typed-edge graph in atomic notes
-(D3) exists but nothing queries it — this tool is the active piece that was missing.
+This tool discovers files that reference a given target, helping identify cascade-doc
+obligations before editing a key file. Per [ADR-0032](../decisions/0032-workflow-only-architecture.md)
+D6, the discovery substrate is the canonical operational surfaces:
+`.claude/{agents,skills,hooks}` + `decisions/` + `CLAUDE.md` + `README.md` + `tools/`.
 
-Per [ADR-0031](../decisions/0031-knowledge-architecture-v2.md) D10, the T7/T8
-migration tasks are scheduled as future PRDs; this tool enables that migration by
-making the dependency graph legible at human invocation time today.
+The `edge` pass (typed-edge graph in `docs/current/` atomic notes) was removed when
+the KB layer was retired (ADR-0032). The three grep passes (`grep-slug`, `grep-filename`,
+`grep-concept`) remain and operate on the updated substrate.

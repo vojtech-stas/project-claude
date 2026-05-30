@@ -215,42 +215,6 @@ gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-autho
 
 **Rationale:** New ADRs are the highest-signal canonical decision artifacts; unsupervised additions risk bypassing the prd-critic / adr-critic gate. The narrow scope (new ADRs only) is intentional — broader provenance is enforced at policy layer (CLAUDE.md rule #10) and by R-CLOSES; R-META adds ADR-specific provenance on top. Does NOT fire on: existing ADR edits; additions in `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, `README.md`; `decisions/README.md` or `decisions/branch-protection-config.json`.
 
-### R-TRUTH-DOC — truth-doc currency on ADR-touching PRs
-
-**Policy source:** ADR-0026 D5 (codifies CLAUDE.md cross-cutting rule #14 truth-doc currency at the PR-tier mechanical layer). Honors the ADR-0008 D7 6-critic-cap (rule extension on the existing `reviewer` critic, NOT a new critic).
-
-**Rule:** If `git diff --stat origin/main..HEAD -- decisions/` shows any `decisions/NNNN-*.md` file changed AND `git diff --stat origin/main..HEAD -- docs/current/` shows no `docs/current/*.md` changed → BLOCK with finding *"R-TRUTH-DOC: ADR change without corresponding truth-doc update; per ADR-0026 D2 the implementer must update or regenerate `docs/current/<topic>.md` for the affected topic(s) in the same PR."*
-
-**Scope (CRITICAL — DO NOT WIDEN):**
-
-- R-TRUTH-DOC applies to PRs that touch (add OR edit) at least one `decisions/NNNN-*.md` file (the leading `[0-9]+-` discriminator means the rule fires for ADR-body files only, never for `decisions/README.md` index-row edits or `decisions/branch-protection-config.json`).
-- R-TRUTH-DOC does NOT apply to PRs that touch ONLY `decisions/README.md` (e.g., index-row Status amendments per the documented partial-supersession pattern). Carveout per ADR-0026 D5 — those edits do not change ADR content semantics.
-- R-TRUTH-DOC does NOT apply to PRs that touch no `decisions/NNNN-*.md` files at all; absent the trigger, the rule is `[PASS]` trivially.
-
-**How to check:**
-
-1. List ADR-body files changed in the PR (additions OR edits; the discriminator is the `[0-9]+-` filename pattern):
-
-   ```bash
-   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^decisions/[0-9]+-.*\\.md$")) | .path'
-   ```
-
-   If the output is empty → R-TRUTH-DOC is `[PASS]` trivially (rule does not fire). Move on.
-
-2. List truth-doc files changed in the PR:
-
-   ```bash
-   gh pr view <PR> --json files --jq '.files[] | select(.path | test("^docs/current/.*\\.md$")) | .path'
-   ```
-
-3. **Verdict:**
-   - At least one ADR-body file changed AND at least one `docs/current/*.md` file changed → R-TRUTH-DOC `[PASS]`.
-   - At least one ADR-body file changed AND zero `docs/current/*.md` files changed → BLOCK with: "R-TRUTH-DOC: PR modifies ADR-body file(s) `<list-of-paths>` but no `docs/current/*.md` truth-doc is touched. Per ADR-0026 D2 every ADR-touching PR must update or regenerate the corresponding truth-doc in the same PR; the implementer identifies the affected topic(s) (adr-critic flags candidates at PRD review time per ADR-0026 D2). If the affected topic has no truth-doc yet per ADR-0026 D7 bootstrap-mode, ship the initial truth-doc in this PR."
-
-**Bootstrap-mode (per ADR-0026 D7):** R-TRUTH-DOC applies FORWARD only — to PRs MERGED AFTER ADR-0026 ships. Pre-ADR-0026 PRs are grandfathered.
-
-**Default-conservative-toward-BLOCK** per ADR-0009 D3: when uncertain whether an ADR change has a downstream truth-doc impact, BLOCK with the truth-doc-missing finding; a spurious BLOCK costs the implementer one revision cycle, a false-negative APPROVE silently ships stale knowledge.
-
 ### R-DOCS-CURRENT — README currency on every PR
 
 **Policy source:** ADR-0034 D5 (R-DOCS-CURRENT is the unbypassable merge gate for generated-docs currency; extends ADR-0004 D3's workflow enforcement stack + ADR-0002's reviewer hard-block rule set). Honors the ADR-0008 D7 6-critic-cap (rule extension on the existing `reviewer` critic, NOT a new critic).
@@ -273,7 +237,7 @@ If `git diff --exit-code README.md` exits non-zero → BLOCK with: "R-DOCS-CURRE
 
 After checking (whether PASS or FAIL), restore the working tree state with `git checkout README.md` so the reviewer does not leave a dirty worktree. For safety, prefer running this check in a temp worktree or after a `git stash` if the PR branch has uncommitted changes — but for standard reviewer use (post-push, clean working tree) the plain diff + restore is sufficient.
 
-**Verdict:** `[PASS] 13. R-DOCS-CURRENT: README matches generator output` or `[FAIL] 13. R-DOCS-CURRENT: README drift detected`.
+**Verdict:** `[PASS] 12. R-DOCS-CURRENT: README matches generator output` or `[FAIL] 12. R-DOCS-CURRENT: README drift detected`.
 
 **Bootstrap-mode (per ADR-0034 D9):** R-DOCS-CURRENT binds FORWARD from the PR that ships it (this rule). The first PR to merge this rule is responsible for also committing a generator-current `README.md` (to avoid a spurious block on the very next PR). Pre-ADR-0034 PRs are grandfathered.
 
@@ -281,7 +245,7 @@ After checking (whether PASS or FAIL), restore the working tree state with `git 
 
 ## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
 
-Per ADR-0018. Additive to the 13 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 14th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
+Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
 
 **Trigger:** When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`, `dashboard/*`), apply the matching audit-subagents / audit-meta rubric checks INLINE.
 
@@ -302,7 +266,7 @@ Per ADR-0018. Additive to the 13 hard-block rules above (no renumbering — R-BO
 - **BLOCK** when ALL THREE hold: (a) rule has zero documented false-positive cases against current `main` (currently excludes DOCS-5, DOCS-6, DOCS-7 — emit as Recommendation per backlog #142 carve-out); (b) fix is mechanical and small (one-line, hotfix-shape); (c) drift would materially impact future readers.
 - **Recommendation** otherwise. **Default-conservative-toward-REC** (inverting ADR-0009 D3's hard-block default): cost of false-positive BLOCK exceeds cost of false-negative REC for this discretionary rule.
 
-**Verdict integration:** `[PASS] 14. R-BOY-SCOUT: no audit-relevant files touched` when no triggers fire; `[FAIL] 14. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)` when BLOCK-grade findings exist. Recommendation-grade findings appear in the Recommendations section.
+**Verdict integration:** `[PASS] 13. R-BOY-SCOUT: no audit-relevant files touched` when no triggers fire; `[FAIL] 13. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)` when BLOCK-grade findings exist. Recommendation-grade findings appear in the Recommendations section.
 
 **Rationale:** Audit-quality drift accumulates silently between scheduled audit runs. R-BOY-SCOUT catches drift at PR-tier — the same moment the reviewer is already inspecting the file. Additive defense-in-depth, not a replacement for scheduled audits.
 
@@ -316,7 +280,7 @@ Subjective items (style, refactoring, doc-improvement, future architectural sugg
 
 ## Output format
 
-Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 13 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
+Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 12 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
 
 The canonical verdict template + CRITIC trailer field schema lives in `docs/current/topics/output-shapes.md`.
 

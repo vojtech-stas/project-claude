@@ -330,7 +330,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 33 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 34 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -352,7 +352,7 @@ Walking-skeleton phase. The pipeline is being built incrementally **on the proje
 
 [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 migration program completed steps T1–T6: atomic-notes-based KB migrated; CLAUDE.md slimmed from 988 → ~155 LoC. T7–T9 (impact-analyst, kb-maintainer, knowledge-gateway generator subagents) remain future work per parent PRD [#242](https://github.com/vojtech-stas/project-claude/issues/242).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 10 hook(s), 33 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 10 hook(s), 34 ADR(s).
 
 ## License
 

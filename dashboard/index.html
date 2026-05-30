@@ -589,23 +589,48 @@ function renderLiveEvents() {
 
   if (visible.length === 0) {
     empty.style.display = 'flex';
-    const existing = container.querySelectorAll('.event-row, .event-detail');
+    const existing = container.querySelectorAll('.run-group, .event-row, .event-detail');
     existing.forEach(el => el.remove());
     return;
   }
   empty.style.display = 'none';
 
-  // Rebuild all rows (newest at top = reversed)
-  const reversed = [...visible].reverse();
+  // Group events by session_id (preserve insertion order, then reverse for newest-first)
+  const sessionOrder = [];
+  const sessionMap = {};
+  for (const ev of visible) {
+    const sid = ev.raw.session_id || 'unknown';
+    if (!sessionMap[sid]) {
+      sessionMap[sid] = [];
+      sessionOrder.push(sid);
+    }
+    sessionMap[sid].push(ev);
+  }
+  // Newest session first
+  const reversedSessions = [...sessionOrder].reverse();
+
   let html = '';
-  for (const ev of reversed) {
-    const ts = ev.ts ? ev.ts.replace('T', ' ').slice(0, 19) : '';
-    html += `<div class="event-row" onclick="toggleLiveDetail('det-${ev.id}')">`;
-    html += `<span class="event-ts">${escHtml(ts)}</span>`;
-    html += `<span class="event-type-icon ${typeCss(ev.eventType)}">${typeIcon(ev.eventType)}</span>`;
-    html += `<span class="event-name ${typeCss(ev.eventType)}">${escHtml(ev.name)}</span>`;
-    html += `</div>`;
-    html += `<div class="event-detail" id="det-${ev.id}"><pre>${escHtml(JSON.stringify(ev.raw, null, 2))}</pre></div>`;
+  for (const sid of reversedSessions) {
+    const events = sessionMap[sid];
+    const firstTs = events[0] && events[0].ts ? events[0].ts.replace('T', ' ').slice(0, 19) : '';
+    const lastTs = events[events.length - 1] && events[events.length - 1].ts
+      ? events[events.length - 1].ts.replace('T', ' ').slice(0, 19) : '';
+    const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 8) + '…';
+    const summary = `<strong>Run ${escHtml(sidShort)}</strong>`
+      + ` <span style="font-weight:normal;color:var(--muted)">${escHtml(firstTs)} → ${escHtml(lastTs)}`
+      + ` (${events.length} event${events.length !== 1 ? 's' : ''})</span>`;
+    html += `<details class="run-group" open><summary style="cursor:pointer;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;margin-bottom:4px">${summary}</summary>`;
+    // Events time-ordered (oldest first = natural order)
+    for (const ev of events) {
+      const ts = ev.ts ? ev.ts.replace('T', ' ').slice(0, 19) : '';
+      html += `<div class="event-row" onclick="toggleLiveDetail('det-${ev.id}')">`;
+      html += `<span class="event-ts">${escHtml(ts)}</span>`;
+      html += `<span class="event-type-icon ${typeCss(ev.eventType)}">${typeIcon(ev.eventType)}</span>`;
+      html += `<span class="event-name ${typeCss(ev.eventType)}">${escHtml(ev.name)}</span>`;
+      html += `</div>`;
+      html += `<div class="event-detail" id="det-${ev.id}"><pre>${escHtml(JSON.stringify(ev.raw, null, 2))}</pre></div>`;
+    }
+    html += `</details>`;
   }
   container.innerHTML = html + (empty.outerHTML);
   document.getElementById('live-empty').style.display = 'none';

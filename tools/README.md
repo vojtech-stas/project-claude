@@ -40,8 +40,8 @@ python tools/cascade-finder.py <target_file> [--json]
 | `grep-filename` | 2 | The file's basename appears in the referencing file |
 | `grep-concept` | 1 | The file's YAML `title:` field appears in the referencing file |
 
-Note: the `edge` pass (typed `**EdgeType:** [[path]]` links in `docs/current/**/*.md`)
-was removed per ADR-0032 D6 — the KB layer (`docs/current/`) is retired. The three
+Note: the `edge` pass (typed `**EdgeType:** [[path]]` links in KB atomic notes)
+was removed per ADR-0032 D6 — the separate KB layer is retired. The three
 grep passes operate on the canonical substrate: `.claude/{agents,skills,hooks}` +
 `decisions/` + `CLAUDE.md` + `README.md` + `tools/`.
 
@@ -109,6 +109,6 @@ obligations before editing a key file. Per [ADR-0032](../decisions/0032-workflow
 D6, the discovery substrate is the canonical operational surfaces:
 `.claude/{agents,skills,hooks}` + `decisions/` + `CLAUDE.md` + `README.md` + `tools/`.
 
-The `edge` pass (typed-edge graph in `docs/current/` atomic notes) was removed when
-the KB layer was retired (ADR-0032). The three grep passes (`grep-slug`, `grep-filename`,
-`grep-concept`) remain and operate on the updated substrate.
+The `edge` pass (typed-edge graph in KB atomic notes) was removed when the KB layer was
+retired per ADR-0032. The three grep passes (`grep-slug`, `grep-filename`, `grep-concept`)
+remain and operate on the updated substrate.

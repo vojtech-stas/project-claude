@@ -1041,7 +1041,7 @@ def _build_counts() -> str:
 
 
 def generate_readme() -> None:
-    """Read docs/readme.template.md, substitute placeholders, write README.md.
+    """Read README.template.md, substitute placeholders, write README.md.
 
     Placeholders:
       {{GENERATED:pipeline-diagram}}  — fixed Mermaid diagram block
@@ -1051,7 +1051,7 @@ def generate_readme() -> None:
     Idempotent: running twice produces the same README.md.
     No LLM calls — pure stdlib + pathlib.
     """
-    template_path = REPO_ROOT / "docs" / "readme.template.md"
+    template_path = REPO_ROOT / "README.template.md"
     readme_path = REPO_ROOT / "README.md"
 
     if not template_path.exists():
@@ -1074,7 +1074,7 @@ def generate_readme() -> None:
         result = result.replace(placeholder, value)
 
     header = (
-        "<!-- AUTO-GENERATED from docs/readme.template.md"
+        "<!-- AUTO-GENERATED from README.template.md"
         " — edit the template, run the generator. -->\n"
     )
     final = header + result

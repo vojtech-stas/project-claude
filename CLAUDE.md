@@ -25,7 +25,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 12. **Claude Code hooks are logging/validation/notification only.** Per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md), Claude Code hooks are configured in `.claude/settings.json` and may log to local files, validate by exit code, or notify via stderr. Hooks may NOT auto-invoke skills or subagents (technically impossible), and they do NOT replace the `.githooks/pre-commit` server-side layer or the ADR-0008 D3 inline-firing convention — they are additive. See ADR-0015 for the scope policy.
 13. **Root-cause workflow capture (Symptoms ≠ causes).** When any agent encounters a workflow mistake — a recurring failure pattern, a critic round that should have been one round shorter, a manual orchestration bypass, a cascade-doc conflict, or any "I had to work around this" moment — it MUST capture a `captured`-labeled GitHub issue with a 3-part body naming (a) the **symptom** observed, (b) the **root cause** analyzed, and (c) the **proposed** workflow change that prevents recurrence. Symptom-only fixes in the in-flight PR are necessary but insufficient; the workflow change is the deliverable. Same downstream mechanism as rule #11: `/promote-to-backlog` fires inline per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 and `backlog-critic`'s 4-criterion rubric (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4) filters quality. Complementary to rule #11 (forward-work, open shape); rule #13 covers backward/root-cause analyses (3-part shape). Per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md).
 
-_(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) D2. Slot explicitly retired; no `docs/current/` exists. Future rules may use #15+.)_
+_(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) D2. Slot explicitly retired; the separate KB layer no longer exists. Future rules may use #15+.)_
 
 ---
 
@@ -76,39 +76,30 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ## Map — where things live
 
-Full descriptions live in entity notes under `docs/current/entities/{skills,subagents}/`.
-
 | Thing | Path | Summary |
 |---|---|---|
 | Pipeline skills | `.claude/skills/<name>/SKILL.md` | `ls .claude/skills/` for the full list |
-| `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | autonomous PRD-to-merge chain; see [entity](docs/current/entities/skills/ship.md) |
+| `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | autonomous PRD-to-merge chain |
 | Subagents | `.claude/agents/<name>.md` | `ls .claude/agents/` for the full list |
-| implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4; see [entity](docs/current/entities/subagents/implementer.md) |
-| qa-tester subagent | `.claude/agents/qa-tester.md` | dual-mode bash/ui executor of QA plans; see [entity](docs/current/entities/subagents/qa-tester.md) |
-| `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts; see [entity](docs/current/entities/skills/audit-subagents.md) |
-| `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit; see [entity](docs/current/entities/skills/audit-meta.md) |
-| glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX; see entities |
+| implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4 |
+| qa-tester subagent | `.claude/agents/qa-tester.md` | dual-mode bash/ui executor of QA plans |
+| `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts |
+| `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit |
+| glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 | Cascade-aware deps | `tools/cascade-finder.py` | advisory tool for cascade-aware workflow; see [tools/README.md](tools/README.md) |
 | Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of agent/bash/stop events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pre-commit hooks | `.githooks/pre-commit`, `.githooks/install.sh` | workflow enforcement |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | immutable; supersede rather than edit |
-| Knowledge base | `docs/current/`, `docs/raw/` | compiled atomic notes + topic syntheses per [ADR-0031](decisions/0031-knowledge-architecture-v2.md); see KB schema below |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | current PRDs live on GitHub Issues per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1 |
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog (forward queue) | `gh issue list --label backlog` + Backlog column on project board #2 | curated by `backlog-critic` |
 | Captured tier | `gh issue list --label captured` + Captured column on project board #2 | autopilot pre-backlog |
 | Workflow dashboard | `dashboard/` | local web visualizer (architecture + health); see [dashboard/README.md](dashboard/README.md) |
 | `/build` orchestrator skill | `.claude/skills/build/SKILL.md` | full-lifecycle thin conductor: dashboard-check → `/grill-me` (conditional) → `/ship` → regenerate-docs → `/qa-plan`; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D1 |
-| README template | `docs/readme.template.md` | source of truth for README.md — static prose + `{{GENERATED:*}}` placeholders; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D4 |
+| README template | `README.template.md` | source of truth for README.md — static prose + `{{GENERATED:*}}` placeholders; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D4 |
 | README generator | `dashboard/server.py --generate-readme` | reads template + filesystem → writes `README.md`; reuses dashboard's `discover_*` engine; no LLM calls; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D7 |
-
----
-
-## KB schema (per ADR-0031)
-
-The project's knowledge base lives under `docs/current/` (compiled atomic notes + topic syntheses) and `docs/raw/` (immutable source material). KB notes use a 5-node-type taxonomy (concept / entity / topic / pattern / decision) + 13 typed edges in `**EdgeType:** [[path]]` syntax, with YAML frontmatter on every note. See [docs/current/topics/kb-schema.md](docs/current/topics/kb-schema.md) for the full operating manual. New content from ADR-0031 merge forward is born into this structure per bootstrap-mode ([ADR-0004](decisions/0004-bypass-prevention.md) D2 / [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D13); existing content migrates over PRDs T1-T9.
 
 ---
 
@@ -141,18 +132,8 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 
 ---
 
-## Topic pointers (per ADR-0031 D2 — content moved to docs/current/topics/)
-
-- **Operational git workflow:** [docs/current/topics/git-workflow.md](docs/current/topics/git-workflow.md) — per-slice git lifecycle (starting / working / finishing / reviewing / merging) + anti-pattern list.
-- **Slicing logic — what makes a good slice:** [docs/current/topics/pipeline-stages.md](docs/current/topics/pipeline-stages.md) §Slicing methodology + [docs/current/patterns/cascade-doc-check.md](docs/current/patterns/cascade-doc-check.md) + [docs/current/patterns/n1-degenerate-carveout.md](docs/current/patterns/n1-degenerate-carveout.md) — hamburger + SPIDR + cascade-doc check per [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D2; actionable application lives in [`.claude/agents/slicer.md`](.claude/agents/slicer.md).
-- **Output-shape standard for subagents + output-emitting skills:** [docs/current/topics/output-shapes.md](docs/current/topics/output-shapes.md) — canonical home of verdict template + CRITIC trailer + GENERATOR trailer schemas, per [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1.
-- **Pipeline operational logic:** [docs/current/topics/pipeline-stages.md](docs/current/topics/pipeline-stages.md) — the HOW for each stage from `/grill-me` through `/qa-plan`, plus session-level enforcement hooks per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md).
-
----
-
 ## Where to look for more
 
 - Autonomous merge policy: [`decisions/0002-autonomous-merge-policy.md`](decisions/0002-autonomous-merge-policy.md)
 - Autonomous multi-stage pipeline with critics: [`decisions/0003-autonomous-pipeline-with-critics.md`](decisions/0003-autonomous-pipeline-with-critics.md)
-- Knowledge architecture v2 (current `docs/current/` KB shape): [`decisions/0031-knowledge-architecture-v2.md`](decisions/0031-knowledge-architecture-v2.md)
 - Matt Pocock's upstream skills: https://github.com/mattpocock/skills

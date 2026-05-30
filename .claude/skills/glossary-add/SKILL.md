@@ -5,7 +5,7 @@ description: Add a single glossary term — interactive single-term flow that ca
 
 # /glossary-add — single-term interactive write path
 
-Adds **one** glossary term per invocation: interview the user for the required fields, draft both the atomic concept note + CLAUDE.md INDEX row, invoke [`glossary-critic`](../../agents/glossary-critic.md) in a ≤3-round APPROVE/BLOCK loop, and on APPROVE open a `hotfix/glossary-<term>` PR with the `trivial` label.
+Adds **one** glossary term per invocation: interview the user for the required fields, draft a CLAUDE.md INDEX row, invoke [`glossary-critic`](../../agents/glossary-critic.md) in a ≤3-round APPROVE/BLOCK loop, and on APPROVE open a `hotfix/glossary-<term>` PR with the `trivial` label.
 
 This is the **explicit** write path per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. The complementary discretionary-surfacing path is non-mandatory and described in each agent's own body.
 
@@ -21,7 +21,7 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
 
    Inline-args form: `/glossary-add <term> --definition "..." --category a|b|c --authority "..."`. Missing fields fall back to one-question-at-a-time prompts.
 
-2. **Draft both artifacts** per the dual-tier knowledge architecture established by [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) D2 + D10 step 1: (a) a full atomic concept note at `docs/current/concepts/glossary/<slug>.md` (50–100 LoC body + YAML frontmatter + typed edges), and (b) a single-line INDEX row appended to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position, pointing to the atomic note.
+2. **Draft the INDEX row** — a single-line entry appended to the `## Glossary` section of `CLAUDE.md` at the alphabetically-correct position. Per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) D1, the KB layer is retired; the CLAUDE.md INDEX row is the sole artifact.
 
    Before drafting, count existing INDEX rows; at/above the ~35 soft cap per [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D5, surface a warning but proceed (the cap is soft).
 
@@ -37,7 +37,7 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
    ```bash
    git checkout main && git pull --ff-only origin main
    git checkout -b hotfix/glossary-<kebab-term>
-   git add docs/current/concepts/glossary/<slug>.md CLAUDE.md
+   git add CLAUDE.md
    git commit -m "docs(glossary): add <term>" -m "<one-sentence why>" -m "Co-authored-by: Claude <noreply@anthropic.com>"
    git push -u origin hotfix/glossary-<kebab-term>
    gh pr create --title "docs(glossary): add <term>" --body "<see template>" --label trivial
@@ -59,7 +59,7 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
 
 - Add multiple terms per invocation — one term per `/glossary-add` per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. Batch backfills invoke once per term.
 - Bypass the critic — `glossary-critic` is the sole authority on entry shape; the step-1 self-checks are fast-path convenience.
-- Edit any files other than `CLAUDE.md` and the one new atomic note. ADR/README/Map-table edits are out of scope.
+- Edit any files other than `CLAUDE.md`. ADR/README/Map-table edits are out of scope.
 - Open a PR on round-3 BLOCK — the skill is the gatekeeper; a thrice-blocked entry never reaches `reviewer`.
 
 ## References
@@ -67,6 +67,6 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
 - Full role synthesis (invocation contract, edges): this file.
 - [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) — D2 (entry shape), D3 (scope rule), D4 (explicit write path), D7 (bootstrap-mode).
 - [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) — D1 (single-tier consolidation), D2 (≥3-citations threshold), D4 (5-rule rubric), D5 (~35-entry soft cap).
-- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — D2 + D10 step 1 (dual-tier atomic note + INDEX row).
+- [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) — D1 (single-tier CLAUDE.md INDEX only; separate KB layer retired).
 - [`.claude/agents/glossary-critic.md`](../../agents/glossary-critic.md) — the critic this skill invokes.
 - Sibling: [`/glossary-fold`](../glossary-fold/SKILL.md) — bulk auto-fold of skill-local vocabulary.

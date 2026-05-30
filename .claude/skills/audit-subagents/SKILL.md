@@ -193,6 +193,6 @@ Forbidden: `Edit`, `Write` (advisory only); `Agent` (no recursive invocation —
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a/D1b/D1c — verdict template + CRITIC + GENERATOR trailers (sources AS-CRIT-3, AS-CRIT-4, AS-GEN-1, this skill's own output shape).
 - [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 (6-critic-cap, honored), D8 (surfacing convention — sources AS-ALL-4).
 - [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK — sources AS-CRIT-1), D4 (adversarial mindsets — sources AS-CRIT-2).
-- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; full rule bodies previously in `docs/current/concepts/rules/as-*.md` (now inlined); entity synthesis in `docs/current/entities/skills/audit-subagents.md`.
+- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; full rule bodies previously in the KB layer (now inlined per ADR-0032 D1).
 - Backlog [#93](https://github.com/vojtech-stas/project-claude/issues/93) — surfacing-convention drift fix that AS-ALL-4 detects.
 - Backlog [#47](https://github.com/vojtech-stas/project-claude/issues/47) — future post-PRD audit pipeline; natural consumer of this skill per ADR-0011 D9.

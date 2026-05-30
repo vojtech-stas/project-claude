@@ -66,7 +66,7 @@ fi
 # ---------------------------------------------------------------------------
 # README currency check — ADR-0034 D6 (pre-commit doc-generation gate)
 # ---------------------------------------------------------------------------
-# Regenerate README.md from docs/readme.template.md + filesystem; if the
+# Regenerate README.md from README.template.md + filesystem; if the
 # committed README differs from the freshly-generated one, block the commit.
 #
 # Fail-open cases (warn + exit 0, consistent with branch-name check above):

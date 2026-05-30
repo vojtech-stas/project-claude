@@ -11,8 +11,8 @@ Part of the cascade-aware workflow foundation. See tools/README.md and
 decisions/0032-workflow-only-architecture.md D6 for context.
 
 Discovery substrate (per ADR-0032 D6): .claude/{agents,skills,hooks} + decisions/ +
-CLAUDE.md + README.md + tools/. The typed-edge discovery (docs/current/ parsing) was
-removed when the KB layer was retired; three grep passes remain.
+CLAUDE.md + README.md + tools/. The typed-edge discovery was removed when the KB layer
+was retired per ADR-0032 D1; three grep passes remain.
 """
 
 import argparse
@@ -34,7 +34,7 @@ REF_WEIGHT = {"grep-slug": 3, "grep-filename": 2, "grep-concept": 1}
 EXCLUDE_DIRS = {".git", ".claude/worktrees", "tool-results", "transcripts"}
 
 # Discovery substrate per ADR-0032 D6: canonical operational surfaces only.
-# docs/current/ is gone (KB layer retired); substrate is these prefix/path patterns.
+# KB layer retired per ADR-0032 D1; substrate is these prefix/path patterns.
 SUBSTRATE_PREFIXES = (
     ".claude/agents/",
     ".claude/skills/",
@@ -135,10 +135,10 @@ def enumerate_scope(repo_root: Path, target_rel: str) -> list[str]:
 def compute_anchors(repo_root: Path, target_rel: str) -> dict:
     """Compute the 3 search anchors from the target path.
 
-    Per ADR-0032 D6, the typed-edge discovery (docs/current/ parsing) and its
-    concept_title anchor are retired. Three passes remain: grep-slug, grep-filename,
-    grep-concept (concept_title retained for files that happen to have a title:
-    YAML field; harmless no-op when not present).
+    Per ADR-0032 D6, the typed-edge discovery and its concept_title anchor are retired
+    along with the KB layer. Three passes remain: grep-slug, grep-filename, grep-concept
+    (concept_title retained for files that happen to have a title: YAML field; harmless
+    no-op when not present).
     """
     p = Path(target_rel)
     anchors = {
@@ -328,7 +328,7 @@ def main() -> None:
     scoped = enumerate_scope(repo_root, target_rel)
 
     all_hits = []
-    # typed-edge discovery removed per ADR-0032 D6 (docs/current/ KB layer retired)
+    # typed-edge discovery removed per ADR-0032 D6 (KB layer retired)
     all_hits.extend(discover_grep_slug(repo_root, scoped, anchors))
     all_hits.extend(discover_grep_filename(repo_root, scoped, anchors))
     all_hits.extend(discover_grep_concept(repo_root, scoped, anchors))

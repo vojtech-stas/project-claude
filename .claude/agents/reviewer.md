@@ -219,7 +219,7 @@ gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-autho
 
 **Policy source:** ADR-0034 D5 (R-DOCS-CURRENT is the unbypassable merge gate for generated-docs currency; extends ADR-0004 D3's workflow enforcement stack + ADR-0002's reviewer hard-block rule set). Honors the ADR-0008 D7 6-critic-cap (rule extension on the existing `reviewer` critic, NOT a new critic).
 
-**Rule:** On every PR, the reviewer regenerates `README.md` from `docs/readme.template.md` + the filesystem, then runs `git diff --exit-code README.md`. If the committed README differs from the freshly-generated one → **BLOCK**.
+**Rule:** On every PR, the reviewer regenerates `README.md` from `README.template.md` + the filesystem, then runs `git diff --exit-code README.md`. If the committed README differs from the freshly-generated one → **BLOCK**.
 
 Catches both drift modes: (a) someone hand-edited `README.md` directly; (b) a source (`.claude/agents/`, `.claude/skills/`, `.claude/hooks/`, `decisions/`) changed but README was not regenerated.
 
@@ -282,7 +282,7 @@ Subjective items (style, refactoring, doc-improvement, future architectural sugg
 
 Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 12 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
 
-The canonical verdict template + CRITIC trailer field schema lives in `docs/current/topics/output-shapes.md`.
+The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in each agent's system prompt per CLAUDE.md rule #9 (DRY).
 
 ---
 

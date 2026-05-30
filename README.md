@@ -307,8 +307,8 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`pre-tool-edit.sh`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash.sh`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
 - **[`FILE_PATH=$(jq -r '.tool_input.file_path' </dev/stdin); if e`](.claude/settings.json)** (`PostToolUse`) — logs agent file edits; suggests /audit-subagents on agent .md changes
-- **[`STDIN=$(cat /dev/stdin); SUB=$(echo "$STDIN" | jq -r '.tool_`](.claude/settings.json)** (`PostToolUse`) — logs agent completions to workflow-events.jsonl
-- **[`STDIN=$(cat /dev/stdin); CMD=$(echo "$STDIN" | jq -r '.tool_`](.claude/settings.json)** (`PostToolUse`) — logs bash completions to workflow-events.jsonl
+- **[`STDIN=$(cat); SUB=$(echo "$STDIN" | jq -r '.agent_type // ""`](.claude/settings.json)** (`PostToolUse`) — logs agent completions to workflow-events.jsonl
+- **[`STDIN=$(cat); CMD=$(echo "$STDIN" | jq -r '.tool_input.comma`](.claude/settings.json)** (`PostToolUse`) — logs bash completions to workflow-events.jsonl
 - **[`mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs" && jq -cn --arg `](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
 - **[`stop-reviewer-gate.sh`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 

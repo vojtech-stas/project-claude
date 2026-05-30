@@ -726,6 +726,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str):
         self._send_json({"error": message}, status)
 
+    def _serve_runs(self) -> dict:
+        """Read workflow-events.jsonl and return events grouped by session_id.
+
+        Returns: {runs: [{session_id, first_ts, last_ts, events: [...]}]}
+        Runs are ordered newest-first (by first_ts descending).
+        Events within each run are time-ordered (ascending, as logged).
+        Events without a session_id are grouped under "unknown".
+        """
+        log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+        if not log_path.exists():
+            return {"runs": []}
+
+        # Preserve insertion order per session_id (Python 3.7+ dict guarantee)
+        sessions: dict = {}
+        try:
+            for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                sid = obj.get("session_id") or "unknown"
+                if sid not in sessions:
+                    sessions[sid] = []
+                sessions[sid].append(obj)
+        except Exception:
+            return {"runs": []}
+
+        runs = []
+        for sid, events in sessions.items():
+            first_ts = events[0].get("ts", "") if events else ""
+            last_ts = events[-1].get("ts", "") if events else ""
+            runs.append({"session_id": sid, "first_ts": first_ts,
+                         "last_ts": last_ts, "events": events})
+
+        # Newest-first by first_ts (ISO timestamps sort lexicographically)
+        runs.sort(key=lambda r: r["first_ts"], reverse=True)
+        return {"runs": runs}
+
     def _serve_sse(self, query: dict):
         """SSE stream: tail workflow-events.jsonl from Last-Event-ID offset."""
         log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
@@ -806,6 +847,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/events":
             self._serve_sse(query)
+
+        elif path == "/api/runs":
+            self._send_json(self._serve_runs())
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

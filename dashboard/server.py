@@ -7,6 +7,8 @@ Serves: GET /               -> dashboard/index.html
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
+        GET /api/runs?n=N     -> last-N runs grouped by session_id (tail-seek)
+        GET /api/runs?before=<session_id> -> older runs cursor (for "show older")
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -698,6 +700,41 @@ def cascade_finder_summary() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tail-seek helper — yields lines from a text file in reverse order.
+# Reads in 64 KiB chunks from the end; never loads the whole file.
+# ---------------------------------------------------------------------------
+
+def _iter_lines_reversed(path: Path, chunk_size: int = 65536):
+    """Yield UTF-8 decoded lines from *path* in reverse order (last line first).
+
+    Uses seek/read on 64 KiB chunks so callers can stop early after collecting
+    enough session groups without ever loading the full file into memory.
+    """
+    with path.open("rb") as f:
+        f.seek(0, 2)  # seek to end
+        remaining = f.tell()
+        buf = b""
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+            remaining -= read_size
+            f.seek(remaining)
+            chunk = f.read(read_size)
+            # Prepend new chunk to leftover buffer
+            buf = chunk + buf
+            # Split on newlines; keep first fragment (may be incomplete line)
+            # The last element of split is the incomplete leading fragment
+            parts = buf.split(b"\n")
+            # parts[0] may be partial; save it; yield the rest in reverse
+            buf = parts[0]
+            for part in reversed(parts[1:]):
+                decoded = part.decode("utf-8", errors="replace")
+                yield decoded
+        # Yield whatever is left in buf (the very first line of the file)
+        if buf:
+            yield buf.decode("utf-8", errors="replace")
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
@@ -726,22 +763,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str):
         self._send_json({"error": message}, status)
 
-    def _serve_runs(self) -> dict:
-        """Read workflow-events.jsonl and return events grouped by session_id.
+    def _serve_runs(self, query: dict) -> dict:
+        """Return last-N complete runs grouped by session_id — tail-seek, no full-file read.
+
+        Query params:
+          n / limit : int  — how many runs to return (default 2)
+          before    : str  — session_id cursor; return runs that appear BEFORE
+                            (i.e. older than) this session in the file.
 
         Returns: {runs: [{session_id, first_ts, last_ts, events: [...]}]}
         Runs are ordered newest-first (by first_ts descending).
         Events within each run are time-ordered (ascending, as logged).
         Events without a session_id are grouped under "unknown".
+
+        Implementation: reads the file backwards in 64 KiB chunks to collect
+        only the lines needed for the last N session_id groups.  For the
+        ?before cursor it scans backward from the end to skip sessions until
+        the cursor session_id is exhausted, then collects N more groups.
+        This avoids loading the full file on the hot path.
         """
         log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
         if not log_path.exists():
             return {"runs": []}
 
-        # Preserve insertion order per session_id (Python 3.7+ dict guarantee)
-        sessions: dict = {}
+        # Parse query params
         try:
-            for raw in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            n = int((query.get("n") or query.get("limit") or ["2"])[0])
+        except (ValueError, IndexError, TypeError):
+            n = 2
+        n = max(1, min(n, 50))  # safety clamp
+
+        before_cursor = None
+        before_raw = (query.get("before") or [""])[0]
+        if before_raw:
+            before_cursor = before_raw
+
+        try:
+            # Read lines backward via chunk-seek so we never load the full file
+            lines_reversed = _iter_lines_reversed(log_path)
+
+            # Collect session groups in reverse insertion order (newest first)
+            sessions_newest_first: list = []  # list of (sid, [event, ...])
+            sid_to_idx: dict = {}
+
+            # When before_cursor is set we skip all sessions that appear AFTER
+            # the cursor in the file (i.e., sessions newer than the cursor when
+            # reading reversed).  We track whether we have SEEN the cursor
+            # session at all; only AFTER we first encounter it AND then move past
+            # it (into a different session_id) do we start collecting.
+            cursor_seen = False  # have we observed at least one cursor-session line?
+            in_before_skip = (before_cursor is not None)
+
+            for raw in lines_reversed:
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -749,21 +822,44 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     obj = json.loads(raw)
                 except Exception:
                     continue
+
                 sid = obj.get("session_id") or "unknown"
-                if sid not in sessions:
-                    sessions[sid] = []
-                sessions[sid].append(obj)
+
+                if in_before_skip:
+                    if sid == before_cursor:
+                        # Inside the cursor session — mark it seen, keep skipping
+                        cursor_seen = True
+                        continue
+                    elif not cursor_seen:
+                        # Haven't seen the cursor yet; this is a newer session — skip
+                        continue
+                    else:
+                        # cursor_seen and now a different sid → we've passed the cursor
+                        in_before_skip = False
+                        # Fall through to process this line normally
+
+                if sid not in sid_to_idx:
+                    if len(sessions_newest_first) >= n:
+                        break  # have enough sessions; stop reading
+                    sid_to_idx[sid] = len(sessions_newest_first)
+                    sessions_newest_first.append((sid, [obj]))
+                else:
+                    idx = sid_to_idx[sid]
+                    sessions_newest_first[idx][1].append(obj)
+
         except Exception:
             return {"runs": []}
 
         runs = []
-        for sid, events in sessions.items():
+        for sid, events_reversed in sessions_newest_first:
+            # Events were collected newest-to-oldest; reverse to get time order
+            events = list(reversed(events_reversed))
             first_ts = events[0].get("ts", "") if events else ""
             last_ts = events[-1].get("ts", "") if events else ""
             runs.append({"session_id": sid, "first_ts": first_ts,
                          "last_ts": last_ts, "events": events})
 
-        # Newest-first by first_ts (ISO timestamps sort lexicographically)
+        # Already newest-first from reversed iteration; sort is belt-and-suspenders
         runs.sort(key=lambda r: r["first_ts"], reverse=True)
         return {"runs": runs}
 
@@ -849,7 +945,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_sse(query)
 
         elif path == "/api/runs":
-            self._send_json(self._serve_runs())
+            self._send_json(self._serve_runs(query))
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

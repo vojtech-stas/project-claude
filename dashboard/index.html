@@ -675,6 +675,12 @@ const RUNS_DEFAULT_OPEN = 2;
 let olderRuns = [];   // [{session_id, first_ts, last_ts, events}]
 let recentRuns = [];  // same shape, newest first, always in DOM
 let olderShown = false;
+// Session IDs already seeded from REST /api/runs (avoid SSE duplication)
+let seededSessionIds = new Set();
+// Whether initial /api/runs fetch has been attempted
+let runsLoaded = false;
+// Whether there may be more older runs available from the server
+let moreOlderAvailable = true;
 
 const CRITICS = new Set(['reviewer','prd-critic','adr-critic','slicer-critic','glossary-critic','backlog-critic']);
 const GENERATORS = new Set(['slicer','implementer','qa-tester','current-state-reader']);
@@ -971,13 +977,24 @@ function renderLiveEvents() {
     html += renderRunGroup(recentRuns[i], true, `r${i}-`);
   }
 
-  // "Show older" button (only if there are older runs)
-  if (olderRuns.length > 0 && !olderShown) {
-    html += `<button class="show-older-btn" id="show-older-btn" onclick="showOlderRuns()">Show ${olderRuns.length} older run${olderRuns.length !== 1 ? 's' : ''} ▼</button>`;
+  // "Show older" button — visible when:
+  //   (a) there are in-memory older runs not yet shown, OR
+  //   (b) the server may have more older runs (moreOlderAvailable)
+  const hasLocalOlder = olderRuns.length > 0;
+  const showOlderBtn = (!olderShown && (hasLocalOlder || moreOlderAvailable));
+  if (showOlderBtn) {
+    const label = hasLocalOlder
+      ? `Show ${olderRuns.length} older run${olderRuns.length !== 1 ? 's' : ''} ▼`
+      : 'Show older runs ▼';
+    html += `<button class="show-older-btn" id="show-older-btn" onclick="showOlderRuns()">${label}</button>`;
   } else if (olderRuns.length > 0 && olderShown) {
     // Already shown: render them collapsed
     for (let i = 0; i < olderRuns.length; i++) {
       html += renderRunGroup(olderRuns[i], false, `o${i}-`);
+    }
+    // If server might have even more, offer another page
+    if (moreOlderAvailable) {
+      html += `<button class="show-older-btn" id="show-older-btn" onclick="showOlderRuns()">Load more older runs ▼</button>`;
     }
   }
 
@@ -985,12 +1002,53 @@ function renderLiveEvents() {
   document.getElementById('live-empty').style.display = 'none';
 }
 
-function showOlderRuns() {
+async function showOlderRuns() {
   olderShown = true;
+
+  // Find the oldest session_id currently rendered (the last entry in recentRuns)
+  // to use as the ?before cursor for fetching from the server.
+  const allRendered = [...recentRuns, ...olderRuns];
+  // allRendered is newest-first; oldest is the last element
+  const oldestSid = allRendered.length > 0
+    ? allRendered[allRendered.length - 1].session_id
+    : null;
+
+  if (moreOlderAvailable && oldestSid) {
+    try {
+      const url = '/api/runs?n=5&before=' + encodeURIComponent(oldestSid);
+      const r = await fetch(url);
+      const data = await r.json();
+      const fetchedRuns = data.runs || [];
+
+      if (fetchedRuns.length === 0) {
+        moreOlderAvailable = false;
+      } else {
+        // Merge fetched run events into liveEvents (dedup by session_id)
+        for (const run of fetchedRuns) {
+          if (seededSessionIds.has(run.session_id)) continue;
+          seededSessionIds.add(run.session_id);
+          for (const evObj of run.events) {
+            const t = classifyEvent(evObj);
+            liveEvents.push({
+              id: 'hist-' + run.session_id + '-' + liveEvents.length,
+              ts: evObj.ts,
+              eventType: t,
+              name: eventName(evObj, t),
+              raw: evObj,
+            });
+          }
+        }
+        // Sort liveEvents by ts so run grouping stays consistent
+        liveEvents.sort((a, b) => (a.raw.ts || '') < (b.raw.ts || '') ? -1 : 1);
+        // If the server returned fewer than requested, no more pages
+        if (fetchedRuns.length < 5) moreOlderAvailable = false;
+      }
+    } catch(_) {
+      // Network error: fall back to rendering what we have in memory
+    }
+  }
+
   renderLiveEvents();
-  // Scroll to top of older section (after the recent ones)
-  const btn = document.getElementById('show-older-btn');
-  // btn may have been removed; just re-render
 }
 
 function toggleDetail(id) {
@@ -1010,8 +1068,39 @@ function setFilter(f, btn) {
   renderLiveEvents();
 }
 
+// Seed liveEvents from the REST /api/runs?n=2 snapshot so the last 2 runs are
+// immediately visible without waiting for the SSE stream to replay history.
+async function loadInitialRuns() {
+  if (runsLoaded) return;
+  runsLoaded = true;
+  try {
+    const r = await fetch('/api/runs?n=2');
+    const data = await r.json();
+    const runs = data.runs || [];
+    for (const run of runs) {
+      seededSessionIds.add(run.session_id);
+      for (const evObj of run.events) {
+        const t = classifyEvent(evObj);
+        liveEvents.push({
+          id: 'hist-' + run.session_id + '-' + liveEvents.length,
+          ts: evObj.ts,
+          eventType: t,
+          name: eventName(evObj, t),
+          raw: evObj,
+        });
+      }
+    }
+    // Sort ascending by ts
+    liveEvents.sort((a, b) => (a.raw.ts || '') < (b.raw.ts || '') ? -1 : 1);
+    if (liveEvents.length > 0) renderLiveEvents();
+  } catch(_) {
+    // Server may not be running yet — SSE will deliver events when ready
+  }
+}
+
 function startLiveStream() {
   if (liveEs) return; // already connected
+  loadInitialRuns();  // seed historical runs before SSE starts
   liveEs = new EventSource('/api/events');
 
   liveEs.onopen = () => {
@@ -1022,6 +1111,26 @@ function startLiveStream() {
     liveLastSeen = Date.now();
     let obj;
     try { obj = JSON.parse(e.data); } catch(_) { return; }
+    const sid = obj.session_id || 'unknown';
+    // If this event belongs to a session already seeded from /api/runs, skip it
+    // UNLESS it's a session we seeded AND the event is newer than our snapshot
+    // (we can't tell easily, so we only skip whole sessions that were fully historical).
+    // Strategy: seededSessionIds contains sessions from the /api/runs snapshot.
+    // Once SSE delivers an event for a seeded session, it means the session is now
+    // live — remove it from seeded set so future events are accepted.
+    if (seededSessionIds.has(sid)) {
+      // Check if this is a new event by seeing if its ts is later than any we have
+      const existing = liveEvents.filter(ev => ev.raw.session_id === sid);
+      const lastExistingTs = existing.length > 0
+        ? existing[existing.length - 1].raw.ts || ''
+        : '';
+      if (obj.ts && obj.ts <= lastExistingTs) {
+        // Duplicate from replay — skip; don't render
+        return;
+      }
+      // It's a new event in a seeded session — allow it through and mark live
+      seededSessionIds.delete(sid);
+    }
     const t = classifyEvent(obj);
     liveEvents.push({ id: e.lastEventId || liveEvents.length, ts: obj.ts, eventType: t, name: eventName(obj, t), raw: obj });
     renderLiveEvents();

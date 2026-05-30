@@ -683,7 +683,7 @@ let runsLoaded = false;
 let moreOlderAvailable = true;
 
 const CRITICS = new Set(['reviewer','prd-critic','adr-critic','slicer-critic','glossary-critic','backlog-critic']);
-const GENERATORS = new Set(['slicer','implementer','qa-tester','current-state-reader']);
+const GENERATORS = new Set(['slicer','implementer','qa-tester']);
 
 function classifyEvent(obj) {
   const ev = (obj.event || '').toLowerCase();

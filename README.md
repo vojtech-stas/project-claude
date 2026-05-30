@@ -309,7 +309,6 @@ Specialist agents under `.claude/agents/`:
 
 **Generators** (output-producing agents):
 
-- **[`current-state-reader`](.claude/agents/current-state-reader.md)** — Read the materialized truth-doc for a single architectural topic and return a thin synthesis to the caller. Generic per-topic reader parametrized by a `<topic>` string (e.g., `qa-automation`, `pipeline`, `slicing`). Dispatched by the main agent — typically after the UserPromptSubmit topic-nudge hook (per ADR-0026 D4) injects an additionalContext instruction matching the prompt's keywords. The reader opens `docs/current/<topic>.md`, distills the active synthesis into ≤15 lines, and emits a canonical GENERATOR trailer per ADR-0005 D1c with per-agent extensions `TOPIC` and `SOURCES_READ`. Use this proactively whenever the user asks "what's the current state of X?" / "what's our current X architecture?" / "how does X work today?" — instead of reading source ADRs / skills / subagent bodies inline into main-agent context, dispatch this reader to keep main slim per ADR-0026 D1.
 - **[`implementer`](.claude/agents/implementer.md)** — Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
 - **[`qa-tester`](.claude/agents/qa-tester.md)** — Dual-mode executor subagent for the QA writer/executor pipeline (per ADR-0020 + ADR-0025). bash-mode (default; per ADR-0020 D3): given a structured QA-plan (Markdown table — `criterion # | bash check or "JUDGMENT" | expected result`), walks it row-by-row, runs each bash check, returns per-criterion verdict table + canonical GENERATOR trailer; mechanical execution only — no semantic judgment, no file mutation, no nested subagent dispatch. ui-mode (per ADR-0025 D1): given LLM-extracted click recipes from PRD §2, runs a Playwright MCP-driven dogfood self-test first, then drives each click recipe step (navigate/click/fill/screenshot), LLM-judges each screenshot per ADR-0025 D3 (PASS / PROVISIONAL_PASS / FAIL), aggregates per-step into per-criterion verdicts; PROVISIONAL_PASS rows auto-capture a `captured`-labeled issue per ADR-0025 D4 + CLAUDE.md rule #13. Dispatched by `/qa-plan` (writer skill in main-agent context) after the writer has classified the PRD's §2 acceptance shape and prepared a structured plan or click recipes.
 - **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce N=3 alternative vertical-slice decompositions of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs candidate decompositions for the slicer-critic to score. Output is the three decompositions side-by-side, NOT GitHub issues — posting is downstream.
@@ -321,7 +320,6 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`session-start.sh`](.claude/hooks/session-start.sh)** (`SessionStart`) — SessionStart hook — inject live workflow state per ADR-0023 D2.
 - **[`dashboard-autostart.sh`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`user-prompt-submit.sh`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
-- **[`user-prompt-submit-topic-nudge.sh`](.claude/hooks/user-prompt-submit-topic-nudge.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — topic-nudge per ADR-0026 D4.
 - **[`pre-tool-edit.sh`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash.sh`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
 - **[`FILE_PATH=$(jq -r '.tool_input.file_path' </dev/stdin); if e`](.claude/settings.json)** (`PostToolUse`) — logs agent file edits; suggests /audit-subagents on agent .md changes
@@ -354,7 +352,7 @@ Walking-skeleton phase. The pipeline is being built incrementally **on the proje
 
 [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 migration program completed steps T1–T6: atomic-notes-based KB migrated; CLAUDE.md slimmed from 988 → ~155 LoC. T7–T9 (impact-analyst, kb-maintainer, knowledge-gateway generator subagents) remain future work per parent PRD [#242](https://github.com/vojtech-stas/project-claude/issues/242).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 4 generator(s), 11 hook(s), 33 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 10 hook(s), 33 ADR(s).
 
 ## License
 

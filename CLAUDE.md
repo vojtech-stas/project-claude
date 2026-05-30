@@ -84,7 +84,6 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | Subagents | `.claude/agents/<name>.md` | `ls .claude/agents/` for the full list |
 | implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4; see [entity](docs/current/entities/subagents/implementer.md) |
 | qa-tester subagent | `.claude/agents/qa-tester.md` | dual-mode bash/ui executor of QA plans; see [entity](docs/current/entities/subagents/qa-tester.md) |
-| current-state-reader subagent | `.claude/agents/current-state-reader.md` | per-topic truth-doc reader auto-dispatched by topic-nudge hook; see [entity](docs/current/entities/subagents/current-state-reader.md) |
 | `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts; see [entity](docs/current/entities/skills/audit-subagents.md) |
 | `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit; see [entity](docs/current/entities/skills/audit-meta.md) |
 | glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX; see entities |

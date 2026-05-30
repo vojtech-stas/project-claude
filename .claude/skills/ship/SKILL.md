@@ -7,7 +7,7 @@ description: Run the autonomous pipeline from grilled context to posted PRD-and-
 
 Chains `/to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge)` so the human only needs two commands per feature: `/grill-me` to define the *what*, then `/ship` to drive it through PRD authoring, slice decomposition, per-slice implementation, and auto-merge.
 
-Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): [entities/skills/ship](../../../docs/current/entities/skills/ship.md). Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): [topics/pipeline-stages](../../../docs/current/topics/pipeline-stages.md). Vocabulary: [prd](../../../docs/current/concepts/glossary/prd.md), [slice](../../../docs/current/concepts/glossary/slice.md), [joint-approve-gate](../../../docs/current/concepts/glossary/joint-approve-gate.md), [walking-skeleton](../../../docs/current/concepts/glossary/walking-skeleton-glossary.md).
+Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): pipeline-stages (see CLAUDE.md). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
 
 ## When NOT to use this skill
 
@@ -32,7 +32,7 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
    - **5d. Forward-block** (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4). Apply `needs-human` to the failed slice; move transitive-downstream slices from `pending` → `blocked`; post one summary comment per failure event on the parent PRD (mirrors reviewer's I5 surface). **In-flight parallel siblings finish normally** — do NOT cancel. **Slices with other unmet deps proceed normally** through their natural batches; failure is locally contained to the failed slice's downstream cone.
    - **5e. Terminal-state collection.** Capture each `PR_URL` from SUCCESS slices (merged or under-review), the `blocked` set, and the snapshot of `in_flight` at the moment the FIRST failure was observed.
 
-6. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, and any forward-block summary (failed slice + downstream blocked + needs-human PRs). Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical [GENERATOR trailer](../../../docs/current/concepts/glossary/generator-trailer.md) as a fenced block (schema in [topics/output-shapes](../../../docs/current/topics/output-shapes.md)):
+6. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, and any forward-block summary (failed slice + downstream blocked + needs-human PRs). Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT
@@ -48,7 +48,7 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 
 ## References
 
-- Entity note (full role synthesis, invocation contract, edges): [entities/skills/ship](../../../docs/current/entities/skills/ship.md). Pipeline stages synthesis: [topics/pipeline-stages](../../../docs/current/topics/pipeline-stages.md).
+- Full role synthesis (invocation contract, edges): this file. Pipeline stages synthesis: pipeline-stages (see CLAUDE.md).
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (5-stage pipeline), D4 (no human gates between stages; closed end-to-end by ADR-0010), D7 (`/ship` orchestrator skill, lightweight v1), D8 (ADR placement at slice 1).
 - [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) — D2 (auto-invoke implementer), D3 (DAG-aware parallel batching), D4 (forward-block failure handling), D5 (sequential walking-skeleton baseline).
 - [ADR-0035](../../../decisions/0035-worktree-isolation-parallel-dispatch.md) — D1 (per-agent `isolation: "worktree"` for ready batches ≥ 2, eliminating the shared-worktree race); D2 (isolation lives in orchestrator; implementer unchanged).

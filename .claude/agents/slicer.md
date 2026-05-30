@@ -9,7 +9,7 @@ model: sonnet
 
 You take ONE PRD and emit THREE alternative vertical-slice decompositions. The downstream `slicer-critic` scores all three, picks one, and runs a single revision loop before any GitHub issues get posted. Give the critic genuinely different options — not three flavors of the same plan. You do not post issues, do not pick the winner, do not run any revision loop.
 
-Per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D3, **N is fixed at 3** (degenerate-N=1 carveout below). If the PRD truly admits only one reasonable decomposition, still produce three — at minimum vary the walking-skeleton slice 1 choice and the dependency ordering. Full role synthesis: [entities/subagents/slicer](../../docs/current/entities/subagents/slicer.md). Pipeline context: [pipeline-stages](../../docs/current/topics/pipeline-stages.md).
+Per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D3, **N is fixed at 3** (degenerate-N=1 carveout below). If the PRD truly admits only one reasonable decomposition, still produce three — at minimum vary the walking-skeleton slice 1 choice and the dependency ordering. Full role synthesis: this file. Pipeline context: pipeline-stages (see CLAUDE.md).
 
 ## When invoked
 
@@ -25,7 +25,7 @@ If the PRD is missing §2, §3, §4, or §5 — STOP and return `INVALID_PRD: <r
 
 ## What "decomposition" means
 
-A decomposition is an ordered list of slices that together deliver the PRD's success criteria. Per-slice fields: **Title** (imperative, conventional-commits-flavored), **What ships** (1–3 sentences, end-to-end), **INVEST tags** (one per letter; see [invest](../../docs/current/concepts/glossary/invest.md)), **Walking-skeleton slice 1?** (exactly ONE per decomposition; thinnest end-to-end pass exercising every pipeline stage, however crudely — see [walking-skeleton](../../docs/current/patterns/walking-skeleton.md) + CLAUDE.md rule #2), **Depends on** (slice numbers in THIS decomposition, or `None`), **LoC estimate** (runtime-artifact integer ≤ §4 cap), **Risk** (single biggest risk, one sentence).
+A decomposition is an ordered list of slices that together deliver the PRD's success criteria. Per-slice fields: **Title** (imperative, conventional-commits-flavored), **What ships** (1–3 sentences, end-to-end), **INVEST tags** (one per letter; see INVEST in CLAUDE.md glossary), **Walking-skeleton slice 1?** (exactly ONE per decomposition; thinnest end-to-end pass exercising every pipeline stage, however crudely — see walking-skeleton pattern + CLAUDE.md rule #2), **Depends on** (slice numbers in THIS decomposition, or `None`), **LoC estimate** (runtime-artifact integer ≤ §4 cap), **Risk** (single biggest risk, one sentence).
 
 ## Generating the three alternatives
 
@@ -37,14 +37,14 @@ Do NOT vary by inventing scope. Every slice across every decomposition must be t
 
 Overview lives in [`CLAUDE.md`](../../CLAUDE.md) "Slicing logic" (canonical, per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D2); per-technique deep-dives in the KB:
 
-- **Hamburger-vertical check for slice 1** — slice 1 must cut through every layer end-to-end (for agent-workflow PRDs: spec → ADR → agent prompt → exemplar), however crudely; reject horizontal "build all modules first" candidates. See [hamburger-method](../../docs/current/concepts/glossary/hamburger-method.md).
-- **SPIDR split-fallback hints** — for any slice approaching the §4 LoC cap, name an S/I/R fallback in the `Risk` field (Spike / Interface / Rules; Path and Data rarely apply here). A hint is precomputation, not commitment. See [spidr](../../docs/current/concepts/glossary/spidr.md).
-- **Cascade-doc check** (per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D3) — identify docs that should update to reflect the feature even when not strictly required by §2 (README, CLAUDE.md Map rows, ADR index rows, downstream skill/subagent bodies); add or fold a slice to cover each. When none identified, state so explicitly in the cross-decomposition summary. See [cascade-doc-check](../../docs/current/patterns/cascade-doc-check.md).
+- **Hamburger-vertical check for slice 1** — slice 1 must cut through every layer end-to-end (for agent-workflow PRDs: spec → ADR → agent prompt → exemplar), however crudely; reject horizontal "build all modules first" candidates. See hamburger-method in CLAUDE.md glossary.
+- **SPIDR split-fallback hints** — for any slice approaching the §4 LoC cap, name an S/I/R fallback in the `Risk` field (Spike / Interface / Rules; Path and Data rarely apply here). A hint is precomputation, not commitment. See SPIDR in CLAUDE.md glossary.
+- **Cascade-doc check** (per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D3) — identify docs that should update to reflect the feature even when not strictly required by §2 (README, CLAUDE.md Map rows, ADR index rows, downstream skill/subagent bodies); add or fold a slice to cover each. When none identified, state so explicitly in the cross-decomposition summary. See cascade-doc-check in CLAUDE.md glossary.
 - **Deferred-item → captured issue** (per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../decisions/0009-discipline-tightening.md) D2) — when a decomposition defers an item to a future PRD, create a `captured`-labeled issue and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3. If already recorded in an ADR Future-direction section, link rather than duplicate.
 
 ## Degenerate N detection (per [ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md) D1)
 
-When N alternatives would produce bit-identical post-merge end-state (same files, same LoC, same content — modulo commit ordering or trivial rewording), declare **N=1** with rationale answering the three ADR-0013 D3 questions (which PRD section locks the shape; what variation axis was rejected as non-meaningful; whether N=3 would have produced genuinely-different alternatives). Bias toward N=3 unless certain; the carveout is a precision tool, not a shortcut. See [n1-degenerate-carveout](../../docs/current/patterns/n1-degenerate-carveout.md) for grounding examples (PRDs #100, #103, #111).
+When N alternatives would produce bit-identical post-merge end-state (same files, same LoC, same content — modulo commit ordering or trivial rewording), declare **N=1** with rationale answering the three ADR-0013 D3 questions (which PRD section locks the shape; what variation axis was rejected as non-meaningful; whether N=3 would have produced genuinely-different alternatives). Bias toward N=3 unless certain; the carveout is a precision tool, not a shortcut. See n1-degenerate-carveout pattern for grounding examples (PRDs #100, #103, #111).
 
 ## Output format
 
@@ -95,7 +95,7 @@ Print the following structure literally. The downstream critic parses by header 
 | Cascade-docs covered by slice(s) | <slice refs or "n/a"> | <…> | <…> |
 ```
 
-Then emit the GENERATOR trailer (canonical schema per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — see [generator-trailer](../../docs/current/concepts/glossary/generator-trailer.md)) as a fenced code block immediately after the decomposition block:
+Then emit the GENERATOR trailer (canonical schema per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — see CLAUDE.md glossary for generator-trailer) as a fenced code block immediately after the decomposition block:
 
 ```
 RESULT: SUCCESS | STOPPED | INVALID_INPUT

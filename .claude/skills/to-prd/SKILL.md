@@ -7,7 +7,7 @@ description: Turn the current conversation context into a PRD and publish it to 
 
 Synthesizes the current conversation (typically a recently-settled `/grill-me` session) into a PRD using the **6-section template** defined below, optionally drafts a macro-ADR alongside, runs `prd-critic` (+ `adr-critic` in parallel under a shared round counter when an ADR is drafted) in a ≤3-round APPROVE/BLOCK loop, and publishes via `gh issue create` only on joint-APPROVE. Synthesis only — does NOT interview the user (that's `/grill-me`).
 
-Full role synthesis (joint-APPROVE gate rationale, shared-counter invariant, downstream consumers): [entities/skills/to-prd](../../../docs/current/entities/skills/to-prd.md). Pipeline context: [topics/pipeline-stages](../../../docs/current/topics/pipeline-stages.md). Vocabulary: [prd](../../../docs/current/concepts/glossary/prd.md), [adr](../../../docs/current/concepts/glossary/adr.md), [joint-approve-gate](../../../docs/current/concepts/glossary/joint-approve-gate.md).
+Full role synthesis (joint-APPROVE gate rationale, shared-counter invariant, downstream consumers): this file. Pipeline context: pipeline-stages (see CLAUDE.md). Vocabulary: prd, adr, joint-approve-gate (see CLAUDE.md glossary).
 
 ## Process
 
@@ -66,7 +66,7 @@ Two sub-sections:
 
 ## Rubric self-check (before invoking the critic[s])
 
-Run a quick self-pass against the critics' rubrics to shorten the loop: [`prd-critic`](../../agents/prd-critic.md) (all PRDs) + [`adr-critic`](../../agents/adr-critic.md) (only when a macro-ADR was drafted in step 2). The critics enforce the same checks; this is just pre-emptive hygiene. Both rubrics live in the respective agent files and at [entities/subagents/prd-critic](../../../docs/current/entities/subagents/prd-critic.md) + [entities/subagents/adr-critic](../../../docs/current/entities/subagents/adr-critic.md).
+Run a quick self-pass against the critics' rubrics to shorten the loop: [`prd-critic`](../../agents/prd-critic.md) (all PRDs) + [`adr-critic`](../../agents/adr-critic.md) (only when a macro-ADR was drafted in step 2). The critics enforce the same checks; this is just pre-emptive hygiene. Both rubrics live in the respective agent files.
 
 ## What this skill deliberately does NOT do
 
@@ -78,7 +78,7 @@ Run a quick self-pass against the critics' rubrics to shorten the loop: [`prd-cr
 
 ## References
 
-- Entity note (full role synthesis, invocation contract, edges): [entities/skills/to-prd](../../../docs/current/entities/skills/to-prd.md).
+- Full role synthesis (invocation contract, edges): this file.
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (critic loop pattern), D6 (skill vs subagent), D8 (ADR placement — macro-ADRs drafted alongside the PRD; this is what makes the dual-critic dance necessary).
 - [ADR-0004](../../../decisions/0004-bypass-prevention.md) — D1 (adr-critic exists; mirror of prd-critic's contract); D2 (bootstrap-mode policy).
 - [`.claude/agents/prd-critic.md`](../../agents/prd-critic.md), [`.claude/agents/adr-critic.md`](../../agents/adr-critic.md) — the critics this skill invokes.

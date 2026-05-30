@@ -87,7 +87,6 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | current-state-reader subagent | `.claude/agents/current-state-reader.md` | per-topic truth-doc reader auto-dispatched by topic-nudge hook; see [entity](docs/current/entities/subagents/current-state-reader.md) |
 | `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts; see [entity](docs/current/entities/skills/audit-subagents.md) |
 | `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit; see [entity](docs/current/entities/skills/audit-meta.md) |
-| best-practice-* skills | `.claude/skills/best-practice-{workflow,hooks,subagents}/SKILL.md` | docs-first on-demand topic guidance; see entities under `docs/current/entities/skills/best-practice-*.md` |
 | glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX; see entities |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 | Cascade-aware deps | `tools/cascade-finder.py` | advisory tool for cascade-aware workflow; see [tools/README.md](tools/README.md) |
@@ -96,7 +95,6 @@ Full descriptions live in entity notes under `docs/current/entities/{skills,suba
 | Pre-commit hooks | `.githooks/pre-commit`, `.githooks/install.sh` | workflow enforcement |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | immutable; supersede rather than edit |
 | Knowledge base | `docs/current/`, `docs/raw/` | compiled atomic notes + topic syntheses per [ADR-0031](decisions/0031-knowledge-architecture-v2.md); see KB schema below |
-| Best-practices KB (videos) | `docs/best-practices/<slug>-<video-id>.md` | per [ADR-0019](decisions/0019-best-practices-kb-pattern.md); raw transcripts under `transcripts/<video-id>.vtt` |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | current PRDs live on GitHub Issues per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1 |
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog (forward queue) | `gh issue list --label backlog` + Backlog column on project board #2 | curated by `backlog-critic` |

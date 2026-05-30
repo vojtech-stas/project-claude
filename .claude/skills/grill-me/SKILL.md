@@ -5,9 +5,16 @@ description: Interview the user relentlessly about a plan or design until reachi
 
 Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
-Ask the questions one at a time.
+## How to ask each question (clickable options)
 
-If a question can be answered by exploring the codebase, explore the codebase instead.
+Use the **AskUserQuestion** tool for every decision point so the options are clickable. For each question:
+
+1. **Number the question** — put `Q<n> — <topic>` in the `header` (e.g., `Q3 — Auth method`). Keep numbering stable so I can refer to a choice as `<question><option>` shorthand (e.g., "3B", "4C").
+2. **Give 2–4 options, sorted BEST → LEAST-preferable** (most-recommended option first). The tool labels them A/B/C/D in order.
+3. **Mark the top option `(Recommended)`** in its `label`.
+4. **Each option's `description` states its PRO and its CON** (and the key trade-off vs the alternatives) so I can compare at a glance — not just what the option is.
+5. Resolve one decision (or a small batch of tightly-related decisions) per `AskUserQuestion` call; walk the dependency tree so my earlier answers constrain the later questions.
+6. Always include your own recommendation and the reasoning; if a question can be answered by exploring the codebase, explore the codebase instead of asking.
 
 ## Optional doc-path argument (per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D6)
 

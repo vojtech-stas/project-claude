@@ -68,7 +68,7 @@ If the issue number is missing, return `INVALID_INPUT: no issue number supplied`
 
 ## References
 
-- Entity note (full role synthesis, single-fire rationale, edges): [entities/skills/promote-to-backlog](../../../docs/current/entities/skills/promote-to-backlog.md).
+- Full role synthesis (single-fire rationale, edges): this file.
 - [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) — D1 (two-tier architecture); D2 (autopilot semantics this skill implements); D3 (inline-firing convention); D4 (rubric the critic enforces); D8 (bootstrap-mode acknowledgment).
 - [`.claude/agents/backlog-critic.md`](../../agents/backlog-critic.md) — the critic this skill invokes.
 - [`.claude/skills/glossary-add/SKILL.md`](../glossary-add/SKILL.md) — sibling autopilot skill (interactive single-term flow that also invokes a critic before publishing); diverges in interactivity and PR-vs-label-swap shape but shares the critic-invocation pattern.

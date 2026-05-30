@@ -95,5 +95,5 @@ BLOCKED_SLICES: <from /ship's trailer; empty if none>
 - Sub-skills this skill chains: [`.claude/skills/grill-me/SKILL.md`](../grill-me/SKILL.md), [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md), [`.claude/skills/qa-plan/SKILL.md`](../qa-plan/SKILL.md)
 - Dashboard autostart hook: [`.claude/hooks/dashboard-autostart.sh`](../../hooks/dashboard-autostart.sh) (ships PRD #345 slice 2, PR #350)
 - Doc-generator: `dashboard/server.py --generate-readme` (ships PRD #348 slice 1, i.e., slice #361)
-- Output-shape standard (GENERATOR trailer schema): [docs/current/topics/output-shapes.md](../../../docs/current/topics/output-shapes.md)
-- Entity note (full role synthesis): [docs/current/entities/skills/ship.md](../../../docs/current/entities/skills/ship.md) (closest prior art; `/build` entity note is a cascade-doc addition for a future slice)
+- Output-shape standard (GENERATOR trailer schema): per ADR-0005 D1c
+- Full role synthesis lives in this file

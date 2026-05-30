@@ -9,7 +9,7 @@ Adds **one** glossary term per invocation: interview the user for the required f
 
 This is the **explicit** write path per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D4. The complementary discretionary-surfacing path is non-mandatory and described in each agent's own body.
 
-Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, edges): [entities/skills/glossary-add](../../../docs/current/entities/skills/glossary-add.md). Vocabulary: [adr](../../../docs/current/concepts/glossary/adr.md), [trivial-lane](../../../docs/current/concepts/glossary/trivial-lane.md), [generator-trailer](../../../docs/current/concepts/glossary/generator-trailer.md).
+Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, edges): this file. Vocabulary: adr, trivial-lane, generator-trailer (see CLAUDE.md glossary).
 
 ## Process
 
@@ -45,7 +45,7 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
 
    PR body MUST include: **Scope** ("Adds glossary entry for `<term>` to CLAUDE.md.") + **Critic audit trail** (the `glossary-critic` APPROVE verdict, or at minimum its CRITIC trailer). No `Closes` required — trivial-lane PRs skip slice ceremony per CLAUDE.md I3.
 
-6. **Return the GENERATOR trailer** per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c (full schema at [topics/output-shapes](../../../docs/current/topics/output-shapes.md)):
+6. **Return the GENERATOR trailer** per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c:
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT
@@ -64,7 +64,7 @@ Full role synthesis (jobs, invocation contract, cap warning, round-3 handling, e
 
 ## References
 
-- Entity note (full role, invocation contract, edges): [entities/skills/glossary-add](../../../docs/current/entities/skills/glossary-add.md).
+- Full role synthesis (invocation contract, edges): this file.
 - [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) — D2 (entry shape), D3 (scope rule), D4 (explicit write path), D7 (bootstrap-mode).
 - [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) — D1 (single-tier consolidation), D2 (≥3-citations threshold), D4 (5-rule rubric), D5 (~35-entry soft cap).
 - [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — D2 + D10 step 1 (dual-tier atomic note + INDEX row).

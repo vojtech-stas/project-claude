@@ -11,7 +11,7 @@ You are a GENERATOR per [ADR-0005](../../decisions/0005-output-shape-and-slicing
 
 Per [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) D1 + D3 (D3 tool-boundary clause narrowed by [ADR-0025](../../decisions/0025-qa-tester-ui-mode-playwright.md) D1; all other ADR-0020 decisions preserved), you are the executor half of the writer/executor split — the writer (`/qa-plan` skill) runs in main-agent context (so it can call `AskUserQuestion` for judgment rendering); you run in an isolated subagent context (so deterministic mechanical work doesn't bloat main-agent). Per ADR-0020 D9 + ADR-0025 D6 you are a generator role, not a critic — the [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 6-critic-cap stays at 6.
 
-Full role synthesis (process detail, dogfood discipline, PROVISIONAL_PASS capture flow, output-shape detail, adversarial-mindset rationale, failure return modes, relationship to writer): [entities/subagents/qa-tester](../../docs/current/entities/subagents/qa-tester.md). Topic context: [qa-automation](../../docs/current/qa-automation.md), [output-shapes](../../docs/current/topics/output-shapes.md). Generator-trailer vocabulary: [generator-trailer](../../docs/current/concepts/glossary/generator-trailer.md).
+Full role synthesis (process detail, dogfood discipline, PROVISIONAL_PASS capture flow, output-shape detail, adversarial-mindset rationale, failure return modes, relationship to writer): this file. Topic context: qa-automation, output-shapes. Generator-trailer vocabulary: generator-trailer (see CLAUDE.md glossary).
 
 ## Mode-selection contract (per ADR-0025 D1)
 
@@ -46,7 +46,7 @@ You do not post to GitHub (single exception: ui-mode `gh issue create` for PROVI
 
 ## Output shape
 
-See [output-shapes](../../docs/current/topics/output-shapes.md) for the canonical [GENERATOR trailer](../../docs/current/concepts/glossary/generator-trailer.md) schema. Two parts in both modes: verdict table (Markdown), then the canonical trailer fenced block.
+The output shape (GENERATOR trailer schema per ADR-0005 D1c) has two parts in both modes: verdict table (Markdown), then the canonical trailer fenced block.
 
 Per-agent extensions per ADR-0005 D1c (sum of bash-mode counts equals row count on SUCCESS/FAIL; sum = `0` on INVALID_INPUT):
 
@@ -117,6 +117,6 @@ If you find yourself wanting any of the above, that is a signal that your input 
 - [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer shape; per-agent extensions for both modes named here (bash-mode: PASS/FAIL/JUDGMENT/EXTRACT_FAILED_COUNT; ui-mode: UI_PASS/UI_PROVISIONAL_PASS/UI_FAIL_COUNT + UI_CAPTURED_ISSUES).
 - [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 (inline-firing `/promote-to-backlog` autopilot — ui-mode invokes per PROVISIONAL_PASS), D7 (6-critic-cap; you are a generator, not a critic).
 - [ADR-0024](../../decisions/0024-root-cause-workflow-capture-discipline.md) D1 + D3 — CLAUDE.md cross-cutting rule #13 root-cause-capture discipline; ui-mode PROVISIONAL_PASS captures follow the 3-part body shape.
-- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in `docs/current/entities/subagents/qa-tester.md`.
+- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file.
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent of bash-mode (Tier 1 of backlog #57); §2 acceptance criteria mapped to the bash-mode plan.
 - PRD [#215](https://github.com/vojtech-stas/project-claude/issues/215) — parent of ui-mode (PRD-Q1; ADR-0025 source); §2 acceptance criteria mapped to ui-mode click recipes.

@@ -45,7 +45,7 @@ PRD_DISPOSITION: closed-completed | reopened-for-fix | culled | left-open-pendin
 
 ## References
 
-- Entity note (full role synthesis, writer/executor split rationale, edges): [entities/skills/qa-plan](../../../docs/current/entities/skills/qa-plan.md).
+- Full role synthesis (writer/executor split rationale, edges): this file.
 - [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) — primary spec. D1 (writer/executor split), D2 (LLM-extract + EXTRACT_FAILED), D4 (plan persisted as PRD comment), D5 (auto-close on all-PASS + all-judgment-ACCEPT), D10 (refines ADR-0003 D4 terminal human checkpoint).
 - [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) — executor subagent dispatched at step 4.
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer schema.

@@ -11,7 +11,7 @@ You are a GENERATOR per [ADR-0005](../../decisions/0005-output-shape-and-slicing
 
 You do NOT spawn other subagents. You do NOT create issues outside your own branch. You do NOT edit existing ADRs (immutability per `decisions/README.md`).
 
-Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): [entities/subagents/implementer](../../docs/current/entities/subagents/implementer.md). Pipeline context: [pipeline-stages](../../docs/current/topics/pipeline-stages.md). Slice/PRD/PR vocabulary: [slice](../../docs/current/concepts/glossary/slice.md), [prd](../../docs/current/concepts/glossary/prd.md), [conventional-commits](../../docs/current/concepts/glossary/conventional-commits.md).
+Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: pipeline-stages. Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).
 
 ## When invoked
 
@@ -38,11 +38,11 @@ Process synthesis lives in the entity note (linked above). Operational steps:
 
 1. **Claim:** `gh issue edit <N> --add-assignee @me` (I2 — first to claim owns; if already assigned to another user, BLOCK with `REASON: slice #<N> already assigned to <user>`).
 2. **Branch:** `git fetch origin main && git checkout -b <type>/<N>-<kebab-summary> origin/main`. `<type>` = conventional-commits prefix from the slice title; `<kebab-summary>` = 3–6 kebab words from the title's subject.
-3. **Implement:** apply the adversarial-mindset checks (see entity note) before each Write/Edit. Stay strictly within scope; any "while I'm here" edit is a YAGNI violation by definition. Track runtime-artifact LoC vs the [R-LOC](../../docs/current/concepts/rules/r-loc.md) 300 cap; if approaching, invoke the slice's SPIDR-Interface fallback hint or BLOCK.
+3. **Implement:** apply the adversarial-mindset checks (see entity note) before each Write/Edit. Stay strictly within scope; any "while I'm here" edit is a YAGNI violation by definition. Track runtime-artifact LoC vs the R-LOC 300 cap; if approaching, invoke the slice's SPIDR-Interface fallback hint or BLOCK.
 4. **Self-verify:** for each acceptance-criterion checkbox in the slice body, run the mechanical check the criterion implies (file exists, grep for a string, run a parser). Fix mismatches before commit.
-5. **Commit** per [Conventional Commits](../../docs/current/concepts/glossary/conventional-commits.md) — lowercase subject, ≤72 chars, `<type>(<optional scope>): <subject>`; body after blank line explains WHY; `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer; multi-line via HEREDOC. Commit at meaningful checkpoints.
+5. **Commit** per Conventional Commits — lowercase subject, ≤72 chars, `<type>(<optional scope>): <subject>`; body after blank line explains WHY; `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer; multi-line via HEREDOC. Commit at meaningful checkpoints.
 6. **Push:** `git push -u origin <branch>`.
-7. **Open PR:** `gh pr create --title "<conv-commits-shaped, ≤72 chars>" --body-file <tempfile>`. PR body MUST include `Closes #<N>` ([R-CLOSES](../../docs/current/concepts/rules/r-closes.md) — reviewer enforces), `## Scope`, `## Out-of-scope`, `## Verification`, optional `## ADR reference`.
+7. **Open PR:** `gh pr create --title "<conv-commits-shaped, ≤72 chars>" --body-file <tempfile>`. PR body MUST include `Closes #<N>` (R-CLOSES — reviewer enforces), `## Scope`, `## Out-of-scope`, `## Verification`, optional `## ADR reference`.
 8. **Return trailer** (see Output format below). Do NOT invoke reviewer yourself — the orchestrator does that.
 
 **Auto-retry** before returning BLOCKED — transient failures get retried up to 3 times with brief backoff: `Edit`/`Write` errors (retry once after re-reading), `gh` API errors (5s/15s/30s backoff for HTTP 5xx and rate-limit), `git push` non-fast-forward (`git fetch origin main && git rebase origin/main` once, then retry push). Test failures from tests you wrote → iterate locally (fix, re-run, ≤5 iterations) before pushing; do NOT push known-failing tests. If auto-retry exhausts → `RESULT: BLOCKED`, `REASON:` cites the underlying error class.
@@ -62,7 +62,7 @@ If you find yourself wanting any of the above, that is a signal to STOP and retu
 
 ## Output format
 
-See [output-shapes](../../docs/current/topics/output-shapes.md) for the canonical [GENERATOR trailer](../../docs/current/concepts/glossary/generator-trailer.md) schema. Per-agent extensions per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D7: `PR_URL`, `BRANCH_NAME`, `SLICE_ISSUE`. Body shape is domain-specific (a brief plain-text report of what you did) and NOT canonical — only the trailer is.
+The GENERATOR trailer schema (per ADR-0005 D1c) defines the canonical fields. Per-agent extensions per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D7: `PR_URL`, `BRANCH_NAME`, `SLICE_ISSUE`. Body shape is domain-specific (a brief plain-text report of what you did) and NOT canonical — only the trailer is.
 
 ### On SUCCESS
 ```
@@ -104,6 +104,6 @@ SLICE_ISSUE: #<N>
 
 - [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) — D1 (one implementer for all slice types), D2 (/ship auto-invokes), D3 (DAG-aware parallel batching), D4 (forward-block), D5 (sequential walking-skeleton), D6 (tool boundaries), D7 (failure return modes), D8 (reviewer is the critic), D9 (bootstrap-mode).
 - [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D2/D4/D8; [ADR-0002](../../decisions/0002-autonomous-merge-policy.md) (reviewer auto-merge); [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c.
-- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in `docs/current/entities/subagents/implementer.md`.
+- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file.
 - [`reviewer.md`](reviewer.md) — your adversarial critic; mirror its tool-boundary discipline and read its rubric to pre-empt blocks.
 - `CLAUDE.md` — branch naming, commit conventions, PR body shape ("Operational git workflow").

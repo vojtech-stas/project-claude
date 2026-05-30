@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED from docs/readme.template.md — edit the template, run the generator. -->
+<!-- AUTO-GENERATED from README.template.md — edit the template, run the generator. -->
 # project-claude
 
 A clone-as-template starter for AI-coded projects, replicating the workflow of a **senior engineer overseeing a small team of developers** — but with AI agents instead of humans. Built on 20-year-old software engineering practices (small slices, fast feedback, git-tracked changes, PR review, scope discipline) and heavy borrowing from [Matt Pocock's skills repo](https://github.com/mattpocock/skills).
@@ -73,7 +73,6 @@ One-line definitions of the load-bearing terms. For the full canonical glossary 
 - **generator** — subagent producing output (decompositions, code, test plans); paired with a critic.
 - **autopilot** — inline-firing mechanism (e.g., `/promote-to-backlog` after a captured-label issue).
 - **trivial-lane** — fast path (I3) for PRs ≤10 LoC; branch `hotfix/<N>-...`, label `trivial`.
-- **truth-doc** — active-state KB notes under `docs/current/` (5-node taxonomy: concepts / entities / topics / patterns + `decisions/` alias) per [ADR-0031](decisions/0031-knowledge-architecture-v2.md); read via `current-state-reader`.
 
 ## Frequently asked questions
 
@@ -93,10 +92,6 @@ You can't via the pipeline. The joint-APPROVE gate ([ADR-0004](decisions/0004-by
 
 Author `.claude/agents/<name>.md` per [ADR-0001](decisions/0001-foundational-design.md) D6; declare tool boundaries in the frontmatter; write the body per the standards in [`/best-practice-subagents`](.claude/skills/best-practice-subagents/SKILL.md). If your new subagent is a critic, honor the 6-critic-cap meta-rule ([ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7) — a new ADR must justify why an existing critic's rubric can't absorb the concern.
 
-### How do I keep up with what's true today?
-
-Per [ADR-0031](decisions/0031-knowledge-architecture-v2.md), `docs/current/` holds a compiled knowledge base organized by 5-node taxonomy (concepts / entities / topics / patterns + `decisions/` alias) with typed edges. Topic files synthesize active state across the ADR + skill + subagent chain for a given topic (slicing, output-shape, hooks, etc.); concept files are atomic (glossary terms, rubric rules); entity files describe named artifacts (skills, subagents). Agents auto-load the relevant file via the [`current-state-reader`](.claude/agents/current-state-reader.md) subagent, dispatched by the topic-nudge `UserPromptSubmit` hook ([ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4) when your prompt mentions a covered topic. For the `current-state-reader` extension see [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D6. Humans read them directly under `docs/current/topics/`, `docs/current/concepts/`, etc. The reviewer rule **R-TRUTH-DOC** enforces that any new or amended ADR ships an accompanying truth-doc update in the same PR.
-
 ### Why so many ADRs?
 
 Each ADR is one architectural decision frozen at its moment per [`decisions/README.md`](decisions/README.md) "What an ADR is". The count reflects the template's walking-skeleton evolution — superseded decisions live on for audit + history, never edited in place. If you fork the template and decide differently for your project, you write new ADRs; the originals remain as the historical record.
@@ -107,7 +102,7 @@ The reviewer applies `needs-human` on round-3 BLOCK ([ADR-0003](decisions/0003-a
 
 ## Pipeline diagram
 
-The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot, and the topic-nudge `UserPromptSubmit` hook that dispatches `current-state-reader` per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4) live in their own subgraph or fire transparently around the main pipeline.
+The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary-add`, captured→backlog autopilot) live in their own subgraph or fire transparently around the main pipeline.
 
 ```mermaid
 flowchart TD
@@ -221,7 +216,7 @@ The pipeline is complemented at the Claude Code session level by **hooks** ([`.c
 2. **PreToolUse rule-#10 escalation** — `PreToolUse(Edit|MultiEdit|Write)` emits `permissionDecision: "ask"` when the main agent (not a subagent) writes a tracked file; preserves trivial-lane I3 ergonomics over hard-deny.
 3. **PreToolUse dangerous-git deny** — `PreToolUse(Bash)` emits `permissionDecision: "deny"` on `git push ... origin main` (any flavor), mechanically enforcing rule #4.
 4. **UserPromptSubmit grill-suggestion** — feature-request-shaped prompts get a non-blocking nudge toward `/grill-me` before `/ship` if the prompt does not already invoke a pipeline command.
-5. **UserPromptSubmit topic-nudge** — per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4, prompts mentioning a covered topic (slicing, output-shape, hooks, etc.) trigger an `additionalContext` nudge dispatching the [`current-state-reader`](.claude/agents/current-state-reader.md) subagent to load the relevant KB note under `docs/current/` (5-node taxonomy per [ADR-0031](decisions/0031-knowledge-architecture-v2.md)); closes the "stale via memory" drift loop without manual lookup.
+5. **UserPromptSubmit topic-nudge** — per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4, prompts mentioning a covered topic (slicing, output-shape, hooks, etc.) trigger an `additionalContext` nudge; the hook script `user-prompt-submit-topic-nudge.sh` fires inline to provide current-state context.
 6. **Stop reviewer-signoff gate** — [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md) `stop-reviewer-gate.sh`: blocks session-stop if any in-flight PR lacks a reviewer `APPROVE` comment; `STOP_GATE_BYPASS=1` env-var override.
 
 **Recent hook wave (ADR-0028–ADR-0030):**
@@ -234,7 +229,7 @@ The pipeline is complemented at the Claude Code session level by **hooks** ([`.c
 
 ## Output-shape standard
 
-The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform to a canonical output shape. After T3 + T6 per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2, the canonical home is [`docs/current/topics/output-shapes.md`](docs/current/topics/output-shapes.md) — see that file for the verdict template and the CRITIC / GENERATOR trailer schemas. Templates are not restated here (DRY per [CLAUDE.md](CLAUDE.md) rule #9). Rationale lives in [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1.
+The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform to a canonical output shape. The canonical verdict template and the CRITIC / GENERATOR trailer schemas are defined in [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in the subagent/skill prompts themselves (DRY per [CLAUDE.md](CLAUDE.md) rule #9).
 
 ## Use it
 
@@ -251,23 +246,12 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 
 ## What's inside
 
-- **[CLAUDE.md](CLAUDE.md)** — auto-loaded operating system; ~155 LoC after the T6 slim per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 step 6. Canonical home for cross-cutting rules + Map + Glossary INDEX. Slicing methodology, output-shape standard, and pipeline operational logic now live under `docs/current/topics/` per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D2.
+- **[CLAUDE.md](CLAUDE.md)** — auto-loaded operating system; canonical home for cross-cutting rules + Map + Glossary INDEX.
 - **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
 - **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
-- **[`docs/current/`](docs/current/)** — compiled knowledge base per [ADR-0031](decisions/0031-knowledge-architecture-v2.md): 5-node taxonomy (`concepts/` / `entities/` / `topics/` / `patterns/` + `decisions/` alias) with typed edges in `**EdgeType:** [[path]]` syntax. Topics are synthesis pages; concepts are atomic ideas (glossary terms, rubric rules); entities describe named artifacts (skills, subagents); patterns are reusable techniques. Agents auto-load via the [`current-state-reader`](.claude/agents/current-state-reader.md) subagent, dispatched by the `UserPromptSubmit` **topic-nudge** hook per [ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D4. Operating manual: [`docs/current/topics/kb-schema.md`](docs/current/topics/kb-schema.md). The reviewer rule **R-TRUTH-DOC** enforces that any new or amended ADR ships an accompanying truth-doc update in the same PR ([ADR-0026](decisions/0026-knowledge-architecture-truth-docs.md) D5, preserved per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D16).
-- **[`docs/raw/`](docs/raw/)** — immutable source material per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D1 (Karpathy compiler pattern); transcripts and external scrapes that `docs/current/` synthesizes from.
 
-### Knowledge base
+All operational content lives in skills + subagents + CLAUDE.md + ADRs; no separate KB layer per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-Per [ADR-0031](decisions/0031-knowledge-architecture-v2.md), KB content is split:
-
-- **`docs/raw/`** — immutable source material (transcripts, scrapes); never edited.
-- **`docs/current/`** — compiled wiki of atomic notes; 5 node types under subdirs (`concepts/`, `entities/`, `topics/`, `patterns/`) + ADRs aliased as decisions; typed edges as `**EdgeType:** [[path]]`.
-- **`CLAUDE.md`** — agent operating system (~155 LoC); cross-cutting rules + Map + Glossary INDEX.
-
-Operating manual: [`docs/current/topics/kb-schema.md`](docs/current/topics/kb-schema.md). Agents auto-dispatch [`current-state-reader`](.claude/agents/current-state-reader.md) via the topic-nudge `UserPromptSubmit` hook per [ADR-0031](decisions/0031-knowledge-architecture-v2.md) D6.
-
-- **[`docs/best-practices/`](docs/best-practices/)** — distilled best-practices KB from Anthropic-authoritative external sources (currently `@claude` + `@anthropic-ai` YouTube channels, demoted to Tier-3 supplementary per [ADR-0022](decisions/0022-docs-first-kb-pattern.md) D2) per [ADR-0019](decisions/0019-best-practices-kb-pattern.md) D1+D2 (D3 yt-dlp bits surgically superseded by ADR-0022 D11). Add new video entries via [`/distill-video <youtube-video-id>`](.claude/skills/distill-video/SKILL.md); raw `.vtt` transcripts live under `transcripts/` for audit + re-distillation. **Tier-1 on-demand best-practice skills** live separately under `.claude/skills/best-practice-<topic>/SKILL.md` per ADR-0022 D3 — the first one shipped is [`/best-practice-workflow`](.claude/skills/best-practice-workflow/SKILL.md) (workflow questions: slash-commands, skill activation, settings hierarchy, sub-agent-vs-skill choice). Sibling skills for `subagents`/`hooks`/`claude-md-conventions`/`prompt-patterns` topics ship as future PRDs per ADR-0022 D8.
 - **[`bootstrap.sh`](bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
@@ -348,9 +332,7 @@ To add a term, run **`/glossary-add`** — it interviews you for the entry shape
 
 ## Status
 
-Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance.
-
-[ADR-0031](decisions/0031-knowledge-architecture-v2.md) D10 migration program completed steps T1–T6: atomic-notes-based KB migrated; CLAUDE.md slimmed from 988 → ~155 LoC. T7–T9 (impact-analyst, kb-maintainer, knowledge-gateway generator subagents) remain future work per parent PRD [#242](https://github.com/vojtech-stas/project-claude/issues/242).
+Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
 > **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 10 hook(s), 34 ADR(s).
 

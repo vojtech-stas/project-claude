@@ -128,17 +128,17 @@ No proposed edits to existing ADR files.
 
 ---
 
-## Additional responsibility — flag affected truth-doc topics (non-blocking)
+## Additional responsibility — flag affected topics (non-blocking)
 
-When auditing a draft ADR that cites or extends prior ADRs whose topics already have a materialized truth-doc at `docs/current/<topic>.md`, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer knows which truth-doc(s) to regenerate or amend alongside the ADR per ADR-0026 D2. The reviewer's R-TRUTH-DOC rule mechanically enforces the requirement at PR review time; your flagging makes the topic candidate set visible at ADR-draft time.
+When auditing a draft ADR that cites or extends prior ADRs, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer is aware of potential cascade-doc implications. Per [ADR-0032](../../decisions/0032-workflow-only-architecture.md), the separate KB layer no longer exists and R-TRUTH-DOC is retired. ADR-0026 topic-flagging responsibility remains as a non-blocking advisory only.
 
-**How to check:** parse the draft for `ADR-NNNN` references; read `.claude/topics.json` (keyword→topic mapping per ADR-0026 D4); for each topic with an existing `docs/current/<topic>.md`, check whether any cited ADR appears as a source. Soft-degrade if either is absent (pre-ADR-0026-merge bootstrap state or topic not yet backfilled). Tool budget: 1-2 `Read` calls; honors the read-only critic contract.
+**How to check:** parse the draft for `ADR-NNNN` references; consider which topics in CLAUDE.md/subagent prompts the new ADR would affect. Tool budget: 1-2 `Read` calls; honors the read-only critic contract.
 
 ---
 
 ## Output format
 
-See `docs/current/topics/output-shapes.md` for the canonical verdict template + CRITIC trailer field schema. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
+The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
 
 Post your verdict either:
 - as a comment on the ADR-tracking issue (if one exists) via `gh issue comment <N> --body-file <tempfile>`, OR
@@ -191,5 +191,5 @@ This subagent ships in slice 2 of PRD-B per ADR-0004 D2's bootstrap-mode policy.
 - ADR-0005 D1 (5-section verdict template + CRITIC trailer schema)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
 - ADR-0026 D2 (truth-doc flagging) + D4 (topics.json) + D5 (R-TRUTH-DOC enforcement)
-- ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; full role synthesis in `docs/current/entities/subagents/adr-critic.md` (until slice 7 removes docs/).
+- ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; KB layer retired per ADR-0032.
 - `.claude/skills/to-prd/SKILL.md` — primary caller via joint-APPROVE gate with `prd-critic`.

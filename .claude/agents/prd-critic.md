@@ -143,7 +143,7 @@ The PRD must not contradict any accepted ADR. If a PRD references `ADR-XXXX` and
 
 ## Output format
 
-See `docs/current/topics/output-shapes.md` for the canonical verdict template + CRITIC trailer field schema. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
+The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
 
 Post your verdict either:
 - as a comment on the PRD issue via `gh issue comment` if the PRD is already posted, OR
@@ -185,5 +185,5 @@ You may NOT:
 - ADR-0004 D1 (joint critic gate with adr-critic)
 - ADR-0005 D1 (5-section verdict template + CRITIC trailer schema)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
-- ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; full role synthesis in `docs/current/entities/subagents/prd-critic.md` (until slice 7 removes docs/).
+- ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; KB layer retired per ADR-0032.
 - `.claude/skills/to-prd/SKILL.md` — calls this subagent

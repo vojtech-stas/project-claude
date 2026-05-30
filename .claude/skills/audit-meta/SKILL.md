@@ -147,14 +147,11 @@ grep -rlF "GLOSSARY.md" --include="*.md" . \
   | grep -v "^\./tool-results/" \
   | grep -vE "^\./decisions/" \
   | grep -vF "./.claude/skills/audit-meta/SKILL.md" \
-  | grep -vF "./.claude/skills/grill-me/SKILL.md" \
-  | grep -vF "./docs/current/concepts/rules/am-docs-literal-drift.md" \
-  | grep -vF "./docs/current/entities/skills/audit-meta.md" \
-  | grep -vF "./docs/current/topics/knowledge-architecture.md"
+  | grep -vF "./.claude/skills/grill-me/SKILL.md"
 ```
 Empty → PASS; non-empty → FAIL with file list.
 
-**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Five files legitimately reference it (this skill body, the rule atomic note, the entity note, the knowledge-architecture topic synthesis, and `grill-me/SKILL.md`); all 5 are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per ADR-0001 D8).
+**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Two files legitimately reference it (this skill body and `grill-me/SKILL.md`); both are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per ADR-0001 D8). (Previously 5 allowlisted files; 3 KB-layer entries removed per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) D1.)
 
 ### DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves
 

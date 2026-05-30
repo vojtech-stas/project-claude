@@ -137,6 +137,8 @@ Output empty → PASS; any output → FAIL with offending lines.
 
 **Rationale:** [ADR-0013](../../../decisions/0013-slicer-n3-contract-refined.md) refined the slicer's N-decompositions contract; PR #125 fixed README but the literal could regress. DOCS-5 ensures it stays gone. The ±2-line ADR-0013 proximity check allows the legitimate citation `(N=3 or N=1 decompositions per ADR-0013)` that explicitly references the ADR as context. Scoped to README.md only (the file that historically carried the wrong literal).
 
+**Generated-region exemption (per [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md)):** The `{{GENERATED:*}}` regions of README.md are machine-produced by `dashboard/server.py --generate-readme` and may legitimately contain `N=3` in auto-generated agent-description text (e.g., the `slicer` / `slicer-critic` component descriptions). The ADR-0013-adjacency check applies only to hand-written static template prose in `README.template.md`; generated regions are exempt. Practically: when DOCS-5 fires on a README.md hit, verify whether the offending line falls within a `{{GENERATED:*}}` region; if so, mark PASS (generated) rather than FAIL.
+
 ### DOCS-6 — no `GLOSSARY.md` references in `*.md` files outside the known-legitimate allowlist
 
 **Mechanic:**
@@ -185,6 +187,8 @@ Empty → PASS; non-empty → FAIL with file list.
 **Mechanic:** `grep -rE '(`backlog`-labeled|--label backlog)' .claude/agents .claude/skills` → empty → PASS; non-empty → FAIL with file:line list, excluding:
 - `backlog-critic.md` (allowlisted per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) ALL-4 precedent)
 - `promote-to-backlog/SKILL.md` (allowlisted — that skill IS the captured→backlog label-swap operator per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3; its `--label backlog` usage is the intended operation, not drift)
+- `audit-meta/SKILL.md` (allowlisted — post-#341 the rubric was inlined here, so this file contains the `` `backlog`-labeled `` / `--label backlog` literals as rule-definition text, not as a capture instruction)
+- `audit-subagents/SKILL.md` (allowlisted — same rationale as `audit-meta/SKILL.md`; the AS-ALL-4 check text is reproduced here as rule-definition text after #341 inlined the rubric)
 
 **Rationale:** The captured-vs-backlog two-tier surfacing convention from [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../../decisions/0009-discipline-tightening.md) D2 applies to every agent and skill that instructs deferred-work capture. If any skill body says "capture as `backlog`-labeled", it tells agents to skip the `backlog-critic` gate — the exact #105/#107 regression. DOCS-10 extends the AS-ALL-4 subagent-only check to the full skill layer, completing the coverage. Scope is `.claude/agents/` AND `.claude/skills/` — a strict superset of AS-ALL-4.
 

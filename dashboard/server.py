@@ -71,7 +71,6 @@ KNOWN_GENERATORS = {
     "slicer",
     "implementer",
     "qa-tester",
-    "current-state-reader",
 }
 
 

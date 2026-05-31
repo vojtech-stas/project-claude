@@ -809,17 +809,6 @@ const NODE_COLORS = {
   prd:          '#eab308',  // amber
 };
 
-// vis-network node color objects derived from NODE_COLORS
-function nodeColorObj(type) {
-  const c = NODE_COLORS[type] || NODE_COLORS.generator;
-  // Darken for background, use full color for border
-  return {
-    background: c + 'cc',  // slight transparency for background
-    border: c,
-    highlight: { background: c, border: c },
-  };
-}
-
 // Dispatch map grounded in skill bodies + ADR-0003.
 // Keys = skill name (matches discover_skills names); values = array of subagent/skill names dispatched.
 // Skills can dispatch other SKILLS (ship→to-prd) or AGENTS (to-prd→prd-critic); colored by true type.

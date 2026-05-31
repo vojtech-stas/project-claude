@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 #
-# Spawns dashboard/server.py if not already running on localhost:8765.
+# Spawns dashboard/server.py if not already running on 127.0.0.1:8765.
 # Authorized by ADR-0033 D1 (tooling-spawn carveout). All 4 criteria met:
 #   1. No LLM API calls (no LLM SDK, no gh-copilot, no model endpoint invocation)
 #   2. Localhost-only (server.py binds localhost per slice 1)
@@ -45,8 +45,8 @@ if [ ! -f "$SERVER_SCRIPT" ]; then
   exit 0
 fi
 
-# --- Idempotency check (ADR-0033 D1.4): is the server already up on localhost:8765? ---
-HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 http://localhost:8765/api/architecture 2>/dev/null || echo "000")
+# --- Idempotency check (ADR-0033 D1.4): is the server already up on 127.0.0.1:8765? ---
+HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 http://127.0.0.1:8765/api/architecture 2>/dev/null || echo "000")
 
 if [ "$HTTP_STATUS" = "200" ]; then
   # Dashboard already running — nothing to do

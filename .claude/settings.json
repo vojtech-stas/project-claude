@@ -49,6 +49,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-bash.sh\""
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "STDIN=$(cat); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); INPUT=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' 2>/dev/null | cut -c1-300); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sub \"$SUB\" --arg inp \"$INPUT\" '{ts: $ts, session_id: $sid, event: \"agent_start\", subagent_type: $sub, input: $inp}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+          }
+        ]
       }
     ],
     "PostToolUse": [

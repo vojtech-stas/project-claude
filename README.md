@@ -305,6 +305,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`user-prompt-submit.sh`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
 - **[`pre-tool-edit.sh`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash.sh`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
+- **[`STDIN=$(cat); SUB=$(echo "$STDIN" | jq -r '.tool_input.subag`](.claude/settings.json)** (`PreToolUse`) — logs workflow event to workflow-events.jsonl
 - **[`STDIN=$(cat); FILE_PATH=$(echo "$STDIN" | jq -r '.tool_input`](.claude/settings.json)** (`PostToolUse`) — logs agent file edits; suggests /audit-subagents on agent .md changes
 - **[`STDIN=$(cat); SUB=$(echo "$STDIN" | jq -r '.tool_input.subag`](.claude/settings.json)** (`PostToolUse`) — logs agent completions to workflow-events.jsonl
 - **[`STDIN=$(cat); CMD=$(echo "$STDIN" | jq -r '.tool_input.comma`](.claude/settings.json)** (`PostToolUse`) — logs bash completions to workflow-events.jsonl
@@ -333,7 +334,7 @@ To add a term, run **`/glossary-add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 10 hook(s), 34 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 11 hook(s), 34 ADR(s).
 
 ## License
 

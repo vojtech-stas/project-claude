@@ -493,6 +493,34 @@
     max-width: 340px;
   }
   .session-selector select:focus { outline: none; border-color: var(--green); }
+  /* Cycle selector (Phase 2 — shown only when skill_invoke events exist) */
+  .cycle-selector {
+    display: none;  /* shown via JS when cycles are available */
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    flex-wrap: wrap;
+  }
+  .cycle-selector.visible { display: flex; }
+  .cycle-selector select {
+    background: var(--surface);
+    border: 1px solid var(--purple);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    max-width: 340px;
+  }
+  .cycle-selector select:focus { outline: none; border-color: var(--purple); }
+  .cycle-caveat {
+    font-size: 10px;
+    color: var(--muted);
+    opacity: 0.7;
+    font-style: italic;
+  }
   /* Node detail side panel (click → full detail) */
   .node-detail-panel {
     position: absolute;
@@ -735,6 +763,13 @@ flowchart TD
         <select id="session-select" onchange="onSessionSelectChange()">
           <option value="">Loading…</option>
         </select>
+      </div>
+      <div class="cycle-selector" id="cycle-selector-row">
+        <span style="color:var(--purple);">Cycle:</span>
+        <select id="cycle-select" onchange="onCycleSelectChange()">
+          <option value="-1">All events</option>
+        </select>
+        <span class="cycle-caveat">cycles based on typed /commands — programmatic Skill calls added next slice</span>
       </div>
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
@@ -1243,8 +1278,20 @@ let sessionRunsCache = null;   // [{session_id, first_ts, last_ts, events}, ...]
 let nodeDetailMap = {};        // nodeId → full detail object for click panel
 let renderedSessionId = null;  // session_id of the last fully-rendered network
 let renderedEventCount = null; // event_count of the last render (cheap no-op guard)
+let renderedCycleIdx = -1;     // cycle index of the last render (-1 = full session / no cycles)
 let liveNodesDataSet = null;   // vis.DataSet for nodes (kept at module scope for in-place updates)
 let liveEdgesDataSet = null;   // vis.DataSet for edges (kept at module scope for in-place updates)
+let currentFullRun = null;     // most-recently-fetched full sessionRun (cached for cycle switches)
+let currentCycles = [];        // computed cycles for currentFullRun (cleared on session change)
+
+// --- Cycle segmentation (Phase 2, slice #426) ---
+// Top-level cycle entry-point skills. A new cycle begins at each skill_invoke whose
+// skill name is in this list. Edit this list to change which skills start a new cycle.
+// Heuristic: "outermost-wins" — since UserPromptSubmit only fires for user-typed commands,
+// each entry here is a user-initiated top-level cycle. Programmatic nested calls
+// (e.g. /build internally invoking /ship) will be handled in slice C.3; for now,
+// every CYCLE_SKILLS match starts a new cycle (simple, correct for typed-command scope).
+const CYCLE_SKILLS = ['grill-me', 'build', 'ship'];
 
 // Role-based color palette per grilled design (PRD #403 comment)
 const COLORS = {
@@ -1274,6 +1321,61 @@ function fmtTs(ts) {
 function tsToSecs(ts) {
   if (!ts) return 0;
   try { return new Date(ts).getTime() / 1000; } catch (e) { return 0; }
+}
+
+/**
+ * Compute logical cycles from a session's full event list (Phase 2, slice #426).
+ *
+ * A cycle begins at each skill_invoke event whose skill is in CYCLE_SKILLS.
+ * Returns an array of cycle objects; each has a pre-filtered event list.
+ * Returns [] if no CYCLE_SKILLS skill_invoke events exist (backward-compat: caller
+ * must degrade to full-session rendering when cycles is empty).
+ *
+ * Heuristic — outermost-wins (user-typed scope):
+ *   UserPromptSubmit only fires for user-typed /commands, so each CYCLE_SKILLS hit
+ *   here is a top-level user-initiated cycle. Programmatic nesting (e.g. /build
+ *   internally invoking /ship) is tracked in slice C.3; for now every CYCLE_SKILLS
+ *   match = new top-level cycle.
+ *
+ * @param {Array} events  — full event list from sessionRun.events
+ * @returns {Array<{skill, startSec, endSec, startTs, endTs, label, cycleEvents}>}
+ */
+function computeCycles(events) {
+  if (!events || events.length === 0) return [];
+
+  // Filter to CYCLE_SKILLS skill_invoke events in time order
+  const cycleInvokes = events
+    .filter(e => (e.event || '') === 'skill_invoke' && CYCLE_SKILLS.includes(e.skill || ''))
+    .sort((a, b) => tsToSecs(a.ts || '') - tsToSecs(b.ts || ''));
+
+  if (cycleInvokes.length === 0) return [];
+
+  // Sort all events by ts for windowed slice
+  const sortedAll = events.slice().sort((a, b) => tsToSecs(a.ts || '') - tsToSecs(b.ts || ''));
+  const lastTs = sortedAll[sortedAll.length - 1].ts || '';
+
+  return cycleInvokes.map((inv, idx) => {
+    const startSec = tsToSecs(inv.ts || '');
+    const nextInv  = cycleInvokes[idx + 1];
+    const endSec   = nextInv ? tsToSecs(nextInv.ts || '') : (tsToSecs(lastTs) || startSec + 1);
+    const endTs    = nextInv ? (nextInv.ts || lastTs) : lastTs;
+
+    // Events belonging to this cycle: from startSec (inclusive) to endSec (exclusive for
+    // non-last cycles; inclusive for last cycle). Include the boundary inv event itself.
+    const cycleEvents = sortedAll.filter(e => {
+      const sec = tsToSecs(e.ts || '');
+      // Last cycle: include everything from startSec to end
+      if (!nextInv) return sec >= startSec;
+      // Not last: [startSec, endSec)
+      return sec >= startSec && sec < endSec;
+    });
+
+    // Label: "ship · 14:32"
+    const timeStr = (inv.ts || '').slice(11, 16) || fmtTs(inv.ts).slice(11, 16);
+    const label   = (inv.skill || '?') + ' · ' + timeStr;
+
+    return { skill: inv.skill || '', startSec, endSec, startTs: inv.ts || '', endTs, label, cycleEvents };
+  });
 }
 
 /**
@@ -1787,15 +1889,71 @@ function populateSessionSelector() {
 }
 
 /**
- * Fetch the currently-selected session's full events from /api/runs?session=<id>
- * and call renderSessionGraph with the result.
+ * Populate the cycle selector from a session's full event list (Phase 2, slice #426).
+ * Shows the cycle-selector row when cycles exist; hides it for old logs (backward-compat).
+ *
+ * @param {Array} events  — full event list from the selected session
+ * @param {Array} cycles  — result of computeCycles(events); may be empty
+ */
+function populateCycleSelector(events, cycles) {
+  const row  = document.getElementById('cycle-selector-row');
+  const csel = document.getElementById('cycle-select');
+  if (!row || !csel) return;
+
+  if (!cycles || cycles.length === 0) {
+    // No skill_invoke events — old log or session with no cycle-skills.
+    // Hide the cycle selector; render falls back to full session (backward-compat).
+    row.classList.remove('visible');
+    csel.innerHTML = '<option value="-1">All events</option>';
+    return;
+  }
+
+  // Build options: most-recent cycle first (reverse order)
+  const prevCycleVal = csel.value;
+  csel.innerHTML = '';
+
+  // "All events" sentinel so the user can view the unfiltered session
+  const allOpt = document.createElement('option');
+  allOpt.value = '-1';
+  allOpt.textContent = 'All events (' + events.length + ' total)';
+  csel.appendChild(allOpt);
+
+  // One option per cycle, latest first
+  for (let i = cycles.length - 1; i >= 0; i--) {
+    const c   = cycles[i];
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = c.label + '  (' + c.cycleEvents.length + ' events)';
+    if (i === cycles.length - 1) opt.textContent = '[latest] ' + opt.textContent;
+    csel.appendChild(opt);
+  }
+
+  // Default: select the most-recent cycle (idx = cycles.length - 1)
+  // Restore prev selection if still valid
+  const prevI = parseInt(prevCycleVal, 10);
+  if (!isNaN(prevI) && prevI >= 0 && prevI < cycles.length) {
+    csel.value = String(prevI);
+  } else {
+    // Default to latest cycle
+    csel.value = String(cycles.length - 1);
+  }
+
+  row.classList.add('visible');
+}
+
+/**
+ * Fetch the currently-selected session's full events from /api/runs?session=<id>,
+ * compute cycles, populate the cycle selector, then render the appropriate view.
+ * Caches the full run and cycles at module scope so cycle switches don't re-fetch.
  */
 async function fetchAndRenderSelectedSession() {
   const sel = document.getElementById('session-select');
   const idx = sel ? parseInt(sel.value, 10) : 0;
   const meta = sessionRunsCache && sessionRunsCache[isNaN(idx) ? 0 : idx] || null;
   if (!meta) {
-    renderSessionGraph(null);
+    currentFullRun = null;
+    currentCycles  = [];
+    renderSessionGraph(null, -1);
     return;
   }
   const statusEl = document.getElementById('live-status');
@@ -1804,28 +1962,109 @@ async function fetchAndRenderSelectedSession() {
     const r = await fetch('/api/runs?session=' + encodeURIComponent(meta.session_id));
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
-    renderSessionGraph(data.run || null);
+    const fullRun = data.run || null;
+
+    // Cache for cycle switches (no re-fetch needed when user picks a different cycle)
+    currentFullRun = fullRun;
+
+    // Compute cycles from the full event list, then populate cycle selector
+    const cycles = fullRun ? computeCycles(fullRun.events || []) : [];
+    currentCycles = cycles;
+    populateCycleSelector(fullRun ? (fullRun.events || []) : [], cycles);
+
+    // Render: either a cycle slice or the full session
+    renderWithCycle(fullRun, cycles);
   } catch (err) {
     statusEl.textContent = 'Error loading session events: ' + err.message;
   }
 }
 
+/**
+ * Re-render when the user picks a different cycle from the cycle selector.
+ * Uses the module-level cached full run — no re-fetch needed.
+ * Switching cycles is semantically a "new view" so renderSessionGraph does a full rebuild
+ * (different cycleIdx → sameView=false → build-or-replace path).
+ */
+async function onCycleSelectChange() {
+  closeNodeDetail();
+  // Use cached run + cycles (no network call needed)
+  renderWithCycle(currentFullRun, currentCycles);
+}
+
 async function onSessionSelectChange() {
   closeNodeDetail();
+  // Clear cached run + cycles; new session may have different cycles
+  currentFullRun = null;
+  currentCycles  = [];
+  // Reset cycle selector to default (most-recent) when session changes
+  const csel = document.getElementById('cycle-select');
+  if (csel) csel.value = '-1';
   await fetchAndRenderSelectedSession();
+}
+
+/**
+ * Determine which cycle is selected in the cycle selector, slice the sessionRun
+ * events to that cycle's window, and call renderSessionGraph.
+ *
+ * When cycleIdx === -1 (sentinel) or cycles is empty, renders the full session.
+ *
+ * @param {Object|null} fullRun  — full sessionRun from the API
+ * @param {Array}       cycles   — result of computeCycles(fullRun.events)
+ */
+function renderWithCycle(fullRun, cycles) {
+  if (!fullRun) {
+    renderSessionGraph(null, -1);
+    return;
+  }
+
+  const csel     = document.getElementById('cycle-select');
+  const cycleIdx = csel ? parseInt(csel.value, 10) : -1;
+
+  if (cycles.length === 0 || isNaN(cycleIdx) || cycleIdx < 0 || cycleIdx >= cycles.length) {
+    // Backward-compat / "All events" selected → full session
+    renderSessionGraph(fullRun, -1);
+    return;
+  }
+
+  // Slice the sessionRun to the selected cycle's events
+  const cycle = cycles[cycleIdx];
+  const slicedRun = {
+    session_id:  fullRun.session_id,
+    first_ts:    cycle.startTs,
+    last_ts:     cycle.endTs,
+    event_count: cycle.cycleEvents.length,
+    events:      cycle.cycleEvents,
+  };
+
+  renderSessionGraph(slicedRun, cycleIdx);
 }
 
 /**
  * Render (or update-in-place) the vis-network graph for a specific sessionRun object.
  *
+ * Phase 2 extension (slice #426): accepts cycleIdx parameter.
+ *   cycleIdx = -1  → full session rendering (no cycle filter, or backward-compat)
+ *   cycleIdx >= 0  → a specific cycle slice; sessionRun.events is already pre-filtered
+ *
+ * No-op guard (smooth refresh): keyed on (session_id, cycleIdx, event_count).
+ *   When a cycle is selected, event_count from the sliced run == cycle.cycleEvents.length;
+ *   when the full run is re-fetched and that count is unchanged, the guard skips the redraw.
+ *   For "All events" (cycleIdx=-1), the guard uses the full session event_count as before.
+ *
  * Two paths:
- *  - build-or-replace: first render OR session_id changed. Creates a new vis.Network,
- *    calls fit() once. Tears down any existing network first.
- *  - update-in-place: same session, same or new event_count. Diffs the existing DataSets
- *    via update()+remove() without destroy/new-Network/fit(). Preserves zoom/pan/selection.
+ *  - build-or-replace: first render OR session_id changed OR cycleIdx changed.
+ *    Creates a new vis.Network, calls fit() once. Tears down any existing network first.
+ *  - update-in-place: same session + same cycleIdx, new event_count. Diffs the existing
+ *    DataSets via update()+remove(). Preserves zoom/pan/selection.
  *    If event_count is unchanged since last render, returns early (cheap no-op guard).
+ *
+ * @param {Object|null} sessionRun  — full or cycle-sliced sessionRun
+ * @param {number}      cycleIdx    — cycle index (-1 = full session)
  */
-function renderSessionGraph(sessionRun) {
+function renderSessionGraph(sessionRun, cycleIdx) {
+  // Normalize cycleIdx: default -1 if caller didn't pass it (backward-compat call sites)
+  if (cycleIdx === undefined || cycleIdx === null || isNaN(cycleIdx)) cycleIdx = -1;
+
   const container = document.getElementById('live-graph-container');
   const emptyEl   = document.getElementById('live-graph-empty');
   const statusEl  = document.getElementById('live-status');
@@ -1840,6 +2079,7 @@ function renderSessionGraph(sessionRun) {
       liveEdgesDataSet = null;
       renderedSessionId = null;
       renderedEventCount = null;
+      renderedCycleIdx = -1;
     }
     emptyEl.style.display = 'flex';
     statusEl.textContent = 'No session data in log.';
@@ -1850,15 +2090,22 @@ function renderSessionGraph(sessionRun) {
   emptyEl.style.display = 'none';
 
   const incomingSid = sessionRun.session_id || 'unknown';
+  // For the no-op guard: use the cycle-slice event count (cycleEvents.length) when in
+  // cycle mode, or the full session event_count otherwise. This ensures a new event in
+  // the cycle window triggers a redraw, while events outside the cycle are ignored.
   const incomingEventCount = sessionRun.event_count != null
     ? sessionRun.event_count
     : (sessionRun.events ? sessionRun.events.length : 0);
 
-  const sameSession = (liveNetwork !== null) && (incomingSid === renderedSessionId);
+  // sameView: true only when session_id AND cycleIdx are both unchanged
+  // Switching cycles forces a full rebuild (different event set = different graph shape).
+  const sameView = (liveNetwork !== null)
+    && (incomingSid === renderedSessionId)
+    && (cycleIdx === renderedCycleIdx);
 
-  if (sameSession) {
+  if (sameView) {
     // --- update-in-place path ---
-    // Cheap guard: if the server-reported event_count hasn't changed, nothing new arrived.
+    // Cheap guard: if the event_count hasn't changed, nothing new arrived in this view.
     if (incomingEventCount === renderedEventCount) {
       return; // no-op: graph is already up to date
     }
@@ -1901,13 +2148,14 @@ function renderSessionGraph(sessionRun) {
     const totalEvents = sessionRun.events.length;
     const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
     const agentCount  = newNodes.filter(n => n.id && String(n.id).startsWith('agent-')).length;
+    const cycleLabel  = cycleIdx >= 0 ? ` [cycle ${cycleIdx}]` : '';
     statusEl.textContent = `Updated in place: ${newNodes.length} node(s), ${newEdges.length} edge(s) — O(#agents) not O(events). Physics off.`;
-    infoEl.textContent = `Session: ${incomingSid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+    infoEl.textContent = `Session: ${incomingSid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
     return;
   }
 
   // --- build-or-replace path ---
-  // Destroy previous network instance when switching sessions
+  // Destroy previous network instance when switching sessions or cycles
   if (liveNetwork) {
     liveNetwork.destroy();
     liveNetwork = null;
@@ -1961,18 +2209,20 @@ function renderSessionGraph(sessionRun) {
     }
   });
 
-  // Record what we just rendered
+  // Record what we just rendered (session_id + cycleIdx + event_count)
   renderedSessionId = incomingSid;
   renderedEventCount = incomingEventCount;
+  renderedCycleIdx = cycleIdx;
 
   // Status line
   const totalEvents = sessionRun.events.length;
   const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
   const agentCount  = nodes.filter(n => n.id && String(n.id).startsWith('agent-')).length;
   const sid = sessionRun.session_id || 'unknown';
+  const cycleLabel  = cycleIdx >= 0 ? ` [cycle ${cycleIdx}]` : '';
 
   statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents) not O(events). Physics off.`;
-  infoEl.textContent = `Session: ${sid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+  infoEl.textContent = `Session: ${sid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
 }
 
 function reloadLiveGraph() {
@@ -2003,9 +2253,10 @@ function closeNodeDetail() {
 }
 
 function nodeDetailTitle(nodeId, detail) {
-  if (detail.kind === 'orch') return 'orchestrator — ' + (detail.sid || '').slice(0, 16) + '…';
+  if (detail.kind === 'orch')  return 'orchestrator — ' + (detail.sid || '').slice(0, 16) + '…';
   if (detail.kind === 'agent') return '[' + detail.role + '] ' + detail.sub;
-  if (detail.kind === 'bash') return 'bash ×' + (detail.bashes || []).length + ' (' + (detail.owner || '?') + ')';
+  if (detail.kind === 'bash')  return 'bash ×' + (detail.bashes || []).length + ' (' + (detail.owner || '?') + ')';
+  if (detail.kind === 'skill') return 'skill: /' + (detail.skill || '?');
   return nodeId;
 }
 
@@ -2045,6 +2296,15 @@ function renderNodeDetailBody(detail) {
       html += '</div>';
     }
     html += '</div></div>';
+  } else if (detail.kind === 'skill') {
+    // Skill node detail (from skill_invoke events — Phase 2, slice #425/#426)
+    html += section('Skill', escHtml('/' + (detail.skill || '?')));
+    html += section('Invoked at', escHtml(fmtTs(detail.ts)));
+    html += section('Window', escHtml(fmtTs(detail.ts)) + ' → ' + escHtml(fmtTs(
+      // endSec → approximate ISO string for display
+      new Date((detail.windowEnd || 0) * 1000).toISOString().replace('T', ' ').slice(0, 19)
+    )));
+    html += section('Source', 'user-typed /command (UserPromptSubmit hook)');
   }
 
   return html;

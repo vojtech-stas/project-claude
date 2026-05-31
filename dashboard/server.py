@@ -193,6 +193,8 @@ def _read_hook_description(cmd: str) -> str:
 
     # Inline command patterns: derive description from content
     cmd_lower = cmd.lower()
+    if "workflow-events.jsonl" in cmd_lower and "agent_start" in cmd_lower:
+        return "logs agent start events to workflow-events.jsonl"
     if "workflow-events.jsonl" in cmd_lower and "agent_complete" in cmd_lower:
         return "logs agent completions to workflow-events.jsonl"
     if "workflow-events.jsonl" in cmd_lower and "bash_complete" in cmd_lower:
@@ -208,6 +210,36 @@ def _read_hook_description(cmd: str) -> str:
     return cmd[:80]
 
 
+def _read_hook_name(cmd: str) -> str:
+    """Derive a short human-readable name for a hook command.
+
+    For .sh-script hooks: returns the filename stem (e.g. 'session-start').
+    For inline hooks: returns a concise label matching the event logged.
+    """
+    # .sh script reference: use the filename stem
+    m = re.search(r'hooks/([a-z0-9_-]+)\.sh', cmd)
+    if m:
+        return m.group(1)
+
+    # Inline command patterns: derive clean name from content
+    cmd_lower = cmd.lower()
+    if "workflow-events.jsonl" in cmd_lower and "agent_start" in cmd_lower:
+        return "agent_start logger"
+    if "workflow-events.jsonl" in cmd_lower and "agent_complete" in cmd_lower:
+        return "agent_complete logger"
+    if "workflow-events.jsonl" in cmd_lower and "bash_complete" in cmd_lower:
+        return "bash logger"
+    if "workflow-events.jsonl" in cmd_lower and "session_stop" in cmd_lower:
+        return "session_stop logger"
+    if "subagent-edits.log" in cmd_lower:
+        return "subagent-edit nudge"
+    if "workflow-events.jsonl" in cmd_lower:
+        return "workflow event logger"
+
+    # Fallback: short truncation (not full raw command)
+    return cmd[:30].strip()
+
+
 def discover_hooks() -> list:
     settings_path = REPO_ROOT / ".claude" / "settings.json"
     hooks = []
@@ -217,6 +249,7 @@ def discover_hooks() -> list:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         for event, entries in data.get("hooks", {}).items():
             for entry in entries:
+                matcher = entry.get("matcher", "")
                 for hook in entry.get("hooks", []):
                     cmd = hook.get("command", "")
                     # Extract script name; resolve to actual .sh path when available (Fix C)
@@ -233,9 +266,12 @@ def discover_hooks() -> list:
                     else:
                         name = cmd[:60]
                         hook_path = ".claude/settings.json"
+                    clean_name = _read_hook_name(cmd)
                     hooks.append({
-                        "name": name,
+                        "name": clean_name,   # use clean_name for display; backward-compat alias
+                        "clean_name": clean_name,
                         "event": event,
+                        "matcher": matcher,
                         "command": cmd[:120],
                         "description": _read_hook_description(cmd),  # Fix C
                         "path": hook_path,  # Fix C: resolved .sh path
@@ -1204,18 +1240,20 @@ def _build_component_map() -> str:
     if hooks:
         seen_hooks = set()
         for h in hooks:
-            key = (h["name"], h["event"])
+            key = (h.get("clean_name", h["name"]), h["event"], h.get("matcher", ""))
             if key in seen_hooks:
                 continue
             seen_hooks.add(key)
-            name = h["name"]
+            clean_name = h.get("clean_name", h["name"])
             event = h["event"]
+            matcher = h.get("matcher", "")
             desc = h.get("description", "")
             path = h.get("path", ".claude/settings.json")
+            when = f"{event} · {matcher}" if matcher else event
             if desc:
-                lines.append(f"- **[`{name}`]({path})** (`{event}`) — {desc}")
+                lines.append(f"- **[`{clean_name}`]({path})** (`{when}`) — {desc}")
             else:
-                lines.append(f"- **[`{name}`]({path})** (`{event}`)")
+                lines.append(f"- **[`{clean_name}`]({path})** (`{when}`)")
     else:
         lines.append("_(no hooks configured)_")
     lines.append("")

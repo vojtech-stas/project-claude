@@ -10,7 +10,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runs?n=N     -> last-N run metadata (no events) grouped by session_id
         GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
         GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
-        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...]} via gh CLI (30s cache)
+        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -846,7 +846,14 @@ def _gh_list(args: list, timeout: int = 10) -> list:
 
 
 def fetch_workitems() -> dict:
-    """Return PRD→slice→PR tree, using a 30s in-process cache.
+    """Return PRD→slice→PR tree + deferred captures, 30s in-process cache.
+
+    Response shape:
+      { prd: [...], slices: [...], prs: [...], captures: [...], backlog: [...] }
+
+    Each item includes createdAt so the client can flag stale slices (>7 days).
+    captures = gh issue list --label captured --state open --limit 20
+    backlog  = gh issue list --label backlog  --state open --limit 20
 
     On any failure, returns {} (never raises, never hangs the dashboard).
     """
@@ -863,26 +870,46 @@ def fetch_workitems() -> dict:
             "--label", "prd",
             "--state", "all",
             "--limit", "30",
-            "--json", "number,title,state,labels",
+            "--json", "number,title,state,labels,createdAt",
         ])
         slices = _gh_list([
             "issue", "list",
             "--label", "slice",
             "--state", "all",
             "--limit", "60",
-            "--json", "number,title,state,labels",
+            "--json", "number,title,state,labels,createdAt",
         ])
         prs = _gh_list([
             "pr", "list",
             "--state", "all",
             "--limit", "30",
-            "--json", "number,title,state,labels",
+            "--json", "number,title,state,labels,createdAt",
+        ])
+        # Deferred captures: raw captured tier + curated backlog tier.
+        # Both use the same bounded helper (timeout=10, soft-degrade → []).
+        captures = _gh_list([
+            "issue", "list",
+            "--label", "captured",
+            "--state", "open",
+            "--limit", "20",
+            "--json", "number,title,labels,createdAt",
+        ])
+        backlog = _gh_list([
+            "issue", "list",
+            "--label", "backlog",
+            "--state", "open",
+            "--limit", "20",
+            "--json", "number,title,labels,createdAt",
         ])
 
-        # If all three failed (all empty and gh is missing), return soft-degrade {}
-        # We distinguish: gh present but no items vs gh unavailable by checking for errors.
         # Since _gh_list never raises, an all-empty result when no data exists is fine.
-        data = {"prd": prds, "slices": slices, "prs": prs}
+        data = {
+            "prd": prds,
+            "slices": slices,
+            "prs": prs,
+            "captures": captures,
+            "backlog": backlog,
+        }
 
         _workitems_cache["data"] = data
         _workitems_cache["ts"] = now

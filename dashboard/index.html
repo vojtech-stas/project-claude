@@ -2034,8 +2034,6 @@ function renderWithCycle(fullRun, cycles) {
     last_ts:     cycle.endTs,
     event_count: cycle.cycleEvents.length,
     events:      cycle.cycleEvents,
-    // Carry the full run's event_count for no-op guard keying (see renderSessionGraph)
-    _fullEventCount: fullRun.event_count != null ? fullRun.event_count : (fullRun.events || []).length,
   };
 
   renderSessionGraph(slicedRun, cycleIdx);

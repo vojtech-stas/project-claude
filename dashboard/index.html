@@ -954,6 +954,9 @@ flowchart TD
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
     <div class="graph-container" id="live-graph-container">
+      <!-- Dedicated vis.Network mount: vis replaces this div's innerHTML, not the container's.
+           #live-graph-empty and #node-detail-panel are siblings here so they survive each render. -->
+      <div id="live-graph-canvas" style="width:100%;height:100%;"></div>
       <div class="graph-empty" id="live-graph-empty">
         <strong>No session data yet.</strong>
         <span>Run /ship or any pipeline command to populate the graph.</span>
@@ -2273,7 +2276,7 @@ function renderSessionGraph(sessionRun, cycleIdx) {
   // Normalize cycleIdx: default -1 if caller didn't pass it (backward-compat call sites)
   if (cycleIdx === undefined || cycleIdx === null || isNaN(cycleIdx)) cycleIdx = -1;
 
-  const container = document.getElementById('live-graph-container');
+  const container = document.getElementById('live-graph-canvas');
   const emptyEl   = document.getElementById('live-graph-empty');
   const statusEl  = document.getElementById('live-status');
   const infoEl    = document.getElementById('live-session-info');
@@ -2289,13 +2292,13 @@ function renderSessionGraph(sessionRun, cycleIdx) {
       renderedEventCount = null;
       renderedCycleIdx = -1;
     }
-    emptyEl.style.display = 'flex';
-    statusEl.textContent = 'No session data in log.';
-    infoEl.textContent = '';
+    if (emptyEl) emptyEl.style.display = 'flex';
+    if (statusEl) statusEl.textContent = 'No session data in log.';
+    if (infoEl) infoEl.textContent = '';
     return;
   }
 
-  emptyEl.style.display = 'none';
+  if (emptyEl) emptyEl.style.display = 'none';
 
   const incomingSid = sessionRun.session_id || 'unknown';
   // For the no-op guard: use the cycle-slice event count (cycleEvents.length) when in
@@ -2357,8 +2360,8 @@ function renderSessionGraph(sessionRun, cycleIdx) {
     const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
     const agentCount  = newNodes.filter(n => n.id && String(n.id).startsWith('agent-')).length;
     const cycleLabel  = cycleIdx >= 0 ? ` [cycle ${cycleIdx}]` : '';
-    statusEl.textContent = `Updated in place: ${newNodes.length} node(s), ${newEdges.length} edge(s) — O(#agents) not O(events). Physics off.`;
-    infoEl.textContent = `Session: ${incomingSid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+    if (statusEl) statusEl.textContent = `Updated in place: ${newNodes.length} node(s), ${newEdges.length} edge(s) — O(#agents) not O(events). Physics off.`;
+    if (infoEl) infoEl.textContent = `Session: ${incomingSid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
     return;
   }
 
@@ -2429,8 +2432,8 @@ function renderSessionGraph(sessionRun, cycleIdx) {
   const sid = sessionRun.session_id || 'unknown';
   const cycleLabel  = cycleIdx >= 0 ? ` [cycle ${cycleIdx}]` : '';
 
-  statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents) not O(events). Physics off.`;
-  infoEl.textContent = `Session: ${sid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+  if (statusEl) statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents) not O(events). Physics off.`;
+  if (infoEl) infoEl.textContent = `Session: ${sid.slice(0, 16)}…${cycleLabel} | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
 }
 
 function reloadLiveGraph() {
@@ -2449,6 +2452,7 @@ function showNodeDetail(nodeId) {
   const titleEl = document.getElementById('node-detail-title');
   const bodyEl  = document.getElementById('node-detail-body');
 
+  if (!panel || !titleEl || !bodyEl) return;
   titleEl.textContent = nodeDetailTitle(nodeId, detail);
   bodyEl.innerHTML = renderNodeDetailBody(detail);
   panel.classList.add('open');

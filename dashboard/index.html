@@ -708,6 +708,67 @@
     font-size: 11px;
     padding: 4px 0;
   }
+  /* Critic verdicts + Run stats sections (Phase 3, slice #435) */
+  .cp-section { display: flex; flex-direction: column; gap: 6px; }
+  .cp-section-label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+  }
+  .cp-none {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 11px;
+    padding: 2px 0;
+  }
+  .verdicts-list { display: flex; flex-direction: column; gap: 3px; }
+  .verdict-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: #0a0e13;
+  }
+  .verdict-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .verdict-agent {
+    color: var(--text);
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .verdict-round {
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .stats-list { display: flex; flex-direction: column; gap: 3px; }
+  .stats-row {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: #0a0e13;
+  }
+  .stats-key {
+    color: var(--muted);
+    font-size: 10px;
+    flex-shrink: 0;
+    min-width: 80px;
+  }
+  .stats-val {
+    color: var(--text);
+    font-size: 10px;
+  }
 </style>
 </head>
 <body>
@@ -873,11 +934,13 @@ flowchart TD
     <!-- Context panel: work-items tree (Phase 3, slice #434) -->
     <div class="context-panel" id="context-panel">
       <div class="context-panel-header" onclick="toggleContextPanel()">
-        <span class="context-panel-title">Context — Work-items</span>
+        <span class="context-panel-title">Context</span>
         <span class="context-panel-toggle">&#9658;</span>
       </div>
       <div class="context-panel-body" id="context-panel-body">
-        <div class="workitems-unavail">Loading…</div>
+        <div id="cp-workitems"><div class="workitems-unavail">Loading…</div></div>
+        <div id="cp-verdicts"></div>
+        <div id="cp-runstats"></div>
       </div>
     </div>
   </div>
@@ -2072,6 +2135,9 @@ async function fetchAndRenderSelectedSession() {
 
     // Render: either a cycle slice or the full session
     renderWithCycle(fullRun, cycles);
+    // Populate in-memory panel sections (verdicts + stats) for the loaded session/cycle.
+    // Synchronous, read-only — no fetch, no graph rebuild side-effect.
+    refreshInMemoryPanelSections();
   } catch (err) {
     statusEl.textContent = 'Error loading session events: ' + err.message;
   }
@@ -2087,6 +2153,9 @@ async function onCycleSelectChange() {
   closeNodeDetail();
   // Use cached run + cycles (no network call needed)
   renderWithCycle(currentFullRun, currentCycles);
+  // Refresh in-memory panel sections (verdicts + stats) for the new cycle selection.
+  // This is synchronous and read-only — no fetch, no graph rebuild side-effect.
+  refreshInMemoryPanelSections();
 }
 
 async function onSessionSelectChange() {
@@ -2539,24 +2608,212 @@ function renderWorkitemsHtml(data) {
 }
 
 /**
- * Fetch /api/workitems and update the context panel body.
+ * Return the event array for the currently selected cycle (or full session).
+ * Reads currentFullRun + currentCycles + the cycle selector value.
+ * Never calls renderSessionGraph / buildGraphData — read-only.
+ * Returns [] if no session data is loaded.
+ */
+function getActiveEvents() {
+  if (!currentFullRun) return [];
+  const csel     = document.getElementById('cycle-select');
+  const cycleIdx = csel ? parseInt(csel.value, 10) : -1;
+  if (currentCycles.length > 0 && !isNaN(cycleIdx) && cycleIdx >= 0 && cycleIdx < currentCycles.length) {
+    return currentCycles[cycleIdx].cycleEvents || [];
+  }
+  return currentFullRun.events || [];
+}
+
+/**
+ * Parse CRITIC trailers from agent_complete events.
+ * For each agent_complete whose output contains VERDICT: APPROVE|BLOCK (case-insensitive),
+ * extract verdict + optional ROUND: n, keyed by subagent_type.
+ * Non-matching or erroring events are silently omitted.
+ *
+ * @param {Array} events
+ * @returns {Array<{agent: string, verdict: string, round: number|null}>}
+ */
+function parseCriticVerdicts(events) {
+  if (!events || events.length === 0) return [];
+  const results = [];
+  const reVerdict = /VERDICT:\s*(APPROVE|BLOCK)/i;
+  const reRound   = /ROUND:\s*(\d+)/i;
+  for (const ev of events) {
+    try {
+      if ((ev.event || '') !== 'agent_complete') continue;
+      const out = ev.output || '';
+      if (typeof out !== 'string') continue;
+      const vm = reVerdict.exec(out);
+      if (!vm) continue; // generator or no trailer — omit silently
+      const verdict = vm[1].toUpperCase();
+      const rm = reRound.exec(out);
+      const round = rm ? parseInt(rm[1], 10) : null;
+      const agent = (ev.subagent_type || 'unknown').trim();
+      results.push({ agent, verdict, round });
+    } catch (_) { /* never error */ }
+  }
+  return results;
+}
+
+/**
+ * Render the "Critic verdicts" panel section from the given events.
+ * Returns an HTML string. Shows "none" when no CRITIC trailers are found.
+ * Never throws.
+ */
+function renderCriticVerdictsHtml(events) {
+  let html = '<div class="cp-section">';
+  html += '<div class="cp-section-label">Critic verdicts</div>';
+  try {
+    const verdicts = parseCriticVerdicts(events);
+    if (verdicts.length === 0) {
+      html += '<div class="cp-none">none</div>';
+    } else {
+      html += '<div class="verdicts-list">';
+      for (const v of verdicts) {
+        const isApprove = v.verdict === 'APPROVE';
+        const badgeBg    = isApprove ? NODE_COLORS.generator : '#dc2626'; // green or red
+        const badgeColor = isApprove ? '#0a1a0a' : '#fff';
+        const roundStr   = v.round != null ? ' r' + v.round : '';
+        html += '<div class="verdict-row">'
+          + '<span class="verdict-badge" style="background:' + escHtml(badgeBg) + ';color:' + escHtml(badgeColor) + ';">'
+          + escHtml(v.verdict) + '</span>'
+          + '<span class="verdict-agent">' + escHtml(v.agent) + '</span>'
+          + (roundStr ? '<span class="verdict-round">' + escHtml(roundStr) + '</span>' : '')
+          + '</div>';
+      }
+      html += '</div>';
+    }
+  } catch (_) {
+    html += '<div class="cp-none">none</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Compute per-agent durations from agent_start/agent_complete pairs.
+ * Reuses the same stack-pop pairing strategy as buildGraphData.
+ * Unpaired agent_complete events (no matching start) → omitted, no error.
+ *
+ * @param {Array} events
+ * @returns {Array<{agent: string, durationSec: number}>}
+ */
+function computeAgentDurations(events) {
+  if (!events || events.length === 0) return [];
+  const stacks = {};   // subagent_type → [startEvent, ...]
+  const pairs  = [];   // [{agent, durationSec}]
+  // Scan in time order (events are already chronological from the API)
+  const sorted = events.slice().sort((a, b) => tsToSecs(a.ts || '') - tsToSecs(b.ts || ''));
+  for (const ev of sorted) {
+    const etype = (ev.event || '').trim();
+    const sub   = (ev.subagent_type || '').trim();
+    if (etype === 'agent_start' && sub) {
+      if (!stacks[sub]) stacks[sub] = [];
+      stacks[sub].push(ev);
+    } else if (etype === 'agent_complete' && sub) {
+      const stack  = stacks[sub];
+      const startEv = (stack && stack.length > 0) ? stack.pop() : null;
+      if (!startEv) continue; // unpaired — omit, never error
+      const dur = tsToSecs(ev.ts || '') - tsToSecs(startEv.ts || '');
+      if (!isNaN(dur) && dur >= 0) {
+        pairs.push({ agent: sub, durationSec: Math.round(dur) });
+      }
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Render the "Run stats" panel section from the given events.
+ * Shows per-agent durations, total bash count, and event-type tally.
+ * Shows "none" when events is empty. Never throws.
+ */
+function renderRunStatsHtml(events) {
+  let html = '<div class="cp-section">';
+  html += '<div class="cp-section-label">Run stats</div>';
+  try {
+    if (!events || events.length === 0) {
+      html += '<div class="cp-none">none</div>';
+    } else {
+      html += '<div class="stats-list">';
+
+      // Per-agent durations
+      const durations = computeAgentDurations(events);
+      if (durations.length > 0) {
+        html += '<div class="stats-row"><span class="stats-key">Durations</span>'
+          + '<span class="stats-val">'
+          + durations.map(function(d) {
+              return escHtml(d.agent) + ': ' + escHtml(String(d.durationSec)) + 's';
+            }).join(', ')
+          + '</span></div>';
+      }
+
+      // Total bash count
+      const bashCount = events.filter(function(e) {
+        return (e.event || '') === 'bash_complete';
+      }).length;
+      html += '<div class="stats-row"><span class="stats-key">Bash total</span>'
+        + '<span class="stats-val">' + escHtml(String(bashCount)) + '</span></div>';
+
+      // Event-type tally
+      const tally = {};
+      for (const ev of events) {
+        const t = (ev.event || 'unknown').trim();
+        tally[t] = (tally[t] || 0) + 1;
+      }
+      const tallyStr = Object.keys(tally).sort().map(function(t) {
+        return escHtml(t) + ' &times;' + tally[t];
+      }).join(', ');
+      if (tallyStr) {
+        html += '<div class="stats-row"><span class="stats-key">Event types</span>'
+          + '<span class="stats-val">' + tallyStr + '</span></div>';
+      }
+
+      html += '</div>';
+    }
+  } catch (_) {
+    html += '<div class="cp-none">none</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Update the two in-memory panel sections (critic verdicts + run stats)
+ * from the currently selected cycle/session events.
+ * Does NOT fetch any endpoint; reads currentFullRun + currentCycles.
+ * Safe to call at any time; silently no-ops if panel sub-elements are absent.
+ */
+function refreshInMemoryPanelSections() {
+  const verdictsEl = document.getElementById('cp-verdicts');
+  const statsEl    = document.getElementById('cp-runstats');
+  if (!verdictsEl && !statsEl) return;
+  const events = getActiveEvents();
+  if (verdictsEl) verdictsEl.innerHTML = renderCriticVerdictsHtml(events);
+  if (statsEl)    statsEl.innerHTML    = renderRunStatsHtml(events);
+}
+
+/**
+ * Fetch /api/workitems and update the work-items sub-panel.
+ * Also refreshes in-memory sections (verdicts + stats).
  * Does NOT call renderLiveGraph / buildGraphData / renderSessionGraph.
  * Independent from the graph refresh path.
  */
 async function refreshContextPanel() {
-  const bodyEl = document.getElementById('context-panel-body');
-  if (!bodyEl) return;
+  const workitemsEl = document.getElementById('cp-workitems');
+  if (!workitemsEl) return;
   try {
     const r = await fetch('/api/workitems');
     if (!r.ok) {
-      bodyEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
-      return;
+      workitemsEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+    } else {
+      const data = await r.json();
+      workitemsEl.innerHTML = renderWorkitemsHtml(data);
     }
-    const data = await r.json();
-    bodyEl.innerHTML = renderWorkitemsHtml(data);
   } catch (_) {
-    bodyEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+    workitemsEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
   }
+  // Always refresh in-memory sections alongside workitems fetch
+  refreshInMemoryPanelSections();
 }
 
 function startLiveGraph() {

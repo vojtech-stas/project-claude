@@ -769,6 +769,45 @@
     color: var(--text);
     font-size: 10px;
   }
+  /* Failures/escalations + Deferred captures sections (Phase 3, slice #436) */
+  .failures-list { display: flex; flex-direction: column; gap: 3px; }
+  .failure-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: #0a0e13;
+  }
+  .failure-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .captures-list { display: flex; flex-direction: column; gap: 3px; }
+  .capture-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: #0a0e13;
+  }
+  .capture-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .capture-badge-backlog  { background: #2563eb; color: #fff; }
+  .capture-badge-captured { background: #4b5563; color: #d1d5db; }
 </style>
 </head>
 <body>
@@ -941,6 +980,8 @@ flowchart TD
         <div id="cp-workitems"><div class="workitems-unavail">Loading…</div></div>
         <div id="cp-verdicts"></div>
         <div id="cp-runstats"></div>
+        <div id="cp-failures"></div>
+        <div id="cp-captures"></div>
       </div>
     </div>
   </div>
@@ -2793,7 +2834,135 @@ function refreshInMemoryPanelSections() {
 }
 
 /**
- * Fetch /api/workitems and update the work-items sub-panel.
+ * Detect stale slices (open, createdAt > 7 days ago) and needs-human PRs
+ * from the /api/workitems response. Returns an array of flagged items:
+ * [{number, title, reason}] where reason is "needs-human" | "stale slice".
+ * Never throws.
+ *
+ * @param {Object} data — /api/workitems response
+ * @returns {Array<{number: number|string, title: string, reason: string}>}
+ */
+function detectFailures(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const now = Date.now();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  const flagged = [];
+
+  function hasLabel(item, name) {
+    return (item.labels || []).some(function(l) {
+      return (l.name || l || '').toLowerCase() === name;
+    });
+  }
+
+  // needs-human PRs (red escalation flag per I5)
+  (Array.isArray(data.prs) ? data.prs : []).forEach(function(pr) {
+    if (hasLabel(pr, 'needs-human')) {
+      flagged.push({ number: pr.number, title: pr.title || '(no title)', reason: 'needs-human' });
+    }
+  });
+
+  // Stale open slices (open > 7 days per I4)
+  (Array.isArray(data.slices) ? data.slices : []).forEach(function(sl) {
+    const state = (sl.state || '').toLowerCase();
+    if (state !== 'open') return;
+    const created = sl.createdAt ? new Date(sl.createdAt).getTime() : null;
+    if (created && (now - created) > sevenDaysMs) {
+      flagged.push({ number: sl.number, title: sl.title || '(no title)', reason: 'stale slice' });
+    }
+  });
+
+  return flagged;
+}
+
+/**
+ * Render the "Failures / escalations" panel section.
+ * Flags needs-human PRs (red) and open slices older than 7 days (red).
+ * Shows "none" when no failures detected. Never throws.
+ *
+ * @param {Object} data — /api/workitems response
+ * @returns {string} HTML
+ */
+function renderFailuresHtml(data) {
+  let html = '<div class="cp-section">';
+  html += '<div class="cp-section-label">Failures / escalations</div>';
+  try {
+    const flagged = detectFailures(data);
+    if (flagged.length === 0) {
+      html += '<div class="cp-none">none</div>';
+    } else {
+      html += '<div class="failures-list">';
+      for (const item of flagged) {
+        const title = escHtml((item.title || '').slice(0, 70));
+        const reason = escHtml(item.reason);
+        html += '<div class="failure-row">'
+          + '<span class="failure-badge" style="background:#dc2626;color:#fff;">' + reason + '</span>'
+          + '<span class="workitem-num">#' + escHtml(String(item.number || '?')) + '</span>'
+          + '<span class="workitem-title" title="' + escHtml(item.title || '') + '">' + title + '</span>'
+          + '</div>';
+      }
+      html += '</div>';
+    }
+  } catch (_) {
+    html += '<div class="cp-none">none</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Render the "Deferred captures (recent)" panel section.
+ * Lists recent captured-tier + backlog-tier issues from /api/workitems.
+ * Clearly labeled "recent — not per-cycle" per scope contract.
+ * Shows "none" when both lists are empty. Never throws.
+ *
+ * @param {Object} data — /api/workitems response
+ * @returns {string} HTML
+ */
+function renderCapturesHtml(data) {
+  let html = '<div class="cp-section">';
+  html += '<div class="cp-section-label">Deferred captures <span style="font-weight:400;font-size:0.75rem;opacity:0.6;">(recent — not per-cycle)</span></div>';
+  try {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      html += '<div class="cp-none">none</div>';
+    } else {
+      const captured = Array.isArray(data.captures) ? data.captures : [];
+      const backlog  = Array.isArray(data.backlog)  ? data.backlog  : [];
+
+      if (captured.length === 0 && backlog.length === 0) {
+        html += '<div class="cp-none">none</div>';
+      } else {
+        html += '<div class="captures-list">';
+
+        backlog.forEach(function(item) {
+          const title = escHtml((item.title || '(no title)').slice(0, 72));
+          html += '<div class="capture-row">'
+            + '<span class="capture-badge capture-badge-backlog">backlog</span>'
+            + '<span class="workitem-num">#' + escHtml(String(item.number || '?')) + '</span>'
+            + '<span class="workitem-title" title="' + escHtml(item.title || '') + '">' + title + '</span>'
+            + '</div>';
+        });
+
+        captured.forEach(function(item) {
+          const title = escHtml((item.title || '(no title)').slice(0, 72));
+          html += '<div class="capture-row">'
+            + '<span class="capture-badge capture-badge-captured">captured</span>'
+            + '<span class="workitem-num">#' + escHtml(String(item.number || '?')) + '</span>'
+            + '<span class="workitem-title" title="' + escHtml(item.title || '') + '">' + title + '</span>'
+            + '</div>';
+        });
+
+        html += '</div>';
+      }
+    }
+  } catch (_) {
+    html += '<div class="cp-none">none</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/**
+ * Fetch /api/workitems and update the work-items, failures, and captures sub-panels.
  * Also refreshes in-memory sections (verdicts + stats).
  * Does NOT call renderLiveGraph / buildGraphData / renderSessionGraph.
  * Independent from the graph refresh path.
@@ -2801,16 +2970,24 @@ function refreshInMemoryPanelSections() {
 async function refreshContextPanel() {
   const workitemsEl = document.getElementById('cp-workitems');
   if (!workitemsEl) return;
+  const failuresEl = document.getElementById('cp-failures');
+  const capturesEl = document.getElementById('cp-captures');
   try {
     const r = await fetch('/api/workitems');
     if (!r.ok) {
       workitemsEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+      if (failuresEl) failuresEl.innerHTML = renderFailuresHtml(null);
+      if (capturesEl) capturesEl.innerHTML = renderCapturesHtml(null);
     } else {
       const data = await r.json();
       workitemsEl.innerHTML = renderWorkitemsHtml(data);
+      if (failuresEl) failuresEl.innerHTML = renderFailuresHtml(data);
+      if (capturesEl) capturesEl.innerHTML = renderCapturesHtml(data);
     }
   } catch (_) {
     workitemsEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+    if (failuresEl) failuresEl.innerHTML = renderFailuresHtml(null);
+    if (capturesEl) capturesEl.innerHTML = renderCapturesHtml(null);
   }
   // Always refresh in-memory sections alongside workitems fetch
   refreshInMemoryPanelSections();

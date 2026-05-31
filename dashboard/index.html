@@ -883,11 +883,15 @@ window.addEventListener('load', () => { loadArchitecture(); });
 // Layout: physics:false, Y ∝ timestamp (top=earliest), X spread by spawn hierarchy.
 // Role colors: orchestrator=blue, generator=green, critic=orange, bash=grey, hook=red.
 
-let liveNetwork = null;      // vis.Network instance
-let liveGraphLoaded = false; // whether initial load has run
-let liveRefreshTimer = null; // periodic refresh handle
-let sessionRunsCache = null; // [{session_id, first_ts, last_ts, events}, ...]
-let nodeDetailMap = {};      // nodeId → full detail object for click panel
+let liveNetwork = null;        // vis.Network instance
+let liveGraphLoaded = false;   // whether initial load has run
+let liveRefreshTimer = null;   // periodic refresh handle
+let sessionRunsCache = null;   // [{session_id, first_ts, last_ts, events}, ...]
+let nodeDetailMap = {};        // nodeId → full detail object for click panel
+let renderedSessionId = null;  // session_id of the last fully-rendered network
+let renderedEventCount = null; // event_count of the last render (cheap no-op guard)
+let liveNodesDataSet = null;   // vis.DataSet for nodes (kept at module scope for in-place updates)
+let liveEdgesDataSet = null;   // vis.DataSet for edges (kept at module scope for in-place updates)
 
 // Role-based color palette per grilled design (PRD #403 comment)
 const COLORS = {
@@ -957,8 +961,11 @@ function buildGraphData(sessionRun) {
   // --- 2. Build agent spans from agent_start / agent_complete pairs ---
   // Strategy: scan events in time order; for each agent_start push onto a per-type stack;
   // for each agent_complete pop the most recent matching start off the stack.
+  //
+  // For agents with NO matching agent_start (legacy logs or missing hooks): we mark
+  // hasStart=false and synthesize a fallback window in step 3.
   const startStacks = {}; // subagent_type → [startEvent, ...]
-  const spans = [];       // [{sub, startTs, completeSec, startSec, completeSec, ae, idx}]
+  const spans = [];       // [{sub, startTs, completeTs, startSec, completeSec, ae, idx, hasStart}]
 
   for (const ev of events) {
     const etype = (ev.event || '').trim();
@@ -969,53 +976,115 @@ function buildGraphData(sessionRun) {
     } else if (etype === 'agent_complete' && sub) {
       const stack = startStacks[sub];
       const startEv = (stack && stack.length > 0) ? stack.pop() : null;
+      const hasStart = startEv !== null;
       const startTs = startEv ? (startEv.ts || '') : '';
+      const completeSec = tsToSecs(ev.ts || '');
       spans.push({
         sub,
         startTs,
         completeTs: ev.ts || '',
-        startSec:   startTs ? tsToSecs(startTs) : tsToSecs(ev.ts || ''),
-        completeSec: tsToSecs(ev.ts || ''),
+        // For unspanned agents, startSec is set temporarily to completeSec;
+        // it will be replaced below once we know the previous boundary.
+        startSec:   startTs ? tsToSecs(startTs) : completeSec,
+        completeSec,
         ae: ev,
         idx: spans.length,
+        hasStart,
       });
     }
   }
 
-  // For agents without a matching agent_start (legacy logs): fallback spans where
-  // startSec === completeSec (zero-duration span) are already handled above.
+  // Sort spans by (completeSec asc, then startSec asc) so we can walk them in order
+  // to compute fallback windows for unspanned agents.
+  spans.sort((a, b) => a.completeSec - b.completeSec || a.startSec - b.startSec);
 
-  // Sort spans by startSec ascending (earlier agents appear higher on canvas)
+  // Synthesize fallback windows for unspanned agents.
+  // previousBoundaryTs tracks the latest of all previously-seen agent_start and agent_complete
+  // timestamps, so adjacent/concurrent unspanned agents don't steal each other's bashes.
+  let previousBoundarySec = sessionStartSec;
+  for (const sp of spans) {
+    if (!sp.hasStart) {
+      // Fallback window: [previousBoundarySec, completeSec]
+      sp.startSec = previousBoundarySec;
+    }
+    // Advance the previous boundary to the later of its current value and this span's boundaries
+    previousBoundarySec = Math.max(previousBoundarySec, sp.startSec, sp.completeSec);
+  }
+
+  // Re-sort by startSec ascending now that fallback startSecs are filled in
+  // (earlier agents appear higher on canvas)
   spans.sort((a, b) => a.startSec - b.startSec);
 
   // --- 3. Attribute bash_complete events to spans ---
-  // For each bash event, find the innermost (most-recently-started) open span at that ts.
-  // "Open" = span.startSec <= bashSec <= span.completeSec.
-  // "Innermost" = the span with the largest startSec that still contains the bash ts.
+  // Priority (highest wins):
+  //   1. Innermost real span (hasStart=true, startSec <= bashSec <= completeSec,
+  //      largest startSec among candidates — i.e. most-recently-started).
+  //   2. Fallback window (hasStart=false, startSec <= bashSec <= completeSec).
+  //      Among multiple fallback candidates, the one with the largest startSec wins.
+  //   3. Orchestrator (no span/window covers this bash).
+  //
+  // Each bash_complete is attributed to EXACTLY ONE owner (no double-count, no loss).
 
   const bashEvents = events.filter(e => (e.event || '') === 'bash_complete');
 
-  // Pre-build a sorted list of (startSec, completeSec, spanIdx) for O(#spans) lookup per bash
-  // For large #bash events this is O(#bash * #spans) — acceptable because #spans = O(#agents).
-  const orchBashes = [];          // bash events attributed to the orchestrator
-  const spanBashes = {};          // spanIdx → [bash events]
+  const orchBashes = [];   // bash events attributed to the orchestrator
+  const spanBashes = {};   // spanIdx → [bash events]
 
   for (const be of bashEvents) {
     const bSec = tsToSecs(be.ts || '');
-    let bestSpanIdx = -1;
-    let bestStartSec = -Infinity;
+
+    // Pass 1: find the best REAL span (hasStart=true) that contains this bash
+    let bestRealIdx = -1;
+    let bestRealStartSec = -Infinity;
     for (let i = 0; i < spans.length; i++) {
       const sp = spans[i];
-      if (sp.startSec <= bSec && bSec <= sp.completeSec && sp.startSec > bestStartSec) {
-        bestStartSec = sp.startSec;
-        bestSpanIdx = i;
+      if (!sp.hasStart) continue;
+      if (sp.startSec <= bSec && bSec <= sp.completeSec && sp.startSec > bestRealStartSec) {
+        bestRealStartSec = sp.startSec;
+        bestRealIdx = i;
       }
     }
-    if (bestSpanIdx >= 0) {
-      if (!spanBashes[bestSpanIdx]) spanBashes[bestSpanIdx] = [];
-      spanBashes[bestSpanIdx].push(be);
-    } else {
-      orchBashes.push(be);
+
+    if (bestRealIdx >= 0) {
+      // Attributed to a real span
+      if (!spanBashes[bestRealIdx]) spanBashes[bestRealIdx] = [];
+      spanBashes[bestRealIdx].push(be);
+      continue;
+    }
+
+    // Pass 2: no real span — try fallback windows (unspanned agents)
+    let bestFallbackIdx = -1;
+    let bestFallbackStartSec = -Infinity;
+    for (let i = 0; i < spans.length; i++) {
+      const sp = spans[i];
+      if (sp.hasStart) continue;
+      if (sp.startSec <= bSec && bSec <= sp.completeSec && sp.startSec > bestFallbackStartSec) {
+        bestFallbackStartSec = sp.startSec;
+        bestFallbackIdx = i;
+      }
+    }
+
+    if (bestFallbackIdx >= 0) {
+      if (!spanBashes[bestFallbackIdx]) spanBashes[bestFallbackIdx] = [];
+      spanBashes[bestFallbackIdx].push(be);
+      continue;
+    }
+
+    // Pass 3: no span/window covers this bash → orchestrator
+    orchBashes.push(be);
+  }
+
+  // Dev-only conservation check: sum of all bubble bash counts must equal total bash_complete count.
+  // This guards against double-count or loss regressions without throwing.
+  if (typeof console !== 'undefined' && console.warn) {
+    const totalBashComplete = bashEvents.length;
+    let bubbleSum = orchBashes.length;
+    for (const key of Object.keys(spanBashes)) { bubbleSum += spanBashes[key].length; }
+    if (bubbleSum !== totalBashComplete) {
+      console.warn(
+        '[buildGraphData] bash conservation violation: bubble sum=' + bubbleSum +
+        ' !== bash_complete count=' + totalBashComplete + ' (session=' + sid + ')'
+      );
     }
   }
 
@@ -1328,8 +1397,14 @@ async function onSessionSelectChange() {
 }
 
 /**
- * Render (or re-render) the vis-network graph for a specific sessionRun object.
- * Destroys the previous network instance first to free memory.
+ * Render (or update-in-place) the vis-network graph for a specific sessionRun object.
+ *
+ * Two paths:
+ *  - build-or-replace: first render OR session_id changed. Creates a new vis.Network,
+ *    calls fit() once. Tears down any existing network first.
+ *  - update-in-place: same session, same or new event_count. Diffs the existing DataSets
+ *    via update()+remove() without destroy/new-Network/fit(). Preserves zoom/pan/selection.
+ *    If event_count is unchanged since last render, returns early (cheap no-op guard).
  */
 function renderSessionGraph(sessionRun) {
   const container = document.getElementById('live-graph-container');
@@ -1337,13 +1412,16 @@ function renderSessionGraph(sessionRun) {
   const statusEl  = document.getElementById('live-status');
   const infoEl    = document.getElementById('live-session-info');
 
-  // Destroy previous network instance to free memory
-  if (liveNetwork) {
-    liveNetwork.destroy();
-    liveNetwork = null;
-  }
-
   if (!sessionRun || !sessionRun.events || sessionRun.events.length === 0) {
+    // No data: destroy any existing network and show the empty placeholder
+    if (liveNetwork) {
+      liveNetwork.destroy();
+      liveNetwork = null;
+      liveNodesDataSet = null;
+      liveEdgesDataSet = null;
+      renderedSessionId = null;
+      renderedEventCount = null;
+    }
     emptyEl.style.display = 'flex';
     statusEl.textContent = 'No session data in log.';
     infoEl.textContent = '';
@@ -1352,10 +1430,76 @@ function renderSessionGraph(sessionRun) {
 
   emptyEl.style.display = 'none';
 
+  const incomingSid = sessionRun.session_id || 'unknown';
+  const incomingEventCount = sessionRun.event_count != null
+    ? sessionRun.event_count
+    : (sessionRun.events ? sessionRun.events.length : 0);
+
+  const sameSession = (liveNetwork !== null) && (incomingSid === renderedSessionId);
+
+  if (sameSession) {
+    // --- update-in-place path ---
+    // Cheap guard: if the server-reported event_count hasn't changed, nothing new arrived.
+    if (incomingEventCount === renderedEventCount) {
+      return; // no-op: graph is already up to date
+    }
+
+    // Recompute graph data from the new event list
+    const { nodes: newNodes, edges: newEdges } = buildGraphData(sessionRun);
+
+    // Capture current viewport so we can restore it if needed (fallback)
+    const viewPos = liveNetwork.getViewPosition();
+    const viewScale = liveNetwork.getScale();
+
+    // Diff nodes: update changed/new, remove stale
+    const newNodeIds = new Set(newNodes.map(n => n.id));
+    const oldNodeIds = liveNodesDataSet.getIds();
+    const staleNodeIds = oldNodeIds.filter(id => !newNodeIds.has(id));
+    liveNodesDataSet.update(newNodes);
+    if (staleNodeIds.length > 0) liveNodesDataSet.remove(staleNodeIds);
+
+    // Diff edges: update changed/new, remove stale
+    const newEdgeIds = new Set(newEdges.map(e => e.id).filter(Boolean));
+    const oldEdgeIds = liveEdgesDataSet.getIds();
+    liveEdgesDataSet.update(newEdges);
+    // Remove edges whose from/to no longer exist (vis handles this internally,
+    // but explicitly clean up by comparing ids when edges carry stable ids)
+    if (newEdgeIds.size > 0) {
+      const staleEdgeIds = oldEdgeIds.filter(id => !newEdgeIds.has(id));
+      if (staleEdgeIds.length > 0) liveEdgesDataSet.remove(staleEdgeIds);
+    } else {
+      // Edges have no explicit ids: replace all (vis regenerates positions from fixed coords)
+      liveEdgesDataSet.clear();
+      liveEdgesDataSet.add(newEdges);
+    }
+
+    // Restore viewport (vis may shift slightly on DataSet changes)
+    liveNetwork.moveTo({ position: viewPos, scale: viewScale, animation: false });
+
+    renderedEventCount = incomingEventCount;
+
+    // Update status line
+    const totalEvents = sessionRun.events.length;
+    const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
+    const agentCount  = newNodes.filter(n => n.id && String(n.id).startsWith('agent-')).length;
+    statusEl.textContent = `Updated in place: ${newNodes.length} node(s), ${newEdges.length} edge(s) — O(#agents) not O(events). Physics off.`;
+    infoEl.textContent = `Session: ${incomingSid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+    return;
+  }
+
+  // --- build-or-replace path ---
+  // Destroy previous network instance when switching sessions
+  if (liveNetwork) {
+    liveNetwork.destroy();
+    liveNetwork = null;
+    liveNodesDataSet = null;
+    liveEdgesDataSet = null;
+  }
+
   const { nodes, edges } = buildGraphData(sessionRun);
 
-  const visNodes = new vis.DataSet(nodes);
-  const visEdges = new vis.DataSet(edges);
+  liveNodesDataSet = new vis.DataSet(nodes);
+  liveEdgesDataSet = new vis.DataSet(edges);
 
   const options = {
     layout: { randomSeed: 1 },
@@ -1380,9 +1524,9 @@ function renderSessionGraph(sessionRun) {
     configure: { enabled: false },
   };
 
-  liveNetwork = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
+  liveNetwork = new vis.Network(container, { nodes: liveNodesDataSet, edges: liveEdgesDataSet }, options);
 
-  // Fit the graph into the container after initial draw
+  // fit() only on first render of a session / session switch — NOT on every refresh
   liveNetwork.once('afterDrawing', () => {
     liveNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
   });
@@ -1397,6 +1541,10 @@ function renderSessionGraph(sessionRun) {
       closeNodeDetail();
     }
   });
+
+  // Record what we just rendered
+  renderedSessionId = incomingSid;
+  renderedEventCount = incomingEventCount;
 
   // Status line
   const totalEvents = sessionRun.events.length;

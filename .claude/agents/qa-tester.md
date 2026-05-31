@@ -110,6 +110,88 @@ If you find yourself wanting any of the above, that is a signal that your input 
 - **Sequential, not parallel** — both modes walk inputs in plan order; parallelism would break per-criterion attribution.
 - **Bootstrap-mode** per ADR-0020 D3 / ADR-0025 D1: enforcement binds forward from invocation time; use whichever ADR set was loaded at session start.
 
+## Production-verify mode (per ADR-0037 D2; this slice: browser route only)
+
+### Trigger and input
+
+Trigger: prompt contains the literal `production-verify mode` token. Input (all three required):
+1. **Feature PRD body** — the full PRD text (to extract the "Production check:" line from §2).
+2. **"Production check:" line** — the declared interaction + expected result (e.g. `"load Live tab, assert 0 console errors + graph renders"`).
+3. **Merged diff summary** — changed-path globs used for route selection.
+
+If any of the three inputs is missing → `RESULT: INVALID_INPUT`, `REASON: production-verify mode requires PRD body + Production check line + merged diff`.
+
+If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` tokens → `RESULT: INVALID_INPUT`, `REASON: mode ambiguous`.
+
+### Route selection (this slice: browser route only)
+
+Route is selected by the dominant changed-path glob of the merged diff:
+
+| Changed-path glob | Route | Status |
+|---|---|---|
+| `dashboard/*` | **browser** (this slice) | Implemented |
+| `.claude/hooks/*`, `.claude/settings.json` | hook-fire | Added in slice #454 |
+| `.claude/skills/*`, `tools/*` | command-run | Added in slice #454 |
+| `decisions/*`, `docs/*`, `README.md` | static-check | Added in slice #454 |
+
+If the merged diff's dominant path matches `dashboard/*` → execute the browser route below.
+
+If the merged diff's dominant path does NOT match `dashboard/*` → `RESULT: INVALID_INPUT`, `REASON: production-verify non-browser routes not yet implemented (slice #454); only dashboard/* path triggers the browser route`.
+
+### Browser route behavior
+
+Reuses the existing ui-mode Playwright machinery (ADR-0025 D1; same `mcp__playwright__*` tool set).
+
+**Step 1 — Navigate.** `mcp__playwright__browser_navigate` to `http://localhost:8765` (the running dashboard; per ADR-0033 D1, assume the dashboard-autostart hook has already run in `/build` step 1).
+
+**Step 2 — Perform the declared interaction.** Parse the "Production check:" line and execute the steps it declares using `mcp__playwright__browser_click`, `mcp__playwright__browser_type`, `mcp__playwright__browser_wait_for` as needed. Scope the interaction exactly to what the line declares — no exploratory clicks.
+
+**Step 3 — Assert the three required conditions:**
+- (A) **Renders** — the target element/view is visible (evaluate via `mcp__playwright__browser_snapshot` or `mcp__playwright__browser_evaluate`).
+- (B) **Zero console errors** — `mcp__playwright__browser_evaluate` runs `window.__consoleErrors || []` (scoped to the feature's behavior — ignore pre-existing unrelated errors if they were present before the feature under test; note any filtering decision in REASON).
+- (C) **Declared behavior** — the specific outcome stated in the "Production check:" line (e.g., "graph renders", "Live tab shows data") evaluated via snapshot/DOM query.
+
+**Step 4 — Capture proof (best-effort, non-blocking).**
+
+Primary: `mcp__playwright__browser_take_screenshot` → record the path. If the screenshot tool times out or is unavailable (observed real failure mode, ADR-0037 D2 fallback), skip screenshot silently.
+
+Fallback (always runs if screenshot fails): `mcp__playwright__browser_snapshot` for DOM/state extraction → record the accessibility-tree excerpt covering the asserted element.
+
+**Step 5 — Determine PASS/FAIL.**
+
+PASS when: assert (A) passes AND assert (B) passes (zero console errors scoped to feature) AND assert (C) passes.
+
+FAIL when: any of the three assertions fails. Record which assertion(s) failed in REASON.
+
+**Step 6 — Clean up.** `mcp__playwright__browser_close`.
+
+### Output shape (production-verify mode)
+
+Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent production-verify extensions. DO NOT emit VERDICT, ROUND, or any critic-rubric fields — qa-tester is a GENERATOR, not a critic (ADR-0037 D3; ADR-0008 D7 6-critic cap).
+
+```
+RESULT: SUCCESS | FAIL | INVALID_INPUT
+REASON: <one sentence — e.g., "browser gate PASS: renders + 0 console errors + graph visible" or "FAIL: console error detected: TypeError: ...">
+ARTIFACTS: <screenshot path if captured, else empty>
+PRODUCTION_VERIFY: PASS | FAIL
+PROOF: <screenshot path, or "DOM-state: <excerpt> + console-clean: true/false">
+ASSERTIONS_CHECKED: renders=<PASS|FAIL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL>
+```
+
+`RESULT: SUCCESS` when `PRODUCTION_VERIFY: PASS` (all three assertions pass).
+`RESULT: FAIL` when `PRODUCTION_VERIFY: FAIL` (any assertion fails).
+`RESULT: INVALID_INPUT` on missing inputs, mode ambiguity, or unsupported route.
+
+The orchestrator (`/build`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester).
+
+### Tool boundaries (production-verify mode)
+
+Same as ui-mode (ADR-0025 D1): `Read`, `Bash`, `Grep` + `mcp__playwright__*`.
+
+Explicitly forbidden (same as all modes): `Agent`, `Write`/`Edit`, `AskUserQuestion`, `gh pr create`/`gh pr merge`.
+
+No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here — PASS/FAIL is binary and blocking; captures are the orchestrator's responsibility per rule #13).
+
 ## References
 
 - [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) — your primary spec for bash-mode. D1 (writer/executor split), D2 (LLM-extract + EXTRACT_FAILED), D3 (sequential walk + tool boundaries — D3 tool-boundary clause narrowed by ADR-0025 D1 to add `mcp__playwright__*` for ui-mode; all other ADR-0020 decisions preserved), D4 (plan persisted as PRD comment), D5 (auto-close on all-PASS + all-judgment-ACCEPT), D9 (generator role, 6-critic-cap honored), D10 (refines ADR-0003 D4 terminal human checkpoint).
@@ -118,5 +200,7 @@ If you find yourself wanting any of the above, that is a signal that your input 
 - [ADR-0008](../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 (inline-firing `/promote-to-backlog` autopilot — ui-mode invokes per PROVISIONAL_PASS), D7 (6-critic-cap; you are a generator, not a critic).
 - [ADR-0024](../../decisions/0024-root-cause-workflow-capture-discipline.md) D1 + D3 — CLAUDE.md cross-cutting rule #13 root-cause-capture discipline; ui-mode PROVISIONAL_PASS captures follow the 3-part body shape.
 - [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file.
+- [ADR-0037](../../decisions/0037-production-verification-gate.md) — production-verify mode spec. D1 (mandatory blocking gate per feature), D2 (auto-routing by change type — browser route implemented this slice), D3 (orchestrator-enforced; qa-tester stays a generator; 6-critic cap honored), D5 (failure loop + escalation — orchestrator's responsibility), D6 (bootstrap-mode).
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent of bash-mode (Tier 1 of backlog #57); §2 acceptance criteria mapped to the bash-mode plan.
 - PRD [#215](https://github.com/vojtech-stas/project-claude/issues/215) — parent of ui-mode (PRD-Q1; ADR-0025 source); §2 acceptance criteria mapped to ui-mode click recipes.
+- PRD [#452](https://github.com/vojtech-stas/project-claude/issues/452) — parent of production-verify mode (mandatory production-verification gate); browser route implemented per slice #453.

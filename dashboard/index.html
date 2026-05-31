@@ -1043,30 +1043,40 @@ const NODE_COLORS = {
   prd:          '#eab308',  // amber
 };
 
-// Dispatch map grounded in skill bodies + ADR-0003.
-// Keys = skill name (matches discover_skills names); values = array of subagent/skill names dispatched.
-// Skills can dispatch other SKILLS (ship→to-prd) or AGENTS (to-prd→prd-critic); colored by true type.
+// Dispatch map grounded in ADR-0034 D1 (/build conductor) + ADR-0003 (pipeline).
+// Keys = skill/agent name; values = array of child skill/agent names dispatched.
+// Skills can dispatch other SKILLS (build→ship→to-prd) or AGENTS (to-prd→prd-critic);
+// nodes are colored by their TRUE type (skill=purple, generator=green, critic=orange).
+// Hierarchy: orchestrator → build (primary pipeline entry) + utility siblings.
 const DISPATCH_MAP = {
-  // ship orchestrates the full PRD→merge pipeline
+  // build is the primary full-lifecycle conductor (ADR-0034 D1)
+  'build':             ['grill-me', 'ship', 'qa-plan'],
+  // ship orchestrates the full PRD→merge pipeline (ADR-0003)
   'ship':              ['to-prd', 'to-issues', 'implementer', 'reviewer'],
   // to-prd runs joint-APPROVE gate with both critics
-  'to-prd':           ['prd-critic', 'adr-critic'],
+  'to-prd':            ['prd-critic', 'adr-critic'],
   // to-issues runs slicer + slicer-critic
   'to-issues':         ['slicer', 'slicer-critic'],
-  // qa-plan dispatches qa-tester for acceptance testing
+  // qa-plan dispatches qa-tester for acceptance testing (downstream, at acceptance)
   'qa-plan':           ['qa-tester'],
-  // glossary-add and glossary-fold each gate through glossary-critic
+  // utility skills — orchestrator/agent-invoked siblings, NOT under build
   'glossary-add':      ['glossary-critic'],
   'glossary-fold':     ['glossary-critic'],
-  // promote-to-backlog gates through backlog-critic
   'promote-to-backlog': ['backlog-critic'],
-  // build orchestrates grill-me → ship → qa-plan
-  'build':             ['grill-me', 'ship', 'qa-plan'],
-  // leaves — dispatch nothing; shown as orchestrator-run leaf skills
+  // leaves — dispatch nothing
   'grill-me':          [],
   'audit-meta':        [],
   'audit-subagents':   [],
 };
+
+// Direct children of the orchestrator node.
+// build is the primary pipeline entry; utility skills are siblings (not under build).
+const ORCHESTRATOR_CHILDREN = [
+  'build',
+  'glossary-add', 'glossary-fold',
+  'promote-to-backlog',
+  'audit-meta', 'audit-subagents',
+];
 
 // Node type classification: is a given name a skill, generator, or critic?
 // Agents declared in .claude/agents/: critics and generators
@@ -1112,8 +1122,8 @@ async function loadArchitecture() {
 /**
  * Render the orchestration topology as a vis-network hierarchical graph.
  * Layout: physics OFF, hierarchical (LR). Root = orchestrator.
- * Level 1 = skills. Level 2 = subagents each skill dispatches.
- * Every skill/agent/hook from the API is placed — none silently dropped.
+ * Levels 1+ = recursive tree: orchestrator → build → ship → to-prd → critics (ADR-0034 D1 / ADR-0003).
+ * Every skill/agent from the API is placed — none silently dropped.
  */
 function renderTopologyGraph(data) {
   const containerEl = document.getElementById('topology-graph-container');
@@ -1169,35 +1179,45 @@ function renderTopologyGraph(data) {
     if (name) skillByName[name] = sk;
   }
 
-  // Render all skills known to DISPATCH_MAP first (preserves ordering)
-  const skillsRendered = new Set();
-  for (const skillName of Object.keys(DISPATCH_MAP)) {
-    const nodeId = 'skill:' + skillName;
-    addNode(nodeId, '/' + skillName, 'skill', 1, {});
-    addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
-    placedNames.add(skillName);
-    skillsRendered.add(skillName);
+  // Recursively render a node and all its DISPATCH_MAP children at the correct tree depth.
+  // Uses a unique node ID that encodes the path (parentId + ':' + name) so a skill appearing
+  // under multiple parents (e.g. glossary-critic under both glossary-add and glossary-fold)
+  // renders as a distinct visual node at each call site.
+  const skillsRendered = new Set(); // tracks names placed anywhere in tree (for catch-alls)
+  function renderNode(name, parentNodeId, level) {
+    const nodeType = nodeTypeForName(name);
+    const nodeId = parentNodeId + ':' + name;
+    const label = nodeType === 'skill' ? '/' + name : name;
+    addNode(nodeId, label, nodeType, level, {});
+    if (parentNodeId === 'orchestrator') {
+      addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
+    } else {
+      addEdge(parentNodeId, nodeId, NODE_COLORS[nodeType] + '99');
+    }
+    placedNames.add(name);
+    skillsRendered.add(name);
 
-    // Level 2: dispatched agents/skills
-    const dispatched = DISPATCH_MAP[skillName] || [];
+    // Recurse into DISPATCH_MAP children
+    const dispatched = DISPATCH_MAP[name] || [];
     for (const childName of dispatched) {
-      const childId = 'child:' + skillName + ':' + childName;
-      const childType = nodeTypeForName(childName);
-      const label = childType === 'skill' ? '/' + childName : childName;
-      addNode(childId, label, childType, 2, {});
-      addEdge(nodeId, childId, NODE_COLORS[childType] + '99');
-      placedNames.add(childName);
+      renderNode(childName, nodeId, level + 1);
     }
   }
 
-  // Any skills from the API not in DISPATCH_MAP → also orchestrator leaves
+  // Render the orchestrator's direct children and their full subtrees
+  for (const childName of ORCHESTRATOR_CHILDREN) {
+    renderNode(childName, 'orchestrator', 1);
+  }
+
+  // Any skills from the API not yet rendered → add as orchestrator leaves
   for (const sk of skillItems) {
     const name = sk.name || sk.stem || '';
     if (!name || skillsRendered.has(name)) continue;
-    const nodeId = 'skill:' + name;
+    const nodeId = 'orchestrator:' + name;
     addNode(nodeId, '/' + name, 'skill', 1, {});
     addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
     placedNames.add(name);
+    skillsRendered.add(name);
   }
 
   // Any agents from discover_agents not yet placed → add as unattached at level 2

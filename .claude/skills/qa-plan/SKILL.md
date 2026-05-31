@@ -1,11 +1,13 @@
 ---
 name: qa-plan
-description: Writer/orchestrator for QA automation per ADR-0020. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment for audit, dispatches the qa-tester subagent to execute, renders JUDGMENT and EXTRACT_FAILED rows via AskUserQuestion, and auto-closes the PRD on all-PASS + all-judgment-ACCEPT. Invoke at PRD acceptance — the terminal human checkpoint refined per ADR-0020 D10. Backward-compatible with /ship invocation surface.
+description: Writer/orchestrator for QA automation per ADR-0020, and the production-verify executor dispatched by /build (step 5) and /ship (step 6 standalone) per ADR-0037 D1. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment for audit, dispatches the qa-tester subagent to execute, renders JUDGMENT and EXTRACT_FAILED rows via AskUserQuestion, and auto-closes the PRD on all-PASS + all-judgment-ACCEPT. Invoke at PRD acceptance — the terminal human checkpoint refined per ADR-0020 D10. Backward-compatible with /ship invocation surface.
 ---
 
 # /qa-plan — writer/orchestrator for QA automation
 
 This skill runs in **main-agent context** (so it can call `AskUserQuestion`); it does not modify code. It distills PRD §2 prose into a mechanical plan, hands execution to the [`qa-tester`](../../agents/qa-tester.md) subagent, and renders judgment rows back to the user. Per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D1 the writer/executor split mirrors slicer + slicer-critic (one plans, one executes); per D10 the human checkpoint is refined (judge subjective outcomes, not run grep commands).
+
+**Role as production-verify executor (per [ADR-0037](../../../decisions/0037-production-verification-gate.md) D1):** `/build` (step 5) and standalone `/ship` (step 6) dispatch this skill — or qa-tester directly in production-verify mode — as the mandatory production-verification gate after all slices merge. In that role, the input is the PRD body + "Production check:" line + merged diff summary, and the output is a PASS/FAIL proof consumed by the orchestrator for blocking enforcement. This role is additive to, not a replacement for, the PRD-acceptance QA role described above.
 
 ## When NOT to use this skill
 
@@ -50,4 +52,6 @@ PRD_DISPOSITION: closed-completed | reopened-for-fix | culled | left-open-pendin
 - [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) — executor subagent dispatched at step 4.
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer schema.
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D4 — terminal human checkpoint (refined, not removed, per ADR-0020 D10).
+- [ADR-0037](../../../decisions/0037-production-verification-gate.md) D1 — mandatory blocking gate; this skill is the production-verify executor dispatched by /build step 5 and /ship step 6 (standalone).
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent PRD; this skill's rewrite is slice [#168](https://github.com/vojtech-stas/project-claude/issues/168).
+- PRD [#452](https://github.com/vojtech-stas/project-claude/issues/452) — production-verify gate PRD; this skill gains the production-verify executor role per slice #454.

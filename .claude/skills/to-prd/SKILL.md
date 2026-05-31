@@ -44,6 +44,8 @@ Who is hurting, how, and why now. One paragraph. Concrete language; no "we shoul
 
 The single observable outcome of shipping this PRD, plus a checklist of mechanically verifiable criteria. Each criterion must be checkable at merge (file exists with shape X, command Y produces output Z) — not by subjective judgment. End-to-end quality validation belongs in the QA-plan handoff, not these criteria.
 
+**Production check:** <what to exercise in the live running context + expected result — e.g., "load http://localhost:8765/live-tab, assert 0 console errors + graph renders". For non-runnable features: "N/A — docs-only, static: grep -c '<term>' <file> ≥ 1". Required; a missing or vague entry BLOCKs the PRD at prd-critic (PC-PRODUCTION-CHECK, ADR-0037 D4).>
+
 ## 3. Non-goals / Out of scope
 
 A bulleted list of things deliberately NOT in this PRD, each with a one-line reason. Empty or TBD non-goals are not acceptable — a PRD without explicit non-goals will drift.

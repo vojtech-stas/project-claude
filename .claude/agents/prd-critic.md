@@ -133,6 +133,29 @@ Solution sketch enumerates work-units; stays within stated feature; implies walk
 
 ---
 
+### PC-PRODUCTION-CHECK
+
+PRD §2 contains an actionable "Production check:" line (per [ADR-0037](../../decisions/0037-production-verification-gate.md) D4).
+
+**Mechanic:** Read PRD §2. Locate the line starting with `**Production check:**` or `Production check:`.
+
+**Check — presence:** If the line is absent → FAIL with `"PC-PRODUCTION-CHECK: §2 is missing the required 'Production check:' line (ADR-0037 D4)"`.
+
+**Check — actionability:** If the line is present, it must be one of:
+- **Runnable exercise** — a concrete interaction + expected result (e.g. `"load Live tab, refresh 5×, assert 0 console errors + graph renders"`). Contains a verb (load/run/navigate/assert/check/fire/grep) + an expected outcome.
+- **Static / N/A form** — `"N/A — docs-only, static: <grep-or-assertion>"` — names a specific grep pattern or file-assertion.
+
+Unacceptable (FAIL) forms:
+- `"Production check: TBD"` or `"Production check: N/A"` (without the static assertion) → `"PC-PRODUCTION-CHECK: 'Production check:' line is non-actionable — must name what to exercise + expected result, or 'N/A — docs-only, static: <assertion>' (ADR-0037 D4)"`.
+- An empty value after the colon → same FAIL.
+- A vague verb-free sentence (e.g. `"The dashboard should work"`) → same FAIL.
+
+**Rationale:** The `qa-tester` production-verify gate reads this line verbatim to know what to exercise (ADR-0037 D2 + D4). A missing or non-actionable line either breaks the gate (INVALID_INPUT) or causes it to exercise the wrong thing — catching non-actionability at PRD time costs one revision round; a broken gate post-merge costs a re-ship loop.
+
+**Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: load http://localhost:8765/live-tab, assert 0 console errors"` → PASS.
+
+---
+
 ### ADR consistency sub-check
 
 The PRD must not contradict any accepted ADR. If a PRD references `ADR-XXXX` and that file does not exist on origin/main, **BLOCK with the literal finding `"ADR-XXXX referenced but not present"`** (substituting the actual number).
@@ -186,4 +209,5 @@ You may NOT:
 - ADR-0005 D1 (5-section verdict template + CRITIC trailer schema)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
 - ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; KB layer retired per ADR-0032.
+- ADR-0037 D4 — PC-PRODUCTION-CHECK rubric rule: PRD §2 must contain an actionable "Production check:" line.
 - `.claude/skills/to-prd/SKILL.md` — calls this subagent

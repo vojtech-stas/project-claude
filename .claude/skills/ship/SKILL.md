@@ -32,19 +32,49 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
    - **5d. Forward-block** (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4). Apply `needs-human` to the failed slice; move transitive-downstream slices from `pending` → `blocked`; post one summary comment per failure event on the parent PRD (mirrors reviewer's I5 surface). **In-flight parallel siblings finish normally** — do NOT cancel. **Slices with other unmet deps proceed normally** through their natural batches; failure is locally contained to the failed slice's downstream cone.
    - **5e. Terminal-state collection.** Capture each `PR_URL` from SUCCESS slices (merged or under-review), the `blocked` set, and the snapshot of `in_flight` at the moment the FIRST failure was observed.
 
-6. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, and any forward-block summary (failed slice + downstream blocked + needs-human PRs). Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
+6. **Production-verify gate (MANDATORY when `/ship` is invoked standalone — per ADR-0037 D1).**
+
+   **Dedup rule:** When `/build` calls `/ship` internally (step 3 of `/build`), the production-verify gate is owned by `/build` step 5 — `/ship` does NOT run it. Standalone `/ship` runs it; `/build`-nested `/ship` does NOT. Distinguish by whether the caller is `/build` (caller passes `invoked_by: build` context) or a direct user invocation.
+
+   When running standalone: dispatch `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
+
+   Input to pass:
+   - The full PRD body (fetch via `gh issue view <PRD_NUMBER> --json body`)
+   - The "Production check:" line extracted from PRD §2
+   - A merged diff summary (changed-path globs from the implementation PRs in step 5)
+
+   **Result handling (loop per ADR-0037 D5):** up to 3 rounds.
+
+   **PASS** (`PRODUCTION_VERIFY: PASS`):
+   - Surface the proof: print `PROOF:` + `ROUTE:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
+   - Log: `"Production gate PASS (round <N>): feature verified."`
+   - Proceed to step 7.
+
+   **FAIL** (and `round < 3`):
+   - Surface the failure proof (REASON + PROOF + ASSERTIONS_CHECKED).
+   - Re-dispatch the implementer (isolated, ADR-0036) with the proof: `"Production gate FAIL (round <N>): <reason>. Proof: <proof>. Fix and push."` The implementer opens a new PR; reviewer merges it. Re-run step 5 (re-ship) → re-run step 6 (gate).
+
+   **FAIL on round 3** (escalation per ADR-0037 D5 / I5):
+   - `gh issue edit <PRD_NUMBER> --add-label needs-human`
+   - `gh issue comment <PRD_NUMBER> --body "Production gate FAIL after 3 rounds. Blocked. Proof: <REASON> | <PROOF> | Assertions: <ASSERTIONS_CHECKED>. Human review required."`
+   - Return `RESULT: BLOCKED` in the /ship trailer.
+
+   **INVALID_INPUT from qa-tester:** surface the reason and STOP — do not loop.
+
+7. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, any forward-block summary, and (standalone) the production-verify proof. Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
 
    ```
-   RESULT: SUCCESS | STOPPED | INVALID_INPUT
+   RESULT: SUCCESS | STOPPED | INVALID_INPUT | BLOCKED
    REASON: <one sentence>
    ARTIFACTS: <PRD URL>, <slice URLs comma-separated>
    SLICE_COUNT: <N>
    IMPLEMENTATION_PRS: <comma-separated PR URLs from implementer invocations; empty if pipeline halted before stage 4>
    BLOCKED_SLICES: <comma-separated slice numbers in the `blocked` set per 5d; empty if no failures>
    IN_FLIGHT_AT_FAILURE: <comma-separated slice numbers in `in_flight` at the moment of FIRST failure per 5e; empty if no failures>
+   PRODUCTION_VERIFY: <PASS | FAIL | not-reached | skipped-nested>
    ```
 
-   `SLICE_COUNT` / `IMPLEMENTATION_PRS` / `BLOCKED_SLICES` / `IN_FLIGHT_AT_FAILURE` are per-agent extensions appended after `ARTIFACTS` so human triage and post-run audits find every stuck slice without re-parsing. On `STOPPED` / `INVALID_INPUT`, `ARTIFACTS` may be partial or empty; the extensions are `0` / empty.
+   `SLICE_COUNT` / `IMPLEMENTATION_PRS` / `BLOCKED_SLICES` / `IN_FLIGHT_AT_FAILURE` / `PRODUCTION_VERIFY` are per-agent extensions appended after `ARTIFACTS` so human triage and post-run audits find every stuck slice without re-parsing. `PRODUCTION_VERIFY: skipped-nested` when `/build` owns the gate; `PRODUCTION_VERIFY: not-reached` when the pipeline halted before step 6. On `STOPPED` / `INVALID_INPUT`, `ARTIFACTS` may be partial or empty; the extensions are `0` / empty.
 
 ## References
 
@@ -53,8 +83,9 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 - [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) — D2 (auto-invoke implementer), D3 (DAG-aware parallel batching), D4 (forward-block failure handling), D5 (sequential walking-skeleton baseline).
 - [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) — D1 (every implementer dispatch isolated regardless of batch size, superseding ADR-0035 D1's batch-size-≥2 condition); D2 (every reviewer dispatch also isolated); D3 (dispatched subagents never mutate the orchestrator's session worktree or root repo).
 - [ADR-0035](../../../decisions/0035-worktree-isolation-parallel-dispatch.md) — D1 (superseded by ADR-0036 D1 for the batch-size condition; parallel-batch race origin of the isolation mechanism); D2 (isolation lives in orchestrator; implementer unchanged).
+- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer for standalone invocations), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode; dedup with /build nested invocations).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
-- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Sibling skill (terminal human checkpoint): [`.claude/skills/qa-plan/SKILL.md`](../qa-plan/SKILL.md).
+- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6 (standalone): [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 
 ## Local vocabulary
 

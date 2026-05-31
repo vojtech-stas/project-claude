@@ -1255,8 +1255,8 @@ function renderTopologyGraph(data) {
     interaction: {
       hover: true,
       tooltipDelay: 100,
-      zoomView: true,
-      dragView: true,
+      zoomView: false,
+      dragView: false,
       dragNodes: false,
       selectConnectedEdges: true,
     },
@@ -2405,9 +2405,9 @@ function renderSessionGraph(sessionRun, cycleIdx) {
     interaction: {
       hover: true,
       tooltipDelay: 120,
-      zoomView: true,
-      dragView: true,
-      dragNodes: true,
+      zoomView: false,
+      dragView: false,
+      dragNodes: false,
       selectConnectedEdges: true,
     },
     nodes: {

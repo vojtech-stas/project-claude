@@ -1,6 +1,6 @@
 ---
 name: build
-description: Full-lifecycle orchestrator — one command from idea to merged + verified PR. Use when user says "/build", "build this", "implement this", "let's ship", or wants to drive a feature all the way through from idea to QA. Chains dashboard-autostart → grill (conditional) → /ship → doc-regeneration → /qa-plan. Thin conductor per ADR-0034 D1; sub-skills remain standalone.
+description: Full-lifecycle orchestrator — one command from idea to merged + verified PR. Use when user says "/build", "build this", "implement this", "let's ship", or wants to drive a feature all the way through from idea to production-verified done. Chains dashboard-autostart → grill (conditional) → /ship → doc-regeneration → production-verify gate (mandatory, blocking per ADR-0037 D1). Thin conductor per ADR-0034 D1; sub-skills remain standalone.
 tools:
   - Bash
   - Read
@@ -10,7 +10,9 @@ tools:
 
 # /build — full-lifecycle orchestrator
 
-Chains five stages — dashboard-check → grill (conditional, ADR-0034 D3) → `/ship` → regenerate-docs → `/qa-plan` — so the human drives a feature from raw idea to merged + verified PR with one command. Thin per ADR-0034 D1: `/build` owns ONLY the chaining logic and checkpoint transitions; each sub-skill handles its own domain. Sub-skills remain individually invocable (ADR-0034 D2).
+Chains five stages — dashboard-check → grill (conditional, ADR-0034 D3) → `/ship` → regenerate-docs → production-verify gate (mandatory, blocking, ADR-0037 D1) — so the human drives a feature from raw idea to merged + production-verified done with one command. Thin per ADR-0034 D1: `/build` owns ONLY the chaining logic and checkpoint transitions; each sub-skill handles its own domain. Sub-skills remain individually invocable (ADR-0034 D2).
+
+**The production-verify gate (step 5) is MANDATORY and blocking.** A feature is NOT "done" until `qa-tester` returns `PRODUCTION_VERIFY: PASS`. Per ADR-0037 D1.
 
 Full design rationale: [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) D1-D3.
 
@@ -67,32 +69,66 @@ python "${CLAUDE_PROJECT_DIR}/dashboard/server.py" --generate-readme
 
 If the generator exits non-zero, emit a warning with the error output and continue — doc-regeneration failure is a soft error at this step (the reviewer's `R-DOCS-CURRENT` rule is the hard gate). If it exits zero, confirm `README.md` updated (note byte count).
 
-### Step 5 — QA (HITL acceptance)
+### Step 5 — Production-verify gate (MANDATORY, blocking — per ADR-0037 D1)
 
-Invoke [`.claude/skills/qa-plan/SKILL.md`](../qa-plan/SKILL.md) against the PRD that `/ship` created (use the `PRD_URL` from step 3's trailer to derive the PRD issue number).
+This step replaces the former optional `/qa-plan` tail with a **mandatory blocking production-verification gate**. A feature is NOT "done" until it passes.
 
-`/qa-plan` runs: LLM-extract §2 criteria → dispatch `qa-tester` → render JUDGMENT rows via `AskUserQuestion` → auto-close PRD on all-PASS + all-judgment-ACCEPT.
+**Dispatch** `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
 
-**Result check:** capture the `PRD_DISPOSITION` field from `/qa-plan`'s trailer for the final report.
+Input to pass:
+- The full PRD body (use PRD issue number from step 3's `PRD_URL`; fetch via `gh issue view <N> --json body`)
+- The "Production check:" line extracted from PRD §2
+- A merged diff summary (changed-path globs; derive from the implementation PRs in step 3's `IMPLEMENTATION_PRS`)
+
+**Result handling (loop per ADR-0037 D5):**
+
+The gate runs up to **3 rounds total**. Track round count; increment on each FAIL.
+
+**PASS** (`PRODUCTION_VERIFY: PASS` in qa-tester's trailer):
+- Surface the proof to the user: print `PROOF:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
+- Log a confirmation line: `"Production gate PASS (round <N>): feature verified in production."`
+- Mark the feature done; proceed to output.
+
+**FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:
+- Surface the failure proof to the user (REASON + PROOF + ASSERTIONS_CHECKED from qa-tester's trailer).
+- Re-dispatch the **implementer** (isolated, ADR-0036) with the proof of what broke: `"Production gate FAIL (round <N>): <reason>. Proof: <proof>. Fix the production failure and push a new commit to the same branch; the gate will re-run."` The implementer opens a new PR (or force-updates the existing branch if appropriate — the slice is still open) and the reviewer merges it.
+- Re-run step 3 (ship the fix) → re-run step 4 (regen docs) → re-run step 5 (production-verify again).
+
+**FAIL on round 3** — escalation per ADR-0037 D5 / CLAUDE.md I5:
+- Apply `needs-human` label to the parent PRD: `gh issue edit <PRD_NUMBER> --add-label needs-human`
+- Post a summary comment on the parent PRD: `gh issue comment <PRD_NUMBER> --body "Production gate FAIL after 3 rounds. Feature is blocked. Proof of last failure: <REASON> | <PROOF> | Assertions: <ASSERTIONS_CHECKED>. Human review required."`
+- Return `RESULT: BLOCKED` in the /build trailer.
+
+**One gate per feature:** do NOT double-run this gate if `/ship` is also wired to gate (slice #454). The gate in `/build` is sufficient; `/ship` standalone gating is slice #454 scope.
+
+**INVALID_INPUT from qa-tester:** surface the reason and STOP — do not loop on malformed input.
 
 ## Output
 
 After step 5, emit the canonical **GENERATOR trailer** as a fenced code block:
 
 ```
-RESULT: SUCCESS | STOPPED | INVALID_INPUT
-REASON: <one sentence — e.g., "full lifecycle complete; PRD #N closed; <M> slices merged">
+RESULT: SUCCESS | STOPPED | INVALID_INPUT | BLOCKED
+REASON: <one sentence — e.g., "full lifecycle complete; PRD #N production-verified; <M> slices merged">
 ARTIFACTS: <PRD URL, comma-separated implementation PR URLs>
 SHIP_RESULT: <RESULT field from /ship's trailer>
-PRD_DISPOSITION: <PRD_DISPOSITION from /qa-plan's trailer, or "not-reached" if pipeline halted before step 5>
+PRODUCTION_VERIFY: <PASS | FAIL | not-reached>
+PROOF: <proof string from qa-tester's trailer, or "not-reached">
 BLOCKED_SLICES: <from /ship's trailer; empty if none>
 ```
 
+`RESULT: SUCCESS` when all slices merged AND production gate PASS.
+`RESULT: BLOCKED` when production gate fails after 3 rounds (needs-human applied).
+`RESULT: STOPPED` when any earlier stage halts (grill incomplete, /ship failure).
+
 ## References
 
+- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester stays a generator), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode)
 - [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) — D1 (thin orchestrator), D2 (sub-skills atomic), D3 (grill-conditional + no blocking question), D7 (doc-generator), D10 (generator is subprocess-invoked, not hook-spawned)
+- [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) — isolated dispatch of qa-tester + implementer
 - [ADR-0033](../../../decisions/0033-tooling-spawn-hook-scope.md) — D1 (tooling-spawn carveout; dashboard-autostart.sh authorized)
-- Sub-skills this skill chains: [`.claude/skills/grill-me/SKILL.md`](../grill-me/SKILL.md), [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md), [`.claude/skills/qa-plan/SKILL.md`](../qa-plan/SKILL.md)
+- Sub-skills this skill chains: [`.claude/skills/grill-me/SKILL.md`](../grill-me/SKILL.md), [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md)
+- qa-tester subagent (production-verify mode): [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md)
 - Dashboard autostart hook: [`.claude/hooks/dashboard-autostart.sh`](../../hooks/dashboard-autostart.sh) (ships PRD #345 slice 2, PR #350)
 - Doc-generator: `dashboard/server.py --generate-readme` (ships PRD #348 slice 1, i.e., slice #361)
 - Output-shape standard (GENERATOR trailer schema): per ADR-0005 D1c

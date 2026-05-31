@@ -1562,12 +1562,11 @@ function buildGraphData(sessionRun) {
   // One purple node per skill_invoke; orch → skill edge; skill → agents/bashes below.
   // Skill nodes are placed to the far right column cluster, stacked by timestamp.
   const skillNodeXBase = (spans.length > 0) ? (spanX(spans.length - 1) + X_SPACING) : X_SPACING;
-  const addedSkillEdges = new Set(); // nodeId → already has orch→skill edge
 
   for (let wi = 0; wi < skillWindows.length; wi++) {
     const w = skillWindows[wi];
     const skillY   = normY(w.startSec);
-    const skillColor = { background: '#7e22ce', border: '#a855f7', highlight: { background: '#a855f7', border: '#c084fc' } };
+    const skillColor = { background: NODE_COLORS.skill, border: '#c084fc', highlight: { background: '#c084fc', border: '#e9d5ff' } };
 
     nodeDetailMap[w.nodeId] = {
       kind: 'skill',
@@ -1594,7 +1593,6 @@ function buildGraphData(sessionRun) {
       color: { color: NODE_COLORS.skill + '88', highlight: NODE_COLORS.skill },
       smooth: { type: 'curvedCW', roundness: 0.15 },
     });
-    addedSkillEdges.add(w.nodeId);
   }
 
   // Per-agent span nodes + their bash bubbles

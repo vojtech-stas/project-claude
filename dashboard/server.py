@@ -7,8 +7,9 @@ Serves: GET /               -> dashboard/index.html
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
-        GET /api/runs?n=N     -> last-N runs grouped by session_id (tail-seek)
-        GET /api/runs?before=<session_id> -> older runs cursor (for "show older")
+        GET /api/runs?n=N     -> last-N run metadata (no events) grouped by session_id
+        GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
+        GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -799,16 +800,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"error": message}, status)
 
     def _serve_runs(self, query: dict) -> dict:
-        """Return last-N complete runs grouped by session_id — tail-seek, no full-file read.
+        """Return run metadata or a single session's events — tail-seek, no full-file read.
 
         Query params:
-          n / limit : int  — how many runs to return (default 2)
-          before    : str  — session_id cursor; return runs that appear BEFORE
-                            (i.e. older than) this session in the file.
+          n / limit : int  — how many runs to return (default 2); metadata-only
+          before    : str  — session_id cursor; return runs BEFORE it (metadata-only)
+          session   : str  — return ONE session's full events as {run:{...events:[]}}
 
-        Returns: {runs: [{session_id, first_ts, last_ts, events: [...]}]}
+        Metadata response: {runs: [{session_id, first_ts, last_ts, event_count}]}
+          (no events array — keeps the hot-path payload small even for huge logs)
+        Single-session response: {run: {session_id, first_ts, last_ts, events: [...]}}
+
         Runs are ordered newest-first (by first_ts descending).
-        Events within each run are time-ordered (ascending, as logged).
+        Events within a run are time-ordered (ascending, as logged).
         Events without a session_id are grouped under "unknown".
 
         Implementation: reads the file backwards in 64 KiB chunks to collect
@@ -819,9 +823,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """
         log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
         if not log_path.exists():
+            # Return appropriate empty shape depending on query mode
+            if (query.get("session") or [""])[0]:
+                return {"run": None}
             return {"runs": []}
 
-        # Parse query params
+        # --- ?session=<id> branch: return ONE session's full events ---
+        session_id_filter = (query.get("session") or [""])[0]
+        if session_id_filter:
+            try:
+                lines_reversed = _iter_lines_reversed(log_path)
+                events_reversed: list = []
+                sid_seen = False
+                for raw in lines_reversed:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = json.loads(raw)
+                    except Exception:
+                        continue
+                    sid = obj.get("session_id") or "unknown"
+                    if sid == session_id_filter:
+                        sid_seen = True
+                        events_reversed.append(obj)
+                    elif sid_seen:
+                        # We've moved past the target session (reading reversed)
+                        break
+                events = list(reversed(events_reversed))
+                if not events:
+                    return {"run": None}
+                return {"run": {
+                    "session_id": session_id_filter,
+                    "first_ts": events[0].get("ts", ""),
+                    "last_ts": events[-1].get("ts", ""),
+                    "events": events,
+                }}
+            except Exception:
+                return {"run": None}
+
+        # --- Default: metadata-only for ?n=N / ?before= ---
         try:
             n = int((query.get("n") or query.get("limit") or ["2"])[0])
         except (ValueError, IndexError, TypeError):
@@ -837,8 +878,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Read lines backward via chunk-seek so we never load the full file
             lines_reversed = _iter_lines_reversed(log_path)
 
-            # Collect session groups in reverse insertion order (newest first)
-            sessions_newest_first: list = []  # list of (sid, [event, ...])
+            # Collect session groups in reverse insertion order (newest first).
+            # We only track metadata (first_ts, last_ts, event_count) — no events list.
+            sessions_newest_first: list = []  # list of (sid, first_ts, last_ts, count)
             sid_to_idx: dict = {}
 
             # When before_cursor is set we skip all sessions that appear AFTER
@@ -873,26 +915,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         in_before_skip = False
                         # Fall through to process this line normally
 
+                ts = obj.get("ts", "")
                 if sid not in sid_to_idx:
                     if len(sessions_newest_first) >= n:
                         break  # have enough sessions; stop reading
                     sid_to_idx[sid] = len(sessions_newest_first)
-                    sessions_newest_first.append((sid, [obj]))
+                    # (sid, first_ts_placeholder, last_ts, count)
+                    # Reading reversed: first line we see is the LAST event
+                    sessions_newest_first.append([sid, ts, ts, 1])
                 else:
                     idx = sid_to_idx[sid]
-                    sessions_newest_first[idx][1].append(obj)
+                    entry = sessions_newest_first[idx]
+                    # Reading reversed: ts of each subsequent line is EARLIER
+                    # → update first_ts to this (earlier) timestamp
+                    entry[1] = ts  # first_ts moves backward as we read
+                    entry[3] += 1  # increment count
 
         except Exception:
             return {"runs": []}
 
         runs = []
-        for sid, events_reversed in sessions_newest_first:
-            # Events were collected newest-to-oldest; reverse to get time order
-            events = list(reversed(events_reversed))
-            first_ts = events[0].get("ts", "") if events else ""
-            last_ts = events[-1].get("ts", "") if events else ""
+        for sid, first_ts, last_ts, event_count in sessions_newest_first:
             runs.append({"session_id": sid, "first_ts": first_ts,
-                         "last_ts": last_ts, "events": events})
+                         "last_ts": last_ts, "event_count": event_count})
 
         # Already newest-first from reversed iteration; sort is belt-and-suspenders
         runs.sort(key=lambda r: r["first_ts"], reverse=True)

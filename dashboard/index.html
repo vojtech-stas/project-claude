@@ -742,7 +742,7 @@ function renderComponentGraph(data) {
   );
   const adrItems = (data.adrs || []).filter(a => edgeTargetAdrs.has(a.name));
 
-  // Fix C: render ALL skills/agents/hooks regardless of edges; ADRs = edge-targets only
+  // Fix C: render ALL skills/agents/hooks regardless of edges; ADRs = edge-targets only (graph)
   const sections = [
     { title: 'Skills', items: data.skills || [], dotClass: 'dot-skill' },
     { title: 'Agents', items: data.agents || [], dotClass: null },
@@ -751,7 +751,7 @@ function renderComponentGraph(data) {
       // Fix C: hooks display "fires on <event> → <description>"
       descFn: item => `fires on ${item.event}${item.description ? ' → ' + item.description : ''}`,
     },
-    { title: 'ADRs (edge targets)', items: adrItems, dotClass: 'dot-adr' },
+    { title: 'ADRs', items: data.adrs || [], dotClass: 'dot-adr' },
   ];
   for (const s of sections) {
     if (!s.items || s.items.length === 0) continue;
@@ -1244,8 +1244,9 @@ function buildGraphData(sessionRun) {
 }
 
 /**
- * Fetch recent sessions (n=10) from /api/runs, populate the session selector,
- * and render the latest session's graph.  On Refresh: re-fetch + re-render.
+ * Fetch recent sessions (metadata-only, n=10) from /api/runs, populate the
+ * session selector, then fetch the selected session's full events and render.
+ * On Refresh: re-fetch metadata + (only) the current session's events.
  */
 async function renderLiveGraph() {
   const statusEl = document.getElementById('live-status');
@@ -1261,14 +1262,11 @@ async function renderLiveGraph() {
     return;
   }
 
-  // Populate session selector
+  // Populate session selector (metadata only — uses event_count)
   populateSessionSelector();
 
-  // Render the selected (or latest) session
-  const sel = document.getElementById('session-select');
-  const selectedIdx = sel ? parseInt(sel.value, 10) : 0;
-  const sessionRun = sessionRunsCache[isNaN(selectedIdx) ? 0 : selectedIdx] || null;
-  renderSessionGraph(sessionRun);
+  // Fetch and render the selected (or latest) session's events
+  await fetchAndRenderSelectedSession();
 }
 
 function populateSessionSelector() {
@@ -1284,7 +1282,7 @@ function populateSessionSelector() {
     const sid = run.session_id || 'unknown';
     const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 12) + '…';
     const ts = fmtTs(run.first_ts) || '?';
-    const evCount = (run.events || []).length;
+    const evCount = run.event_count != null ? run.event_count : '?';
     const opt = document.createElement('option');
     opt.value = String(idx);
     opt.textContent = sidShort + '  ' + ts + '  (' + evCount + ' events)';
@@ -1300,12 +1298,33 @@ function populateSessionSelector() {
   }
 }
 
-function onSessionSelectChange() {
-  closeNodeDetail();
+/**
+ * Fetch the currently-selected session's full events from /api/runs?session=<id>
+ * and call renderSessionGraph with the result.
+ */
+async function fetchAndRenderSelectedSession() {
   const sel = document.getElementById('session-select');
-  const idx = parseInt(sel ? sel.value : '0', 10);
-  const sessionRun = sessionRunsCache && sessionRunsCache[isNaN(idx) ? 0 : idx] || null;
-  renderSessionGraph(sessionRun);
+  const idx = sel ? parseInt(sel.value, 10) : 0;
+  const meta = sessionRunsCache && sessionRunsCache[isNaN(idx) ? 0 : idx] || null;
+  if (!meta) {
+    renderSessionGraph(null);
+    return;
+  }
+  const statusEl = document.getElementById('live-status');
+  statusEl.textContent = 'Loading session events…';
+  try {
+    const r = await fetch('/api/runs?session=' + encodeURIComponent(meta.session_id));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderSessionGraph(data.run || null);
+  } catch (err) {
+    statusEl.textContent = 'Error loading session events: ' + err.message;
+  }
+}
+
+async function onSessionSelectChange() {
+  closeNodeDetail();
+  await fetchAndRenderSelectedSession();
 }
 
 /**
@@ -1487,9 +1506,9 @@ function startLiveGraph() {
   // Auto-refresh every 30 seconds so the graph picks up new events.
   // On each tick, bust the cache so fresh data is fetched; the selector
   // stays at the currently-selected option after populateSessionSelector().
-  liveRefreshTimer = setInterval(function() {
+  liveRefreshTimer = setInterval(async function() {
     sessionRunsCache = null;
-    renderLiveGraph();
+    await renderLiveGraph();
   }, 30000);
 }
 

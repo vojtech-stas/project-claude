@@ -24,7 +24,7 @@ import subprocess
 import sys
 import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -833,6 +833,7 @@ def _gh_list(args: list, timeout: int = 10) -> list:
             text=True,
             timeout=timeout,
             cwd=str(REPO_ROOT),
+            stdin=subprocess.DEVNULL,
         )
         if result.returncode != 0:
             return []
@@ -1209,7 +1210,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def main():
     port = int(os.environ.get("DASH_PORT", "8765"))
-    server = HTTPServer(("localhost", port), DashboardHandler)
+    server = ThreadingHTTPServer(("localhost", port), DashboardHandler)
+    server.daemon_threads = True
     print(f"Dashboard running at http://localhost:{port}", flush=True)
     print(f"Repo root: {REPO_ROOT}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)

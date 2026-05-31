@@ -208,7 +208,7 @@ The workflow is no longer "discipline-only convention" — these three layers en
 
 Per [ADR-0018](decisions/0018-boy-scout-reviewer-rule.md), a fourth (discretionary, defense-in-depth) layer rides on the reviewer's existing gate: the **R-BOY-SCOUT** rule fires when a PR touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`) and applies the relevant `/audit-subagents` + `/audit-meta` rubric checks inline against the touched files only. Default-conservative-toward-Recommendation; only zero-false-positive findings with mechanical fixes BLOCK.
 
-The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count: **9 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 2 PreToolUse + 3 PostToolUse + 1 Stop) → **10 inner hook commands** (Stop has 2 commands) → **5 scripts** (`session-start.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)) + **4 inline jq one-liners** (Edit/MultiEdit/Write logger, Agent logger, Bash logger, Stop JSONL logger).
+The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count: **12 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 4 PreToolUse + 4 PostToolUse + 1 Stop) → **13 inner hook commands** (Stop has 2 commands) → **6 scripts** (`session-start.sh`, `dashboard-autostart.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)) + **7 inline jq one-liners** (Agent agent_start, Skill skill_invoke, Edit subagent-edit nudge, Agent agent_complete, Bash bash, AskUserQuestion grill_qa, Stop session_stop loggers).
 
 **Layer 4 — Claude Code session hooks** (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md), extending [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D6; 5 hooks across the full ADR-0015 → ADR-0023 → ADR-0028 → ADR-0029 → ADR-0030 wave):
 
@@ -306,9 +306,11 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
 - **[`agent_start logger`](.claude/settings.json)** (`PreToolUse · Agent`) — logs agent start events to workflow-events.jsonl
+- **[`skill_invoke logger`](.claude/settings.json)** (`PreToolUse · Skill`) — logs workflow event to workflow-events.jsonl
 - **[`subagent-edit nudge`](.claude/settings.json)** (`PostToolUse · Edit|MultiEdit|Write`) — logs agent file edits; suggests /audit-subagents on agent .md changes
 - **[`agent_complete logger`](.claude/settings.json)** (`PostToolUse · Agent`) — logs agent completions to workflow-events.jsonl
 - **[`bash logger`](.claude/settings.json)** (`PostToolUse · Bash`) — logs bash completions to workflow-events.jsonl
+- **[`grill_qa logger`](.claude/settings.json)** (`PostToolUse · AskUserQuestion`) — logs workflow event to workflow-events.jsonl
 - **[`session_stop logger`](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
 - **[`stop-reviewer-gate`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 
@@ -334,7 +336,7 @@ To add a term, run **`/glossary-add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 11 hook(s), 34 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 13 hook(s), 34 ADR(s).
 
 ## License
 

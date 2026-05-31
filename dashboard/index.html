@@ -769,7 +769,7 @@ flowchart TD
         <select id="cycle-select" onchange="onCycleSelectChange()">
           <option value="-1">All events</option>
         </select>
-        <span class="cycle-caveat">cycles based on typed /commands — programmatic Skill calls added next slice</span>
+        <span class="cycle-caveat">cycles from /commands + Skill-tool calls (new this session)</span>
       </div>
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
@@ -1550,13 +1550,16 @@ function buildGraphData(sessionRun) {
     .filter(e => (e.event || '') === 'skill_invoke' && (e.skill || ''))
     .sort((a, b) => tsToSecs(a.ts || '') - tsToSecs(b.ts || ''));
 
-  // Each window: {skill, startSec, endSec, nodeId, ts}
+  // Each window: {skill, startSec, endSec, nodeId, ts, source}
   const skillWindows = skillInvokeEvents.map((ev, idx) => {
     const startSec = tsToSecs(ev.ts || '');
     const nextEv   = skillInvokeEvents[idx + 1];
     const endSec   = nextEv ? tsToSecs(nextEv.ts || '') : sessionEndSec;
     const nodeId   = 'skill-' + idx + '-' + (ev.skill || '');
-    return { skill: ev.skill || '', startSec, endSec, nodeId, ts: ev.ts || '' };
+    const src      = ev.source === 'skill_tool'
+      ? 'programmatic Skill-tool call (new this session)'
+      : 'user-typed /command (UserPromptSubmit hook)';
+    return { skill: ev.skill || '', startSec, endSec, nodeId, ts: ev.ts || '', source: src };
   });
 
   // Returns the skill window that contains a given timestamp (seconds), or null.
@@ -1596,6 +1599,9 @@ function buildGraphData(sessionRun) {
     'agents: ×' + spans.length + '   bash: ×' + orchBashes.length,
     'total events: ' + events.length,
   ];
+  // Collect grill_qa events for this session/cycle window (Phase 2, slice #427)
+  const grillQaEvents = events.filter(e => (e.event || '') === 'grill_qa');
+
   nodeDetailMap['orch'] = {
     kind: 'orch',
     sid,
@@ -1604,6 +1610,7 @@ function buildGraphData(sessionRun) {
     totalEvents: events.length,
     agentSpans: spans.length,
     orchBashCount: orchBashes.length,
+    grillQa: grillQaEvents,
   };
   nodes.push({
     id: 'orch',
@@ -1676,6 +1683,7 @@ function buildGraphData(sessionRun) {
       ts: w.ts,
       windowStart: w.startSec,
       windowEnd: w.endSec,
+      source: w.source || 'user-typed /command (UserPromptSubmit hook)',
     };
     nodes.push({
       id: w.nodeId,
@@ -2269,6 +2277,20 @@ function renderNodeDetailBody(detail) {
     html += section('Total events', String(detail.totalEvents));
     html += section('Agent spans', String(detail.agentSpans));
     html += section('Orchestrator bash', '×' + String(detail.orchBashCount));
+    // Grill Q&A events for this cycle/session (Phase 2, slice #427)
+    const qaEvs = detail.grillQa || [];
+    if (qaEvs.length > 0) {
+      html += '<div class="node-detail-section">';
+      html += '<div class="node-detail-label">Grill Q&amp;A (' + qaEvs.length + ')</div>';
+      for (const qa of qaEvs) {
+        html += '<div style="margin-bottom:8px;border-left:2px solid var(--purple);padding-left:8px;">';
+        html += '<div style="color:var(--purple);font-size:10px;margin-bottom:2px;">' + escHtml(fmtTs(qa.ts)) + '</div>';
+        html += '<div style="color:var(--muted);font-size:10px;margin-bottom:2px;">Q: ' + escHtml((qa.question || '(none)').slice(0, 300)) + '</div>';
+        html += '<div style="color:var(--text);font-size:10px;">A: ' + escHtml((qa.answer || '(none)').slice(0, 300)) + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
   } else if (detail.kind === 'agent') {
     html += section('Type', escHtml('[' + detail.role + '] ' + detail.sub));
     html += section('Duration', escHtml(detail.durLabel));
@@ -2304,7 +2326,7 @@ function renderNodeDetailBody(detail) {
       // endSec → approximate ISO string for display
       new Date((detail.windowEnd || 0) * 1000).toISOString().replace('T', ' ').slice(0, 19)
     )));
-    html += section('Source', 'user-typed /command (UserPromptSubmit hook)');
+    html += section('Source', escHtml(detail.source || 'user-typed /command (UserPromptSubmit hook)'));
   }
 
   return html;

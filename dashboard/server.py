@@ -231,6 +231,10 @@ def _read_hook_name(cmd: str) -> str:
         return "bash logger"
     if "workflow-events.jsonl" in cmd_lower and "session_stop" in cmd_lower:
         return "session_stop logger"
+    if "workflow-events.jsonl" in cmd_lower and "skill_invoke" in cmd_lower:
+        return "skill_invoke logger"
+    if "workflow-events.jsonl" in cmd_lower and "grill_qa" in cmd_lower:
+        return "grill_qa logger"
     if "subagent-edits.log" in cmd_lower:
         return "subagent-edit nudge"
     if "workflow-events.jsonl" in cmd_lower:

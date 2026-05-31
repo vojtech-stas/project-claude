@@ -410,6 +410,133 @@
     color: var(--muted);
     padding: 4px 0 0 0;
   }
+  /* Session selector */
+  .session-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .session-selector select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    max-width: 340px;
+  }
+  .session-selector select:focus { outline: none; border-color: var(--green); }
+  /* Node detail side panel (click → full detail) */
+  .node-detail-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 380px;
+    background: #0d1117;
+    border-left: 1px solid var(--border);
+    border-radius: 0 6px 6px 0;
+    display: none;
+    flex-direction: column;
+    z-index: 10;
+    overflow: hidden;
+  }
+  .node-detail-panel.open { display: flex; }
+  .node-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  .node-detail-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .node-detail-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 2px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .node-detail-close:hover { color: var(--text); }
+  .node-detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px;
+    font-size: 11px;
+  }
+  .node-detail-section {
+    margin-bottom: 14px;
+  }
+  .node-detail-label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .node-detail-value {
+    color: var(--text);
+    word-break: break-all;
+  }
+  .node-detail-value pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--muted);
+    font-size: 10px;
+    margin: 0;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #0a0e13;
+    border: 1px solid #21262d;
+    border-radius: 3px;
+    padding: 6px 8px;
+  }
+  .bash-cmd-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .bash-cmd-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 3px 6px;
+    background: #0a0e13;
+    border: 1px solid #21262d;
+    border-radius: 3px;
+  }
+  .bash-cmd-ts {
+    color: var(--muted);
+    font-size: 10px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .bash-cmd-text {
+    color: var(--text);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
 </style>
 </head>
 <body>
@@ -515,13 +642,19 @@ flowchart TD
 <div id="tab-live" class="tab">
   <div class="graph-outer">
     <div class="graph-header">
-      <h2>Live — current session</h2>
+      <h2 style="white-space:nowrap;">Live graph</h2>
       <div class="graph-legend">
         <div class="graph-legend-item"><span class="legend-dot legend-dot-orch"></span>orchestrator</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-generator"></span>generator (implementer/slicer/qa-tester)</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-critic"></span>critic (reviewer/*-critic)</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-bash"></span>bash ×N (per-agent)</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-hook"></span>hook/session</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-generator"></span>generator</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-critic"></span>critic</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-bash"></span>bash ×N</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-hook"></span>hook</div>
+      </div>
+      <div class="session-selector">
+        <span>Session:</span>
+        <select id="session-select" onchange="onSessionSelectChange()">
+          <option value="">Loading…</option>
+        </select>
       </div>
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
@@ -530,6 +663,14 @@ flowchart TD
         <strong>No session data yet.</strong>
         <span>Run /ship or any pipeline command to populate the graph.</span>
         <span style="font-size:10px;margin-top:4px;">Reads from .claude/logs/workflow-events.jsonl</span>
+      </div>
+      <!-- Click-detail side panel (inside .graph-container for absolute positioning) -->
+      <div class="node-detail-panel" id="node-detail-panel">
+        <div class="node-detail-header">
+          <span class="node-detail-title" id="node-detail-title">Node detail</span>
+          <button class="node-detail-close" onclick="closeNodeDetail()" title="Close">&times;</button>
+        </div>
+        <div class="node-detail-body" id="node-detail-body"></div>
       </div>
     </div>
     <div class="graph-session-info" id="live-session-info"></div>
@@ -745,6 +886,8 @@ window.addEventListener('load', () => { loadArchitecture(); });
 let liveNetwork = null;      // vis.Network instance
 let liveGraphLoaded = false; // whether initial load has run
 let liveRefreshTimer = null; // periodic refresh handle
+let sessionRunsCache = null; // [{session_id, first_ts, last_ts, events}, ...]
+let nodeDetailMap = {};      // nodeId → full detail object for click panel
 
 // Role-based color palette per grilled design (PRD #403 comment)
 const COLORS = {
@@ -778,19 +921,15 @@ function tsToSecs(ts) {
 
 /**
  * Build vis-network nodes+edges from a single session's event list.
+ * Also populates the module-level nodeDetailMap for the click-detail side panel.
  *
  * Algorithm:
  *  1. Collect agent spans: pair each agent_start with its matching agent_complete
  *     (same subagent_type, next-in-order) → span {sub, startTs, completeTs, startSec, completeSec, ae}.
  *  2. Attribute each bash_complete to the innermost open agent span that contains its ts;
  *     bash outside all spans → orchestrator's.
- *  3. Build nodes:
- *     - orchestrator (root, Y=0)
- *     - per agent span: agent bubble (Y ∝ start_ts) + its own bash bubble (Y ∝ midpoint)
- *     - orchestrator's bash bubble (Y ∝ midpoint of its bash events, or session midpoint)
- *  4. Set x/y coordinates: x spread by column (orch=center, each agent gets a column),
- *     y by timestamp (normalized to canvas height range).
- *  5. physics:false — positions are fully fixed.
+ *  3. Build nodes with hover quick-summary (title) and store full detail in nodeDetailMap.
+ *  4. Set x/y coordinates; physics:false.
  *
  * Node count: O(#agent_spans * 2 + 2) — never O(#events).
  */
@@ -895,19 +1034,33 @@ function buildGraphData(sessionRun) {
     return orchX + (i - halfSpread) * X_SPACING;
   }
 
+  // Reset nodeDetailMap for this render
+  nodeDetailMap = {};
+
   // --- 5. Build nodes ---
 
   // Orchestrator
   const orchY = normY(sessionStartSec);
+  // Hover quick-summary for orchestrator
+  const orchHoverLines = [
+    'orchestrator — session ' + sidShort,
+    fmtTs(sessionRun.first_ts) + ' → ' + fmtTs(sessionRun.last_ts),
+    'agents: ×' + spans.length + '   bash: ×' + orchBashes.length,
+    'total events: ' + events.length,
+  ];
+  nodeDetailMap['orch'] = {
+    kind: 'orch',
+    sid,
+    firstTs: sessionRun.first_ts,
+    lastTs: sessionRun.last_ts,
+    totalEvents: events.length,
+    agentSpans: spans.length,
+    orchBashCount: orchBashes.length,
+  };
   nodes.push({
     id: 'orch',
     label: 'orchestrator\n' + sidShort,
-    title: 'Session: ' + sid
-      + '\nStart: ' + fmtTs(sessionRun.first_ts)
-      + '\nEnd:   ' + fmtTs(sessionRun.last_ts)
-      + '\nTotal events: ' + events.length
-      + '\nAgent spans: ' + spans.length
-      + '\nOrch bash: ×' + orchBashes.length,
+    title: orchHoverLines.join('\n'),
     shape: 'ellipse',
     color: COLORS.orch,
     font: { color: '#bfdbfe', size: 13, face: 'IBM Plex Mono, monospace' },
@@ -921,14 +1074,27 @@ function buildGraphData(sessionRun) {
   if (orchBashes.length > 0) {
     const midSec = orchBashes.reduce((s, b) => s + tsToSecs(b.ts || ''), 0) / orchBashes.length;
     const orchBashY = normY(midSec);
-    const snippets = orchBashes.slice(0, 6).map(b => fmtTs(b.ts) + '  $ ' + (b.command || '').slice(0, 55));
-    if (orchBashes.length > 6) snippets.push('… (' + (orchBashes.length - 6) + ' more)');
+    // Hover quick-summary: count + last 3 commands + time range
+    const firstTs = orchBashes[0] ? fmtTs(orchBashes[0].ts) : '';
+    const lastTs  = orchBashes[orchBashes.length - 1] ? fmtTs(orchBashes[orchBashes.length - 1].ts) : '';
+    const lastCmds = orchBashes.slice(-3).map(b => '$ ' + (b.command || '').slice(0, 48));
+    const hoverLines = [
+      'bash ×' + orchBashes.length + ' (orchestrator)',
+      firstTs + ' → ' + lastTs,
+      ...lastCmds,
+      orchBashes.length > 3 ? '… (' + (orchBashes.length - 3) + ' more)' : '',
+    ].filter(Boolean);
     const bSize = Math.max(18, Math.min(40, 18 + Math.log10(orchBashes.length + 1) * 10));
 
+    nodeDetailMap['orch-bash'] = {
+      kind: 'bash',
+      owner: 'orchestrator',
+      bashes: orchBashes,
+    };
     nodes.push({
       id: 'orch-bash',
       label: 'bash\n×' + orchBashes.length,
-      title: 'Orchestrator bash ×' + orchBashes.length + '\n\n' + snippets.join('\n'),
+      title: hoverLines.join('\n'),
       shape: 'ellipse',
       color: COLORS.bash,
       font: { color: '#d1d5db', size: 11, face: 'IBM Plex Mono, monospace' },
@@ -965,18 +1131,33 @@ function buildGraphData(sessionRun) {
 
     const dur = completeSec - startSec;
     const durLabel = dur >= 60 ? (dur / 60).toFixed(1) + 'm' : dur.toFixed(0) + 's';
-    const inputSnippet  = (ae.input  || '').slice(0, 150) || '(none)';
-    const outputSnippet = (ae.output || '').slice(0, 150) || '(none)';
+    const inputSnippet = (ae.input || '').slice(0, 80) || '(none)';
+
+    // Hover quick-summary: type + duration + one-line input snippet
+    const agentHover = [
+      '[' + role + '] ' + sub,
+      'duration: ' + durLabel,
+      fmtTs(sp.startTs) + ' → ' + fmtTs(sp.completeTs),
+      'input: ' + inputSnippet + ((ae.input || '').length > 80 ? '…' : ''),
+    ].join('\n');
+
+    // Full detail for click panel
+    nodeDetailMap['agent-' + i] = {
+      kind: 'agent',
+      role,
+      sub,
+      startTs: sp.startTs,
+      completeTs: sp.completeTs,
+      dur,
+      durLabel,
+      input: ae.input || '',
+      output: ae.output || '',
+    };
 
     nodes.push({
       id: 'agent-' + i,
       label,
-      title: '[' + role + '] ' + sub
-        + '\nStart:    ' + fmtTs(sp.startTs)
-        + '\nComplete: ' + fmtTs(sp.completeTs)
-        + '\nDuration: ' + durLabel
-        + '\n\nInput:\n'  + inputSnippet + (inputSnippet.length >= 150 ? '…' : '')
-        + '\n\nOutput:\n' + outputSnippet + (outputSnippet.length >= 150 ? '…' : ''),
+      title: agentHover,
       shape: 'ellipse',
       color,
       font: { color: fontColor, size: 12, face: 'IBM Plex Mono, monospace' },
@@ -998,14 +1179,27 @@ function buildGraphData(sessionRun) {
       const midSec2 = myBashes.reduce((s, b) => s + tsToSecs(b.ts || ''), 0) / myBashes.length;
       const bY = normY(midSec2);
       const bSize = Math.max(16, Math.min(36, 16 + Math.log10(myBashes.length + 1) * 9));
-      const snippets2 = myBashes.slice(0, 5).map(b => fmtTs(b.ts) + '  $ ' + (b.command || '').slice(0, 50));
-      if (myBashes.length > 5) snippets2.push('… (' + (myBashes.length - 5) + ' more)');
+      // Hover quick-summary: count + last 3 commands + time range
+      const bFirstTs = myBashes[0] ? fmtTs(myBashes[0].ts) : '';
+      const bLastTs  = myBashes[myBashes.length - 1] ? fmtTs(myBashes[myBashes.length - 1].ts) : '';
+      const bLastCmds = myBashes.slice(-3).map(b => '$ ' + (b.command || '').slice(0, 48));
+      const bHoverLines = [
+        'bash ×' + myBashes.length + ' (' + sub + ')',
+        bFirstTs + ' → ' + bLastTs,
+        ...bLastCmds,
+        myBashes.length > 3 ? '… (' + (myBashes.length - 3) + ' more)' : '',
+      ].filter(Boolean);
 
       const bashNodeId = 'bash-' + i;
+      nodeDetailMap[bashNodeId] = {
+        kind: 'bash',
+        owner: sub,
+        bashes: myBashes,
+      };
       nodes.push({
         id: bashNodeId,
         label: 'bash\n×' + myBashes.length,
-        title: sub + ' bash ×' + myBashes.length + '\n\n' + snippets2.join('\n'),
+        title: bHoverLines.join('\n'),
         shape: 'ellipse',
         color: COLORS.bash,
         font: { color: '#d1d5db', size: 10, face: 'IBM Plex Mono, monospace' },
@@ -1028,11 +1222,17 @@ function buildGraphData(sessionRun) {
   // render a single aggregated bash+agent view as before so the tab isn't blank.
   if (spans.length === 0 && bashEvents.length > 0) {
     const bSize = Math.max(22, Math.min(55, 22 + Math.log10(bashEvents.length + 1) * 15));
-    const snippets = bashEvents.slice(0, 8).map(e => fmtTs(e.ts) + '  $ ' + (e.command || '').slice(0, 60));
-    if (bashEvents.length > 8) snippets.push('… (' + (bashEvents.length - 8) + ' more)');
+    const bFirstTs = bashEvents[0] ? fmtTs(bashEvents[0].ts) : '';
+    const bLastTs  = bashEvents[bashEvents.length - 1] ? fmtTs(bashEvents[bashEvents.length - 1].ts) : '';
+    const fallbackHover = [
+      'bash ×' + bashEvents.length,
+      bFirstTs + ' → ' + bLastTs,
+      ...bashEvents.slice(-3).map(e => '$ ' + (e.command || '').slice(0, 50)),
+    ].join('\n');
+    nodeDetailMap['bash'] = { kind: 'bash', owner: 'orchestrator', bashes: bashEvents };
     nodes.push({
       id: 'bash', label: 'bash\n×' + bashEvents.length,
-      title: 'bash_complete ×' + bashEvents.length + '\n\n' + snippets.join('\n'),
+      title: fallbackHover,
       shape: 'ellipse', color: COLORS.bash,
       font: { color: '#d1d5db', size: 12, face: 'IBM Plex Mono, monospace' },
       size: bSize, x: orchX, y: normY(sessionStartSec) + 150, fixed: { x: true, y: true },
@@ -1044,29 +1244,79 @@ function buildGraphData(sessionRun) {
 }
 
 /**
- * Render (or re-render) the vis-network graph in #live-graph-container.
- * Destroys the previous network if any, then builds a new one.
- * Called once on tab open, and on Refresh.
+ * Fetch recent sessions (n=10) from /api/runs, populate the session selector,
+ * and render the latest session's graph.  On Refresh: re-fetch + re-render.
  */
 async function renderLiveGraph() {
+  const statusEl = document.getElementById('live-status');
+  statusEl.textContent = 'Fetching sessions…';
+
+  try {
+    const r = await fetch('/api/runs?n=10');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    sessionRunsCache = data.runs || [];
+  } catch (err) {
+    statusEl.textContent = 'Error loading sessions: ' + err.message;
+    return;
+  }
+
+  // Populate session selector
+  populateSessionSelector();
+
+  // Render the selected (or latest) session
+  const sel = document.getElementById('session-select');
+  const selectedIdx = sel ? parseInt(sel.value, 10) : 0;
+  const sessionRun = sessionRunsCache[isNaN(selectedIdx) ? 0 : selectedIdx] || null;
+  renderSessionGraph(sessionRun);
+}
+
+function populateSessionSelector() {
+  const sel = document.getElementById('session-select');
+  if (!sel) return;
+  const prevValue = sel.value;
+  sel.innerHTML = '';
+  if (!sessionRunsCache || sessionRunsCache.length === 0) {
+    sel.innerHTML = '<option value="">No sessions</option>';
+    return;
+  }
+  sessionRunsCache.forEach((run, idx) => {
+    const sid = run.session_id || 'unknown';
+    const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 12) + '…';
+    const ts = fmtTs(run.first_ts) || '?';
+    const evCount = (run.events || []).length;
+    const opt = document.createElement('option');
+    opt.value = String(idx);
+    opt.textContent = sidShort + '  ' + ts + '  (' + evCount + ' events)';
+    if (idx === 0) opt.textContent = '[latest] ' + opt.textContent;
+    sel.appendChild(opt);
+  });
+  // Restore selection if still valid, else default to 0
+  const restoredIdx = parseInt(prevValue, 10);
+  if (!isNaN(restoredIdx) && restoredIdx < sessionRunsCache.length && prevValue !== '') {
+    sel.value = String(restoredIdx);
+  } else {
+    sel.value = '0';
+  }
+}
+
+function onSessionSelectChange() {
+  closeNodeDetail();
+  const sel = document.getElementById('session-select');
+  const idx = parseInt(sel ? sel.value : '0', 10);
+  const sessionRun = sessionRunsCache && sessionRunsCache[isNaN(idx) ? 0 : idx] || null;
+  renderSessionGraph(sessionRun);
+}
+
+/**
+ * Render (or re-render) the vis-network graph for a specific sessionRun object.
+ * Destroys the previous network instance first to free memory.
+ */
+function renderSessionGraph(sessionRun) {
   const container = document.getElementById('live-graph-container');
   const emptyEl   = document.getElementById('live-graph-empty');
   const statusEl  = document.getElementById('live-status');
   const infoEl    = document.getElementById('live-session-info');
-
-  statusEl.textContent = 'Fetching latest session…';
-
-  let sessionRun = null;
-  try {
-    const r = await fetch('/api/runs?n=1');
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    const runs = data.runs || [];
-    sessionRun = runs.length > 0 ? runs[0] : null;
-  } catch (err) {
-    statusEl.textContent = 'Error loading session: ' + err.message;
-    return;
-  }
 
   // Destroy previous network instance to free memory
   if (liveNetwork) {
@@ -1089,16 +1339,11 @@ async function renderLiveGraph() {
   const visEdges = new vis.DataSet(edges);
 
   const options = {
-    layout: {
-      // physics:false + fixed x/y on every node → no layout engine needed
-      randomSeed: 1,
-    },
-    physics: {
-      enabled: false,   // positions are pre-computed; no simulation = no freeze
-    },
+    layout: { randomSeed: 1 },
+    physics: { enabled: false },
     interaction: {
       hover: true,
-      tooltipDelay: 100,
+      tooltipDelay: 120,
       zoomView: true,
       dragView: true,
       dragNodes: true,
@@ -1123,6 +1368,17 @@ async function renderLiveGraph() {
     liveNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
   });
 
+  // Click → side panel
+  liveNetwork.on('click', function(params) {
+    if (params.nodes && params.nodes.length > 0) {
+      const nodeId = params.nodes[0];
+      showNodeDetail(nodeId);
+    } else {
+      // Clicked on blank canvas → close panel
+      closeNodeDetail();
+    }
+  });
+
   // Status line
   const totalEvents = sessionRun.events.length;
   const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
@@ -1134,7 +1390,85 @@ async function renderLiveGraph() {
 }
 
 function reloadLiveGraph() {
+  sessionRunsCache = null;  // bust cache so fresh data is fetched
+  closeNodeDetail();
   renderLiveGraph();
+}
+
+// ---- Node detail side panel ----
+
+function showNodeDetail(nodeId) {
+  const detail = nodeDetailMap[nodeId];
+  if (!detail) return;
+
+  const panel = document.getElementById('node-detail-panel');
+  const titleEl = document.getElementById('node-detail-title');
+  const bodyEl  = document.getElementById('node-detail-body');
+
+  titleEl.textContent = nodeDetailTitle(nodeId, detail);
+  bodyEl.innerHTML = renderNodeDetailBody(detail);
+  panel.classList.add('open');
+}
+
+function closeNodeDetail() {
+  const panel = document.getElementById('node-detail-panel');
+  if (panel) panel.classList.remove('open');
+  if (liveNetwork) liveNetwork.unselectAll();
+}
+
+function nodeDetailTitle(nodeId, detail) {
+  if (detail.kind === 'orch') return 'orchestrator — ' + (detail.sid || '').slice(0, 16) + '…';
+  if (detail.kind === 'agent') return '[' + detail.role + '] ' + detail.sub;
+  if (detail.kind === 'bash') return 'bash ×' + (detail.bashes || []).length + ' (' + (detail.owner || '?') + ')';
+  return nodeId;
+}
+
+function renderNodeDetailBody(detail) {
+  let html = '';
+
+  if (detail.kind === 'orch') {
+    html += section('Session ID', escHtml(detail.sid || 'unknown'));
+    html += section('Time range', escHtml(fmtTs(detail.firstTs)) + ' → ' + escHtml(fmtTs(detail.lastTs)));
+    html += section('Total events', String(detail.totalEvents));
+    html += section('Agent spans', String(detail.agentSpans));
+    html += section('Orchestrator bash', '×' + String(detail.orchBashCount));
+  } else if (detail.kind === 'agent') {
+    html += section('Type', escHtml('[' + detail.role + '] ' + detail.sub));
+    html += section('Duration', escHtml(detail.durLabel));
+    html += section('Start', escHtml(fmtTs(detail.startTs)));
+    html += section('Complete', escHtml(fmtTs(detail.completeTs)));
+    html += section('Input', '<pre>' + escHtml((detail.input || '(none)').slice(0, 4000) + (detail.input && detail.input.length > 4000 ? '\n… (truncated)' : '')) + '</pre>', true);
+    html += section('Output', '<pre>' + escHtml((detail.output || '(none)').slice(0, 4000) + (detail.output && detail.output.length > 4000 ? '\n… (truncated)' : '')) + '</pre>', true);
+  } else if (detail.kind === 'bash') {
+    const bashes = detail.bashes || [];
+    html += section('Owner', escHtml(detail.owner || '?'));
+    html += section('Count', '×' + bashes.length);
+    if (bashes.length > 0) {
+      const firstTs = fmtTs(bashes[0].ts);
+      const lastTs  = fmtTs(bashes[bashes.length - 1].ts);
+      html += section('Time range', escHtml(firstTs) + ' → ' + escHtml(lastTs));
+    }
+    // Scrollable list of all commands with timestamps
+    html += '<div class="node-detail-section">';
+    html += '<div class="node-detail-label">All commands (' + bashes.length + ')</div>';
+    html += '<div class="bash-cmd-list">';
+    for (const b of bashes) {
+      html += '<div class="bash-cmd-row">';
+      html += '<span class="bash-cmd-ts">' + escHtml(fmtTs(b.ts)) + '</span>';
+      html += '<span class="bash-cmd-text" title="' + escHtml(b.command || '') + '">' + escHtml((b.command || '(no command)').slice(0, 200)) + '</span>';
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  return html;
+}
+
+function section(label, valueHtml, isRaw) {
+  return '<div class="node-detail-section">'
+    + '<div class="node-detail-label">' + escHtml(label) + '</div>'
+    + '<div class="node-detail-value">' + (isRaw ? valueHtml : '<span>' + valueHtml + '</span>') + '</div>'
+    + '</div>';
 }
 
 function toggleDetail(id) {
@@ -1150,8 +1484,13 @@ function startLiveGraph() {
   if (liveGraphLoaded) return;
   liveGraphLoaded = true;
   renderLiveGraph();
-  // Auto-refresh every 15 seconds so the graph picks up new events
-  liveRefreshTimer = setInterval(renderLiveGraph, 15000);
+  // Auto-refresh every 30 seconds so the graph picks up new events.
+  // On each tick, bust the cache so fresh data is fetched; the selector
+  // stays at the currently-selected option after populateSessionSelector().
+  liveRefreshTimer = setInterval(function() {
+    sessionRunsCache = null;
+    renderLiveGraph();
+  }, 30000);
 }
 
 // Patch switchTab to start graph when Live tab is first opened

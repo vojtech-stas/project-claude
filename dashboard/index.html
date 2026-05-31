@@ -376,9 +376,11 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .legend-dot-orch  { background: #38bdf8; border: 2px solid #0ea5e9; }
-  .legend-dot-bash  { background: #6b7280; border: 2px solid #9ca3af; }
-  .legend-dot-agent { background: #22c55e; border: 2px solid #16a34a; }
+  .legend-dot-orch      { background: #2563eb; border: 2px solid #3b82f6; }
+  .legend-dot-generator { background: #16a34a; border: 2px solid #22c55e; }
+  .legend-dot-critic    { background: #ea580c; border: 2px solid #f97316; }
+  .legend-dot-bash      { background: #6b7280; border: 2px solid #9ca3af; }
+  .legend-dot-hook      { background: #dc2626; border: 2px solid #ef4444; }
   .graph-container {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -516,8 +518,10 @@ flowchart TD
       <h2>Live — current session</h2>
       <div class="graph-legend">
         <div class="graph-legend-item"><span class="legend-dot legend-dot-orch"></span>orchestrator</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-bash"></span>bash (aggregated)</div>
-        <div class="graph-legend-item"><span class="legend-dot legend-dot-agent"></span>agent_complete</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-generator"></span>generator (implementer/slicer/qa-tester)</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-critic"></span>critic (reviewer/*-critic)</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-bash"></span>bash ×N (per-agent)</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-hook"></span>hook/session</div>
       </div>
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
@@ -732,120 +736,308 @@ function renderCascade(cf) {
 // Auto-load architecture tab on start
 window.addEventListener('load', () => { loadArchitecture(); });
 
-// --- Live tab: vis-network bubble graph (current session, O(#agents+1) nodes) ---
+// --- Live tab: vis-network bubble graph — nested per-agent bash + time-Y-axis + role colors ---
+//
+// Node count: O(#agents * 2 + 1) — never O(#events).
+// Layout: physics:false, Y ∝ timestamp (top=earliest), X spread by spawn hierarchy.
+// Role colors: orchestrator=blue, generator=green, critic=orange, bash=grey, hook=red.
 
 let liveNetwork = null;      // vis.Network instance
 let liveGraphLoaded = false; // whether initial load has run
 let liveRefreshTimer = null; // periodic refresh handle
 
-// Color palette matching the dashboard's CSS variables
+// Role-based color palette per grilled design (PRD #403 comment)
 const COLORS = {
-  orch:  { background: '#0ea5e9', border: '#38bdf8', highlight: { background: '#38bdf8', border: '#7dd3fc' } },
-  bash:  { background: '#374151', border: '#6b7280', highlight: { background: '#4b5563', border: '#9ca3af' } },
-  agent: { background: '#16a34a', border: '#22c55e', highlight: { background: '#22c55e', border: '#4ade80' } },
+  orch:      { background: '#1d4ed8', border: '#2563eb', highlight: { background: '#2563eb', border: '#3b82f6' } },
+  generator: { background: '#15803d', border: '#16a34a', highlight: { background: '#16a34a', border: '#22c55e' } },
+  critic:    { background: '#c2410c', border: '#ea580c', highlight: { background: '#ea580c', border: '#f97316' } },
+  bash:      { background: '#374151', border: '#6b7280', highlight: { background: '#4b5563', border: '#9ca3af' } },
+  hook:      { background: '#991b1b', border: '#dc2626', highlight: { background: '#dc2626', border: '#ef4444' } },
 };
+
+// Classify a subagent_type string → role name
+const GENERATOR_TYPES = new Set(['implementer', 'slicer', 'qa-tester']);
+function classifyRole(subagentType) {
+  const t = (subagentType || '').trim().toLowerCase();
+  if (!t) return 'generator';
+  if (GENERATOR_TYPES.has(t)) return 'generator';
+  if (t === 'reviewer' || t.endsWith('-critic')) return 'critic';
+  return 'generator';
+}
 
 function fmtTs(ts) {
   if (!ts) return '';
   return ts.replace('T', ' ').slice(0, 19);
 }
 
+// Convert ISO timestamp → seconds since epoch (for Y-axis positioning)
+function tsToSecs(ts) {
+  if (!ts) return 0;
+  try { return new Date(ts).getTime() / 1000; } catch (e) { return 0; }
+}
+
 /**
  * Build vis-network nodes+edges from a single session's event list.
- * Critical invariant: ONE bash node total (aggregated), NOT one per bash event.
- * Node count: O(#agent_complete events + 2) — never O(#events).
+ *
+ * Algorithm:
+ *  1. Collect agent spans: pair each agent_start with its matching agent_complete
+ *     (same subagent_type, next-in-order) → span {sub, startTs, completeTs, startSec, completeSec, ae}.
+ *  2. Attribute each bash_complete to the innermost open agent span that contains its ts;
+ *     bash outside all spans → orchestrator's.
+ *  3. Build nodes:
+ *     - orchestrator (root, Y=0)
+ *     - per agent span: agent bubble (Y ∝ start_ts) + its own bash bubble (Y ∝ midpoint)
+ *     - orchestrator's bash bubble (Y ∝ midpoint of its bash events, or session midpoint)
+ *  4. Set x/y coordinates: x spread by column (orch=center, each agent gets a column),
+ *     y by timestamp (normalized to canvas height range).
+ *  5. physics:false — positions are fully fixed.
+ *
+ * Node count: O(#agent_spans * 2 + 2) — never O(#events).
  */
 function buildGraphData(sessionRun) {
   const events = sessionRun.events || [];
   const sid = sessionRun.session_id || 'unknown';
-  const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 10) + '…';
+  const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 8) + '…';
 
   const nodes = [];
   const edges = [];
 
-  // --- Orchestrator root node ---
-  const orchId = 'orch';
+  // --- 1. Parse timestamps for Y-axis normalization ---
+  const sessionStartSec = tsToSecs(sessionRun.first_ts);
+  const sessionEndSec   = tsToSecs(sessionRun.last_ts);
+  const sessionDur = Math.max(sessionEndSec - sessionStartSec, 1); // avoid /0
+
+  // Canvas Y range: top=60, bottom=820 (leaves room for labels)
+  const Y_TOP    = 60;
+  const Y_BOTTOM = 820;
+  function normY(sec) {
+    const frac = Math.max(0, Math.min(1, (sec - sessionStartSec) / sessionDur));
+    return Y_TOP + frac * (Y_BOTTOM - Y_TOP);
+  }
+
+  // --- 2. Build agent spans from agent_start / agent_complete pairs ---
+  // Strategy: scan events in time order; for each agent_start push onto a per-type stack;
+  // for each agent_complete pop the most recent matching start off the stack.
+  const startStacks = {}; // subagent_type → [startEvent, ...]
+  const spans = [];       // [{sub, startTs, completeSec, startSec, completeSec, ae, idx}]
+
+  for (const ev of events) {
+    const etype = (ev.event || '').trim();
+    const sub   = (ev.subagent_type || '').trim();
+    if (etype === 'agent_start' && sub) {
+      if (!startStacks[sub]) startStacks[sub] = [];
+      startStacks[sub].push(ev);
+    } else if (etype === 'agent_complete' && sub) {
+      const stack = startStacks[sub];
+      const startEv = (stack && stack.length > 0) ? stack.pop() : null;
+      const startTs = startEv ? (startEv.ts || '') : '';
+      spans.push({
+        sub,
+        startTs,
+        completeTs: ev.ts || '',
+        startSec:   startTs ? tsToSecs(startTs) : tsToSecs(ev.ts || ''),
+        completeSec: tsToSecs(ev.ts || ''),
+        ae: ev,
+        idx: spans.length,
+      });
+    }
+  }
+
+  // For agents without a matching agent_start (legacy logs): fallback spans where
+  // startSec === completeSec (zero-duration span) are already handled above.
+
+  // Sort spans by startSec ascending (earlier agents appear higher on canvas)
+  spans.sort((a, b) => a.startSec - b.startSec);
+
+  // --- 3. Attribute bash_complete events to spans ---
+  // For each bash event, find the innermost (most-recently-started) open span at that ts.
+  // "Open" = span.startSec <= bashSec <= span.completeSec.
+  // "Innermost" = the span with the largest startSec that still contains the bash ts.
+
+  const bashEvents = events.filter(e => (e.event || '') === 'bash_complete');
+
+  // Pre-build a sorted list of (startSec, completeSec, spanIdx) for O(#spans) lookup per bash
+  // For large #bash events this is O(#bash * #spans) — acceptable because #spans = O(#agents).
+  const orchBashes = [];          // bash events attributed to the orchestrator
+  const spanBashes = {};          // spanIdx → [bash events]
+
+  for (const be of bashEvents) {
+    const bSec = tsToSecs(be.ts || '');
+    let bestSpanIdx = -1;
+    let bestStartSec = -Infinity;
+    for (let i = 0; i < spans.length; i++) {
+      const sp = spans[i];
+      if (sp.startSec <= bSec && bSec <= sp.completeSec && sp.startSec > bestStartSec) {
+        bestStartSec = sp.startSec;
+        bestSpanIdx = i;
+      }
+    }
+    if (bestSpanIdx >= 0) {
+      if (!spanBashes[bestSpanIdx]) spanBashes[bestSpanIdx] = [];
+      spanBashes[bestSpanIdx].push(be);
+    } else {
+      orchBashes.push(be);
+    }
+  }
+
+  // --- 4. Build X positions ---
+  // Orchestrator at center (x=0). Each agent span gets its own column.
+  // Fan spans left and right of center with 220px spacing.
+  const X_SPACING = 220;
+  const orchX = 0;
+
+  // Assign columns: spans get indices 0, 1, 2, … → x = center + offset
+  function spanX(i) {
+    const n = spans.length;
+    if (n === 0) return orchX;
+    // Spread: if n=1 → offset=0; if n=2 → [-1,+1]*110; etc.
+    const halfSpread = (n - 1) / 2;
+    return orchX + (i - halfSpread) * X_SPACING;
+  }
+
+  // --- 5. Build nodes ---
+
+  // Orchestrator
+  const orchY = normY(sessionStartSec);
   nodes.push({
-    id: orchId,
+    id: 'orch',
     label: 'orchestrator\n' + sidShort,
     title: 'Session: ' + sid
-      + '\nFirst event: ' + fmtTs(sessionRun.first_ts)
-      + '\nLast event:  ' + fmtTs(sessionRun.last_ts)
-      + '\nTotal events: ' + events.length,
+      + '\nStart: ' + fmtTs(sessionRun.first_ts)
+      + '\nEnd:   ' + fmtTs(sessionRun.last_ts)
+      + '\nTotal events: ' + events.length
+      + '\nAgent spans: ' + spans.length
+      + '\nOrch bash: ×' + orchBashes.length,
     shape: 'ellipse',
     color: COLORS.orch,
-    font: { color: '#e0f2fe', size: 13, face: 'IBM Plex Mono, monospace' },
-    size: 30,
-    level: 0,
+    font: { color: '#bfdbfe', size: 13, face: 'IBM Plex Mono, monospace' },
+    size: 32,
+    x: orchX,
+    y: orchY,
+    fixed: { x: true, y: true },
   });
 
-  // --- Aggregate bash_complete events into ONE node ---
-  const bashEvents = events.filter(e => (e.event || '') === 'bash_complete');
-  if (bashEvents.length > 0) {
-    const bashId = 'bash';
-    // Tooltip: first 8 commands + timestamps
-    const snippets = bashEvents.slice(0, 8).map(e =>
-      fmtTs(e.ts) + '  $ ' + (e.command || '').slice(0, 60)
-    );
-    if (bashEvents.length > 8) snippets.push('… (' + (bashEvents.length - 8) + ' more)');
-    const bashTitle = 'bash_complete ×' + bashEvents.length + '\n\n' + snippets.join('\n');
-
-    // Size: scale logarithmically so a 5000-event session doesn't overflow,
-    // but a 10-event session still looks bigger than agent nodes.
-    const bashSize = Math.max(22, Math.min(55, 22 + Math.log10(bashEvents.length + 1) * 15));
+  // Orchestrator's own bash bubble (un-attributed bashes)
+  if (orchBashes.length > 0) {
+    const midSec = orchBashes.reduce((s, b) => s + tsToSecs(b.ts || ''), 0) / orchBashes.length;
+    const orchBashY = normY(midSec);
+    const snippets = orchBashes.slice(0, 6).map(b => fmtTs(b.ts) + '  $ ' + (b.command || '').slice(0, 55));
+    if (orchBashes.length > 6) snippets.push('… (' + (orchBashes.length - 6) + ' more)');
+    const bSize = Math.max(18, Math.min(40, 18 + Math.log10(orchBashes.length + 1) * 10));
 
     nodes.push({
-      id: bashId,
-      label: 'bash\n×' + bashEvents.length,
-      title: bashTitle,
+      id: 'orch-bash',
+      label: 'bash\n×' + orchBashes.length,
+      title: 'Orchestrator bash ×' + orchBashes.length + '\n\n' + snippets.join('\n'),
       shape: 'ellipse',
       color: COLORS.bash,
-      font: { color: '#d1d5db', size: 12, face: 'IBM Plex Mono, monospace' },
-      size: bashSize,
-      level: 1,
+      font: { color: '#d1d5db', size: 11, face: 'IBM Plex Mono, monospace' },
+      size: bSize,
+      x: orchX,
+      y: orchBashY + 80,   // slightly below orch for visual separation
+      fixed: { x: true, y: true },
     });
-    edges.push({ from: orchId, to: bashId, arrows: 'to', color: { color: '#4b5563', highlight: '#9ca3af' }, smooth: { type: 'cubicBezier' } });
+    edges.push({
+      from: 'orch', to: 'orch-bash',
+      arrows: 'to',
+      color: { color: '#4b5563', highlight: '#9ca3af' },
+      smooth: { type: 'curvedCW', roundness: 0.2 },
+      dashes: true,
+    });
   }
 
-  // --- One node per agent_complete event ---
-  const agentEvents = events.filter(e => (e.event || '') === 'agent_complete');
-  const agentCountMap = {}; // label -> count (dedup display labels)
-  for (const ae of agentEvents) {
-    const sub = (ae.subagent_type || 'agent').trim() || 'agent';
+  // Per-agent span nodes + their bash bubbles
+  const agentCountMap = {}; // sub → run index for dedup labels
+  for (let i = 0; i < spans.length; i++) {
+    const sp = spans[i];
+    const { sub, startSec, completeSec, ae } = sp;
+    const role = classifyRole(sub);
+    const color = COLORS[role] || COLORS.generator;
+    const fontColor = role === 'critic' ? '#fed7aa' : '#dcfce7';
+
+    // Dedup label suffix
     agentCountMap[sub] = (agentCountMap[sub] || 0) + 1;
-  }
-  const agentRunIdx = {}; // label -> current index for dedup suffixing
+    const labelSuffix = agentCountMap[sub] > 1 ? '\n#' + agentCountMap[sub] : '';
+    const label = sub + labelSuffix;
 
-  for (let i = 0; i < agentEvents.length; i++) {
-    const ae = agentEvents[i];
-    const sub = (ae.subagent_type || 'agent').trim() || 'agent';
-    agentRunIdx[sub] = (agentRunIdx[sub] || 0) + 1;
+    const agY = normY(startSec);
+    const agX = spanX(i);
 
-    // Deduplicate label: if this subagent_type appears more than once, suffix with run index
-    const labelBase = sub;
-    const label = agentCountMap[sub] > 1
-      ? labelBase + '\n#' + agentRunIdx[sub]
-      : labelBase;
+    const dur = completeSec - startSec;
+    const durLabel = dur >= 60 ? (dur / 60).toFixed(1) + 'm' : dur.toFixed(0) + 's';
+    const inputSnippet  = (ae.input  || '').slice(0, 150) || '(none)';
+    const outputSnippet = (ae.output || '').slice(0, 150) || '(none)';
 
-    const inputSnippet = (ae.input || '').slice(0, 200) || '(no input)';
-    const outputSnippet = (ae.output || '').slice(0, 200) || '(no output)';
-    const nodeTitle = 'agent_complete: ' + sub
-      + '\nTime: ' + fmtTs(ae.ts)
-      + '\n\nInput:\n' + inputSnippet + (inputSnippet.length >= 200 ? '…' : '')
-      + '\n\nOutput:\n' + outputSnippet + (outputSnippet.length >= 200 ? '…' : '');
-
-    const nodeId = 'agent-' + i;
     nodes.push({
-      id: nodeId,
-      label: label,
-      title: nodeTitle,
+      id: 'agent-' + i,
+      label,
+      title: '[' + role + '] ' + sub
+        + '\nStart:    ' + fmtTs(sp.startTs)
+        + '\nComplete: ' + fmtTs(sp.completeTs)
+        + '\nDuration: ' + durLabel
+        + '\n\nInput:\n'  + inputSnippet + (inputSnippet.length >= 150 ? '…' : '')
+        + '\n\nOutput:\n' + outputSnippet + (outputSnippet.length >= 150 ? '…' : ''),
       shape: 'ellipse',
-      color: COLORS.agent,
-      font: { color: '#dcfce7', size: 12, face: 'IBM Plex Mono, monospace' },
-      size: 24,
-      level: 1,
+      color,
+      font: { color: fontColor, size: 12, face: 'IBM Plex Mono, monospace' },
+      size: 26,
+      x: agX,
+      y: agY,
+      fixed: { x: true, y: true },
     });
-    edges.push({ from: orchId, to: nodeId, arrows: 'to', color: { color: '#166534', highlight: '#22c55e' }, smooth: { type: 'cubicBezier' } });
+    edges.push({
+      from: 'orch', to: 'agent-' + i,
+      arrows: 'to',
+      color: { color: '#3b5bdb', highlight: '#4c6ef5' },
+      smooth: { type: 'curvedCW', roundness: 0.15 },
+    });
+
+    // Agent's own bash bubble
+    const myBashes = spanBashes[i] || [];
+    if (myBashes.length > 0) {
+      const midSec2 = myBashes.reduce((s, b) => s + tsToSecs(b.ts || ''), 0) / myBashes.length;
+      const bY = normY(midSec2);
+      const bSize = Math.max(16, Math.min(36, 16 + Math.log10(myBashes.length + 1) * 9));
+      const snippets2 = myBashes.slice(0, 5).map(b => fmtTs(b.ts) + '  $ ' + (b.command || '').slice(0, 50));
+      if (myBashes.length > 5) snippets2.push('… (' + (myBashes.length - 5) + ' more)');
+
+      const bashNodeId = 'bash-' + i;
+      nodes.push({
+        id: bashNodeId,
+        label: 'bash\n×' + myBashes.length,
+        title: sub + ' bash ×' + myBashes.length + '\n\n' + snippets2.join('\n'),
+        shape: 'ellipse',
+        color: COLORS.bash,
+        font: { color: '#d1d5db', size: 10, face: 'IBM Plex Mono, monospace' },
+        size: bSize,
+        x: agX,
+        y: Math.max(bY, agY + 60),  // ensure bash bubble is at or below agent bubble
+        fixed: { x: true, y: true },
+      });
+      edges.push({
+        from: 'agent-' + i, to: bashNodeId,
+        arrows: 'to',
+        color: { color: '#4b5563', highlight: '#9ca3af' },
+        smooth: { type: 'curvedCW', roundness: 0.2 },
+        dashes: true,
+      });
+    }
+  }
+
+  // Fallback: if no agent spans at all (old log without agent_start/complete),
+  // render a single aggregated bash+agent view as before so the tab isn't blank.
+  if (spans.length === 0 && bashEvents.length > 0) {
+    const bSize = Math.max(22, Math.min(55, 22 + Math.log10(bashEvents.length + 1) * 15));
+    const snippets = bashEvents.slice(0, 8).map(e => fmtTs(e.ts) + '  $ ' + (e.command || '').slice(0, 60));
+    if (bashEvents.length > 8) snippets.push('… (' + (bashEvents.length - 8) + ' more)');
+    nodes.push({
+      id: 'bash', label: 'bash\n×' + bashEvents.length,
+      title: 'bash_complete ×' + bashEvents.length + '\n\n' + snippets.join('\n'),
+      shape: 'ellipse', color: COLORS.bash,
+      font: { color: '#d1d5db', size: 12, face: 'IBM Plex Mono, monospace' },
+      size: bSize, x: orchX, y: normY(sessionStartSec) + 150, fixed: { x: true, y: true },
+    });
+    edges.push({ from: 'orch', to: 'bash', arrows: 'to', color: { color: '#4b5563' }, smooth: { type: 'curvedCW', roundness: 0.2 } });
   }
 
   return { nodes, edges };
@@ -898,56 +1090,47 @@ async function renderLiveGraph() {
 
   const options = {
     layout: {
-      hierarchical: {
-        enabled: true,
-        direction: 'UD',          // top-down (orchestrator → children)
-        sortMethod: 'directed',
-        levelSeparation: 130,
-        nodeSpacing: 120,
-        treeSpacing: 150,
-        blockShifting: true,
-        edgeMinimization: true,
-        parentCentralization: true,
-      },
+      // physics:false + fixed x/y on every node → no layout engine needed
+      randomSeed: 1,
     },
     physics: {
-      enabled: false,            // hierarchical layout → no physics needed; prevents freeze
+      enabled: false,   // positions are pre-computed; no simulation = no freeze
     },
     interaction: {
       hover: true,
-      tooltipDelay: 150,
+      tooltipDelay: 100,
       zoomView: true,
       dragView: true,
+      dragNodes: true,
       selectConnectedEdges: true,
     },
     nodes: {
       borderWidth: 2,
-      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 8, x: 2, y: 2 },
+      shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 8, x: 2, y: 2 },
     },
     edges: {
       width: 1.5,
       selectionWidth: 3,
       shadow: false,
     },
-    // Dark background to match dashboard theme
     configure: { enabled: false },
   };
 
   liveNetwork = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
 
-  // Fit the graph into the container after the layout settles
+  // Fit the graph into the container after initial draw
   liveNetwork.once('afterDrawing', () => {
     liveNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
   });
 
   // Status line
   const totalEvents = sessionRun.events.length;
-  const bashCount = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
-  const agentCount = sessionRun.events.filter(e => (e.event || '') === 'agent_complete').length;
+  const bashCount   = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
+  const agentCount  = nodes.filter(n => n.id && String(n.id).startsWith('agent-')).length;
   const sid = sessionRun.session_id || 'unknown';
 
-  statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents+1) not O(events). Physics off.`;
-  infoEl.textContent = `Session: ${sid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agent_complete ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
+  statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents) not O(events). Physics off.`;
+  infoEl.textContent = `Session: ${sid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agents ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
 }
 
 function reloadLiveGraph() {

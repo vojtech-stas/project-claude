@@ -220,6 +220,8 @@
     margin-bottom: 2px;
   }
   .hook-entry .hook-event-tag { color: var(--red); }
+  .hook-entry .hook-matcher { color: var(--orange); font-weight: 600; }
+  .hook-entry .hook-name { color: var(--text); font-weight: 600; }
   .hook-entry .hook-desc { color: var(--text); }
   .flat-list-toggle {
     background: none;
@@ -1020,7 +1022,8 @@ function renderTopologyGraph(data) {
 
 /**
  * Render hooks grouped by lifecycle event.
- * Thin display: event — description (matcher enrichment is slice #421).
+ * Rich display: event · matcher — name — description (slice #421).
+ * Hooks without a matcher render: event — name — description.
  */
 function renderHooksSection(data) {
   const hooks = data.hooks || [];
@@ -1051,9 +1054,19 @@ function renderHooksSection(data) {
     html += `<div class="hooks-event-group">`;
     html += `<div class="hooks-event-label">${escHtml(ev)} (${group.length})</div>`;
     for (const h of group) {
-      const desc = h.description || h.command || h.name || '(no description)';
+      const name = h.clean_name || h.name || '';
+      const matcher = h.matcher || '';
+      const desc = h.description || h.command || name || '(no description)';
+      // Rich format: "event · matcher — name — description" (matcher present)
+      //              "event — name — description"           (no matcher)
+      const when = matcher
+        ? `${escHtml(ev)} &middot; <span class="hook-matcher">${escHtml(matcher)}</span>`
+        : escHtml(ev);
       html += `<div class="hook-entry">`;
-      html += `<span class="hook-event-tag">${escHtml(ev)}</span>`;
+      html += `<span class="hook-event-tag">${when}</span>`;
+      if (name) {
+        html += ` &mdash; <span class="hook-name">${escHtml(name)}</span>`;
+      }
       html += ` &mdash; <span class="hook-desc">${escHtml(desc.slice(0, 120))}</span>`;
       html += `</div>`;
     }
@@ -1086,7 +1099,10 @@ function renderComponentGraph(data) {
     { title: 'Agents', items: data.agents || [], dotClass: null },
     {
       title: 'Hooks', items: data.hooks || [], dotClass: 'dot-hook',
-      descFn: item => `fires on ${item.event}${item.description ? ' → ' + item.description : ''}`,
+      descFn: item => {
+        const when = item.matcher ? `${item.event} · ${item.matcher}` : item.event;
+        return item.description ? `${when} — ${item.description}` : when;
+      },
     },
     { title: 'ADRs', items: data.adrs || [], dotClass: 'dot-adr' },
   ];

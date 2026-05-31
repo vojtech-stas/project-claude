@@ -300,17 +300,17 @@ Specialist agents under `.claude/agents/`:
 
 Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
 
-- **[`session-start.sh`](.claude/hooks/session-start.sh)** (`SessionStart`) — SessionStart hook — inject live workflow state per ADR-0023 D2.
-- **[`dashboard-autostart.sh`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
-- **[`user-prompt-submit.sh`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
-- **[`pre-tool-edit.sh`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
-- **[`pre-tool-bash.sh`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
-- **[`STDIN=$(cat); SUB=$(echo "$STDIN" | jq -r '.tool_input.subag`](.claude/settings.json)** (`PreToolUse`) — logs workflow event to workflow-events.jsonl
-- **[`STDIN=$(cat); FILE_PATH=$(echo "$STDIN" | jq -r '.tool_input`](.claude/settings.json)** (`PostToolUse`) — logs agent file edits; suggests /audit-subagents on agent .md changes
-- **[`STDIN=$(cat); SUB=$(echo "$STDIN" | jq -r '.tool_input.subag`](.claude/settings.json)** (`PostToolUse`) — logs agent completions to workflow-events.jsonl
-- **[`STDIN=$(cat); CMD=$(echo "$STDIN" | jq -r '.tool_input.comma`](.claude/settings.json)** (`PostToolUse`) — logs bash completions to workflow-events.jsonl
-- **[`mkdir -p "$CLAUDE_PROJECT_DIR/.claude/logs" && jq -cn --arg `](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
-- **[`stop-reviewer-gate.sh`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
+- **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — SessionStart hook — inject live workflow state per ADR-0023 D2.
+- **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
+- **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
+- **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
+- **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
+- **[`agent_start logger`](.claude/settings.json)** (`PreToolUse · Agent`) — logs agent start events to workflow-events.jsonl
+- **[`subagent-edit nudge`](.claude/settings.json)** (`PostToolUse · Edit|MultiEdit|Write`) — logs agent file edits; suggests /audit-subagents on agent .md changes
+- **[`agent_complete logger`](.claude/settings.json)** (`PostToolUse · Agent`) — logs agent completions to workflow-events.jsonl
+- **[`bash logger`](.claude/settings.json)** (`PostToolUse · Bash`) — logs bash completions to workflow-events.jsonl
+- **[`session_stop logger`](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
+- **[`stop-reviewer-gate`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 
 ### Architecture Decision Records
 

@@ -32,6 +32,42 @@ from urllib.parse import parse_qs, urlparse
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
+
+def _resolve_invoking_repo_root() -> Path:
+    """Resolve the repo root from the INVOKING worktree's cwd.
+
+    Used by --generate-readme so the generator writes into the worktree that
+    invoked it (not the worktree where server.py physically lives, which may be
+    a sibling worktree on a different branch).
+
+    Resolution order:
+      1. git rev-parse --show-toplevel (run from cwd — worktree-aware)
+      2. $CLAUDE_PROJECT_DIR env var
+      3. Path(__file__).resolve().parent.parent (script-file fallback)
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=os.getcwd(),
+        )
+        if result.returncode == 0:
+            root = Path(result.stdout.strip())
+            if root.is_dir():
+                return root
+    except Exception:
+        pass
+
+    claude_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
+    if claude_dir:
+        p = Path(claude_dir)
+        if p.is_dir():
+            return p
+
+    return Path(__file__).resolve().parent.parent
+
 # Known critics (explicit allow-list per implementer note 1)
 KNOWN_CRITICS = {
     "reviewer",
@@ -1189,9 +1225,14 @@ def generate_readme() -> None:
 
     Idempotent: running twice produces the same README.md.
     No LLM calls — pure stdlib + pathlib.
+
+    Uses _resolve_invoking_repo_root() so that when invoked from a worktree,
+    the README is written into THAT worktree's root rather than the script's
+    physical location (which may be a sibling worktree on a different branch).
     """
-    template_path = REPO_ROOT / "README.template.md"
-    readme_path = REPO_ROOT / "README.md"
+    gen_root = _resolve_invoking_repo_root()
+    template_path = gen_root / "README.template.md"
+    readme_path = gen_root / "README.md"
 
     if not template_path.exists():
         print(

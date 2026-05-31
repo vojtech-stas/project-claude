@@ -47,7 +47,9 @@ yarn-error.log*
 
 # Build artifacts
 dist/
-build/
+/build/
+!.claude/skills/build/
+!.claude/skills/build/**
 *.egg
 
 # Logs

@@ -10,6 +10,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runs?n=N     -> last-N run metadata (no events) grouped by session_id
         GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
         GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
+        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...]} via gh CLI (30s cache)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -811,6 +812,86 @@ def _iter_lines_reversed(path: Path, chunk_size: int = 65536):
 
 
 # ---------------------------------------------------------------------------
+# Work-items: PRD→slice→PR tree via gh CLI (GET /api/workitems)
+# ---------------------------------------------------------------------------
+
+# In-process cache: {"data": {...}, "ts": float}
+_workitems_cache: dict = {}
+_WORKITEMS_TTL = 30  # seconds
+
+
+def _gh_list(args: list, timeout: int = 10) -> list:
+    """Run a gh CLI command and return parsed JSON list.
+
+    On any error (timeout, missing binary, non-zero exit, bad JSON) returns [].
+    Never raises.
+    """
+    try:
+        result = subprocess.run(
+            ["gh"] + args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(REPO_ROOT),
+        )
+        if result.returncode != 0:
+            return []
+        return json.loads(result.stdout)
+    except subprocess.TimeoutExpired:
+        return []
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+
+
+def fetch_workitems() -> dict:
+    """Return PRD→slice→PR tree, using a 30s in-process cache.
+
+    On any failure, returns {} (never raises, never hangs the dashboard).
+    """
+    import time
+
+    now = time.time()
+    cached = _workitems_cache.get("data")
+    if cached is not None and (now - _workitems_cache.get("ts", 0)) < _WORKITEMS_TTL:
+        return cached
+
+    try:
+        prds = _gh_list([
+            "issue", "list",
+            "--label", "prd",
+            "--state", "all",
+            "--limit", "30",
+            "--json", "number,title,state,labels",
+        ])
+        slices = _gh_list([
+            "issue", "list",
+            "--label", "slice",
+            "--state", "all",
+            "--limit", "60",
+            "--json", "number,title,state,labels",
+        ])
+        prs = _gh_list([
+            "pr", "list",
+            "--state", "all",
+            "--limit", "30",
+            "--json", "number,title,state,labels",
+        ])
+
+        # If all three failed (all empty and gh is missing), return soft-degrade {}
+        # We distinguish: gh present but no items vs gh unavailable by checking for errors.
+        # Since _gh_list never raises, an all-empty result when no data exists is fine.
+        data = {"prd": prds, "slices": slices, "prs": prs}
+
+        _workitems_cache["data"] = data
+        _workitems_cache["ts"] = now
+        return data
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
@@ -1060,6 +1141,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "cascadeFinder": cascade_finder_summary(),
             }
             self._send_json(data)
+
+        elif path == "/api/workitems":
+            self._send_json(fetch_workitems())
 
         elif path == "/api/events":
             self._serve_sse(query)

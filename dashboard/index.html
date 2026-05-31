@@ -628,6 +628,86 @@
     white-space: nowrap;
     flex: 1;
   }
+  /* Context panel — work-items tree (Phase 3, slice #434) */
+  .context-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0;
+    font-size: 11px;
+  }
+  .context-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .context-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .context-panel-toggle {
+    color: var(--muted);
+    font-size: 11px;
+    transition: transform 0.15s;
+  }
+  .context-panel.open .context-panel-toggle { transform: rotate(90deg); }
+  .context-panel-body {
+    display: none;
+    padding: 10px 14px;
+    gap: 14px;
+    flex-direction: column;
+  }
+  .context-panel.open .context-panel-body { display: flex; }
+  .workitems-section { display: flex; flex-direction: column; gap: 6px; }
+  .workitems-label {
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 2px;
+  }
+  .workitems-list { display: flex; flex-direction: column; gap: 3px; }
+  .workitem-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: #0a0e13;
+  }
+  .workitem-badge {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .workitem-num {
+    color: var(--muted);
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .workitem-title {
+    color: var(--text);
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .workitems-unavail {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 11px;
+    padding: 4px 0;
+  }
 </style>
 </head>
 <body>
@@ -790,6 +870,16 @@ flowchart TD
     </div>
     <div class="graph-session-info" id="live-session-info"></div>
     <div class="graph-status" id="live-status">Loading…</div>
+    <!-- Context panel: work-items tree (Phase 3, slice #434) -->
+    <div class="context-panel" id="context-panel">
+      <div class="context-panel-header" onclick="toggleContextPanel()">
+        <span class="context-panel-title">Context — Work-items</span>
+        <span class="context-panel-toggle">&#9658;</span>
+      </div>
+      <div class="context-panel-body" id="context-panel-body">
+        <div class="workitems-unavail">Loading…</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2348,6 +2438,127 @@ function toggleDetail(id) {
   el.style.display = el.style.display === showValue ? 'none' : showValue;
 }
 
+// ---------------------------------------------------------------------------
+// Context panel — Work-items tree (Phase 3, slice #434)
+// Fetches /api/workitems independently; NEVER calls renderLiveGraph or
+// buildGraphData, so it cannot trigger the #417 smooth-refresh guard.
+// ---------------------------------------------------------------------------
+
+let contextPanelRefreshTimer = null;
+
+function toggleContextPanel() {
+  const panel = document.getElementById('context-panel');
+  if (!panel) return;
+  panel.classList.toggle('open');
+  // Fetch when opening if body still shows the initial placeholder
+  if (panel.classList.contains('open')) {
+    refreshContextPanel();
+  }
+}
+
+/**
+ * Badge color for a work-item row.
+ * PRD/slice open → amber; PR open → amber; merged → green;
+ * needs-human / BLOCKED label → red; closed → muted gray.
+ */
+function workitemBadgeStyle(item, kind) {
+  const labels = (item.labels || []).map(function(l) {
+    return (l.name || l || '').toLowerCase();
+  });
+  const state = (item.state || '').toLowerCase();
+
+  if (labels.indexOf('needs-human') !== -1) {
+    return { bg: '#dc2626', color: '#fff', text: 'needs-human' };
+  }
+  if (state === 'merged') {
+    return { bg: '#16a34a', color: '#fff', text: 'merged' };
+  }
+  if (state === 'closed') {
+    return { bg: '#374151', color: '#9ca3af', text: 'closed' };
+  }
+  // open
+  const amber = NODE_COLORS.prd; // '#eab308'
+  return { bg: amber, color: '#1a1a0a', text: kind };
+}
+
+function renderWorkitemRow(item, kind) {
+  const badge = workitemBadgeStyle(item, kind);
+  const title = escHtml((item.title || '(no title)').slice(0, 80));
+  return '<div class="workitem-row">'
+    + '<span class="workitem-badge" style="background:' + badge.bg + ';color:' + badge.color + ';">'
+    + escHtml(badge.text) + '</span>'
+    + '<span class="workitem-num">#' + escHtml(String(item.number || '?')) + '</span>'
+    + '<span class="workitem-title" title="' + escHtml(item.title || '') + '">' + title + '</span>'
+    + '</div>';
+}
+
+function renderWorkitemsHtml(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return '<div class="workitems-unavail">GitHub data unavailable</div>';
+  }
+  // Soft-degrade: if error key present or all arrays empty/missing
+  if (data.error) {
+    return '<div class="workitems-unavail">GitHub data unavailable</div>';
+  }
+
+  const prds    = Array.isArray(data.prd)    ? data.prd    : [];
+  const slices  = Array.isArray(data.slices) ? data.slices : [];
+  const prs     = Array.isArray(data.prs)    ? data.prs    : [];
+
+  if (prds.length === 0 && slices.length === 0 && prs.length === 0) {
+    return '<div class="workitems-unavail">No work-items found</div>';
+  }
+
+  let html = '';
+
+  if (prds.length > 0) {
+    html += '<div class="workitems-section">';
+    html += '<div class="workitems-label">PRDs (' + prds.length + ')</div>';
+    html += '<div class="workitems-list">';
+    prds.forEach(function(item) { html += renderWorkitemRow(item, 'prd'); });
+    html += '</div></div>';
+  }
+
+  if (slices.length > 0) {
+    html += '<div class="workitems-section">';
+    html += '<div class="workitems-label">Slices (' + slices.length + ')</div>';
+    html += '<div class="workitems-list">';
+    slices.forEach(function(item) { html += renderWorkitemRow(item, 'slice'); });
+    html += '</div></div>';
+  }
+
+  if (prs.length > 0) {
+    html += '<div class="workitems-section">';
+    html += '<div class="workitems-label">PRs (' + prs.length + ')</div>';
+    html += '<div class="workitems-list">';
+    prs.forEach(function(item) { html += renderWorkitemRow(item, 'pr'); });
+    html += '</div></div>';
+  }
+
+  return html;
+}
+
+/**
+ * Fetch /api/workitems and update the context panel body.
+ * Does NOT call renderLiveGraph / buildGraphData / renderSessionGraph.
+ * Independent from the graph refresh path.
+ */
+async function refreshContextPanel() {
+  const bodyEl = document.getElementById('context-panel-body');
+  if (!bodyEl) return;
+  try {
+    const r = await fetch('/api/workitems');
+    if (!r.ok) {
+      bodyEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+      return;
+    }
+    const data = await r.json();
+    bodyEl.innerHTML = renderWorkitemsHtml(data);
+  } catch (_) {
+    bodyEl.innerHTML = '<div class="workitems-unavail">GitHub data unavailable</div>';
+  }
+}
+
 function startLiveGraph() {
   if (liveGraphLoaded) return;
   liveGraphLoaded = true;
@@ -2359,6 +2570,9 @@ function startLiveGraph() {
     sessionRunsCache = null;
     await renderLiveGraph();
   }, 30000);
+  // Context panel refresh: independent interval (same 30s cadence).
+  // Uses a separate timer so panel update CANNOT trigger graph rebuild.
+  contextPanelRefreshTimer = setInterval(refreshContextPanel, 30000);
 }
 
 // Patch switchTab to start graph when Live tab is first opened

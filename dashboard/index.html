@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>project-claude dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css">
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -343,6 +345,69 @@
     text-align: center;
   }
   .show-older-btn:hover { color: var(--text); border-color: var(--muted); }
+  /* Live graph styles */
+  .graph-outer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .graph-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .graph-header h2 { margin: 0; }
+  .graph-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .graph-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-dot-orch  { background: #38bdf8; border: 2px solid #0ea5e9; }
+  .legend-dot-bash  { background: #6b7280; border: 2px solid #9ca3af; }
+  .legend-dot-agent { background: #22c55e; border: 2px solid #16a34a; }
+  .graph-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    height: calc(100vh - 240px);
+    min-height: 420px;
+    position: relative;
+    overflow: hidden;
+  }
+  .graph-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--muted);
+    gap: 8px;
+  }
+  .graph-empty strong { color: var(--text); }
+  .graph-status {
+    font-size: 10px;
+    color: var(--muted);
+    padding: 4px 0;
+  }
+  .graph-session-info {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 4px 0 0 0;
+  }
 </style>
 </head>
 <body>
@@ -446,23 +511,26 @@ flowchart TD
 
 <!-- LIVE TAB -->
 <div id="tab-live" class="tab">
-  <div class="live-toolbar">
-    <h2 style="margin:0;margin-right:4px;">Live events</h2>
-    <button class="chip active" onclick="setFilter('all', this)">All</button>
-    <button class="chip" onclick="setFilter('critic', this)">Critics</button>
-    <button class="chip" onclick="setFilter('generator', this)">Generators</button>
-    <button class="chip" onclick="setFilter('skill', this)">Skills</button>
-    <button class="chip" onclick="setFilter('hook', this)">Hooks</button>
-    <button class="chip" onclick="setFilter('bash', this)">Bash</button>
-  </div>
-  <div class="live-stream" id="live-stream">
-    <div class="placeholder" id="live-empty">
-      <strong>No events yet.</strong>
-      <span>Run /ship or any pipeline command to see events stream in.</span>
-      <span style="font-size:10px;margin-top:4px;color:var(--muted)">Streaming from .claude/logs/workflow-events.jsonl</span>
+  <div class="graph-outer">
+    <div class="graph-header">
+      <h2>Live — current session</h2>
+      <div class="graph-legend">
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-orch"></span>orchestrator</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-bash"></span>bash (aggregated)</div>
+        <div class="graph-legend-item"><span class="legend-dot legend-dot-agent"></span>agent_complete</div>
+      </div>
+      <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
     </div>
+    <div class="graph-container" id="live-graph-container">
+      <div class="graph-empty" id="live-graph-empty">
+        <strong>No session data yet.</strong>
+        <span>Run /ship or any pipeline command to populate the graph.</span>
+        <span style="font-size:10px;margin-top:4px;">Reads from .claude/logs/workflow-events.jsonl</span>
+      </div>
+    </div>
+    <div class="graph-session-info" id="live-session-info"></div>
+    <div class="graph-status" id="live-status">Loading…</div>
   </div>
-  <div class="status-bar" id="live-status">Connecting…</div>
 </div>
 
 <!-- HEALTH TAB -->
@@ -664,391 +732,226 @@ function renderCascade(cf) {
 // Auto-load architecture tab on start
 window.addEventListener('load', () => { loadArchitecture(); });
 
-// --- Live event stream (run-tree viz, slice #390) ---
-let liveFilter = 'all';
-let liveEvents = [];  // [{id, ts, eventType, name, raw}]
-let liveEs = null;
-let liveLastSeen = 0;
-// How many most-recent runs to render+expand by default
-const RUNS_DEFAULT_OPEN = 2;
-// Oldest runs not yet DOM-rendered (kept here, rendered on "show older")
-let olderRuns = [];   // [{session_id, first_ts, last_ts, events}]
-let recentRuns = [];  // same shape, newest first, always in DOM
-let olderShown = false;
-// Session IDs already seeded from REST /api/runs (avoid SSE duplication)
-let seededSessionIds = new Set();
-// Whether initial /api/runs fetch has been attempted
-let runsLoaded = false;
-// Whether there may be more older runs available from the server
-let moreOlderAvailable = true;
+// --- Live tab: vis-network bubble graph (current session, O(#agents+1) nodes) ---
 
-const CRITICS = new Set(['reviewer','prd-critic','adr-critic','slicer-critic','glossary-critic','backlog-critic']);
-const GENERATORS = new Set(['slicer','implementer','qa-tester']);
+let liveNetwork = null;      // vis.Network instance
+let liveGraphLoaded = false; // whether initial load has run
+let liveRefreshTimer = null; // periodic refresh handle
 
-function classifyEvent(obj) {
-  const ev = (obj.event || '').toLowerCase();
-  if (ev === 'bash_complete') return 'bash';
-  if (ev === 'session_stop' || ev.startsWith('hook')) return 'hook';
-  if (ev === 'agent_complete') {
-    const sub = (obj.subagent_type || '').toLowerCase();
-    if (CRITICS.has(sub)) return 'critic';
-    if (GENERATORS.has(sub)) return 'generator';
-    return 'generator';
-  }
-  return 'skill';
-}
-
-function typeIcon(t) {
-  const map = { critic: '●', generator: '◆', skill: '▶', hook: '⚙', bash: '$' };
-  return map[t] || '·';
-}
-
-function typeCss(t) {
-  const map = { critic: 'type-critic', generator: 'type-generator', skill: 'type-skill', hook: 'type-hook', bash: 'type-bash' };
-  return map[t] || '';
-}
-
-function eventName(obj, t) {
-  if (t === 'bash') return (obj.command || '').slice(0, 80);
-  if (t === 'hook' && obj.event === 'session_stop') return 'session_stop';
-  return obj.subagent_type || obj.event || 'event';
-}
+// Color palette matching the dashboard's CSS variables
+const COLORS = {
+  orch:  { background: '#0ea5e9', border: '#38bdf8', highlight: { background: '#38bdf8', border: '#7dd3fc' } },
+  bash:  { background: '#374151', border: '#6b7280', highlight: { background: '#4b5563', border: '#9ca3af' } },
+  agent: { background: '#16a34a', border: '#22c55e', highlight: { background: '#22c55e', border: '#4ade80' } },
+};
 
 function fmtTs(ts) {
   if (!ts) return '';
   return ts.replace('T', ' ').slice(0, 19);
 }
 
-function fmtDuration(startTs, endTs) {
-  if (!startTs || !endTs) return '';
-  try {
-    const diff = Math.round((new Date(endTs) - new Date(startTs)) / 1000);
-    if (diff < 60) return `${diff}s`;
-    return `${Math.floor(diff / 60)}m${diff % 60}s`;
-  } catch(_) { return ''; }
-}
+/**
+ * Build vis-network nodes+edges from a single session's event list.
+ * Critical invariant: ONE bash node total (aggregated), NOT one per bash event.
+ * Node count: O(#agent_complete events + 2) — never O(#events).
+ */
+function buildGraphData(sessionRun) {
+  const events = sessionRun.events || [];
+  const sid = sessionRun.session_id || 'unknown';
+  const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 10) + '…';
 
-// Build run groups from liveEvents, applying the current filter.
-// Child-session detection uses the time-window heuristic:
-//   a session is "child" if it has no agent_complete events of its own
-//   and all its events fall within the ts window of an agent_complete in another session.
-function buildRunGroups() {
-  // Pass 1: collect per-session raw events in insertion order (uses ALL events,
-  // not filtered, so child sessions are always discoverable regardless of filter)
-  const sessionOrder = [];
-  const sessionMap = {};
-  for (const ev of liveEvents) {
-    const sid = ev.raw.session_id || 'unknown';
-    if (!sessionMap[sid]) { sessionMap[sid] = []; sessionOrder.push(sid); }
-    sessionMap[sid].push(ev);
-  }
+  const nodes = [];
+  const edges = [];
 
-  // Pass 2: find child sessions — a session is a child if its events all fall
-  // within the ts range of an agent_complete in another session.
-  // Primary signal: distinct session_id child sessions are those that don't have
-  // any agent_complete events (they only have bash_complete/session_stop).
-  // Time-window heuristic: for each agent_complete in a parent session, events
-  // from OTHER sessions that fall between the dispatch window belong under it.
-  // For this implementation: a session is a "child" if it contains no agent_complete
-  // events itself AND its events are time-sandwiched by an agent_complete in another session.
-
-  const childSessions = new Set();
-  // Map: childSid -> parentSid -> agentCompleteIndex
-  const childParentMap = {};
-
-  for (const parentSid of sessionOrder) {
-    const parentEvs = sessionMap[parentSid] || [];
-    const agentCompletes = parentEvs.filter(e => e.raw.event === 'agent_complete');
-    for (const ac of agentCompletes) {
-      const acTs = ac.raw.ts;
-      if (!acTs) continue;
-      const acTime = new Date(acTs).getTime();
-      // Look at other sessions
-      for (const otherSid of sessionOrder) {
-        if (otherSid === parentSid) continue;
-        if (childSessions.has(otherSid)) continue; // already assigned
-        const otherEvs = sessionMap[otherSid] || [];
-        if (!otherEvs.length) continue;
-        // Child must not itself have agent_complete events
-        const hasOwnAgents = otherEvs.some(e => e.raw.event === 'agent_complete');
-        if (hasOwnAgents) continue;
-        // Check: all of child's events have ts <= acTs (agent was running while child ran)
-        // and at least one child event has ts < acTs
-        const childFirst = new Date(otherEvs[0].raw.ts || 0).getTime();
-        const childLast = new Date(otherEvs[otherEvs.length - 1].raw.ts || 0).getTime();
-        // Find the event just before this agent_complete in parent
-        // Heuristic: if child's first ts < acTs, child is nested under this agent_complete
-        if (childFirst < acTime && childLast <= acTime) {
-          childSessions.add(otherSid);
-          childParentMap[otherSid] = { parentSid, agentCompleteTs: acTs };
-        }
-      }
-    }
-  }
-
-  // Build run groups: top-level sessions in order, newest-first
-  const topSessions = sessionOrder.filter(sid => !childSessions.has(sid));
-  // Newest first: sort by first_ts descending
-  topSessions.sort((a, b) => {
-    const aTs = sessionMap[a] && sessionMap[a][0] ? sessionMap[a][0].raw.ts || '' : '';
-    const bTs = sessionMap[b] && sessionMap[b][0] ? sessionMap[b][0].raw.ts || '' : '';
-    return bTs > aTs ? 1 : bTs < aTs ? -1 : 0;
+  // --- Orchestrator root node ---
+  const orchId = 'orch';
+  nodes.push({
+    id: orchId,
+    label: 'orchestrator\n' + sidShort,
+    title: 'Session: ' + sid
+      + '\nFirst event: ' + fmtTs(sessionRun.first_ts)
+      + '\nLast event:  ' + fmtTs(sessionRun.last_ts)
+      + '\nTotal events: ' + events.length,
+    shape: 'ellipse',
+    color: COLORS.orch,
+    font: { color: '#e0f2fe', size: 13, face: 'IBM Plex Mono, monospace' },
+    size: 30,
+    level: 0,
   });
 
-  // Apply filter: for each top session, filter its events; skip sessions with no matching events
-  const runs = [];
-  for (const sid of topSessions) {
-    const allEvs = sessionMap[sid] || [];
-    const evs = liveFilter === 'all' ? allEvs : allEvs.filter(e => e.eventType === liveFilter);
-    if (!evs.length) continue; // no visible events for this run after filtering
-    const first_ts = allEvs.length ? (allEvs[0].raw.ts || '') : '';
-    const last_ts = allEvs.length ? (allEvs[allEvs.length - 1].raw.ts || '') : '';
-    runs.push({
-      session_id: sid,
-      first_ts,
-      last_ts,
-      events: evs,       // filtered events for display
-      childMap: childParentMap,
-      sessionMap,        // full (unfiltered) sessionMap for child-event lookup
+  // --- Aggregate bash_complete events into ONE node ---
+  const bashEvents = events.filter(e => (e.event || '') === 'bash_complete');
+  if (bashEvents.length > 0) {
+    const bashId = 'bash';
+    // Tooltip: first 8 commands + timestamps
+    const snippets = bashEvents.slice(0, 8).map(e =>
+      fmtTs(e.ts) + '  $ ' + (e.command || '').slice(0, 60)
+    );
+    if (bashEvents.length > 8) snippets.push('… (' + (bashEvents.length - 8) + ' more)');
+    const bashTitle = 'bash_complete ×' + bashEvents.length + '\n\n' + snippets.join('\n');
+
+    // Size: scale logarithmically so a 5000-event session doesn't overflow,
+    // but a 10-event session still looks bigger than agent nodes.
+    const bashSize = Math.max(22, Math.min(55, 22 + Math.log10(bashEvents.length + 1) * 15));
+
+    nodes.push({
+      id: bashId,
+      label: 'bash\n×' + bashEvents.length,
+      title: bashTitle,
+      shape: 'ellipse',
+      color: COLORS.bash,
+      font: { color: '#d1d5db', size: 12, face: 'IBM Plex Mono, monospace' },
+      size: bashSize,
+      level: 1,
     });
+    edges.push({ from: orchId, to: bashId, arrows: 'to', color: { color: '#4b5563', highlight: '#9ca3af' }, smooth: { type: 'cubicBezier' } });
   }
 
-  return runs;
-}
-
-// Render a single bash/hook/skill event row (flat)
-function renderFlatRow(ev, prefix) {
-  const ts = fmtTs(ev.raw.ts);
-  const det_id = `${prefix}det-${ev.id}`;
-  let h = `<div class="tree-row" onclick="toggleDetail('${det_id}')">`;
-  h += `<span class="tree-ts">${escHtml(ts)}</span>`;
-  h += `<span class="tree-icon ${typeCss(ev.eventType)}">${typeIcon(ev.eventType)}</span>`;
-  h += `<span class="tree-name ${typeCss(ev.eventType)}">${escHtml(ev.name)}</span>`;
-  h += `</div>`;
-  h += `<div class="event-detail" id="${det_id}"><pre>${escHtml(JSON.stringify(ev.raw, null, 2))}</pre></div>`;
-  return h;
-}
-
-// Render a child row (inside agent node)
-function renderChildRow(ev, prefix) {
-  const ts = fmtTs(ev.raw.ts);
-  const det_id = `${prefix}cdet-${ev.id}`;
-  let h = `<div class="child-row" onclick="toggleDetail('${det_id}')">`;
-  h += `<span class="tree-ts">${escHtml(ts)}</span>`;
-  h += `<span class="tree-icon ${typeCss(ev.eventType)}">${typeIcon(ev.eventType)}</span>`;
-  h += `<span class="tree-name ${typeCss(ev.eventType)}">${escHtml(ev.name)}</span>`;
-  h += `</div>`;
-  h += `<div class="child-detail" id="${det_id}"><pre>${escHtml(JSON.stringify(ev.raw, null, 2))}</pre></div>`;
-  return h;
-}
-
-// Render agent_complete as a collapsible node with nested children + I/O
-function renderAgentNode(ev, childEvs, prefix) {
-  const ts = fmtTs(ev.raw.ts);
-  const subtype = ev.raw.subagent_type || ev.raw.event || 'agent';
-  const inputText = (ev.raw.input || '').slice(0, 500) || '(no input captured)';
-  const outputText = (ev.raw.output || '').slice(0, 800) || '(no output captured)';
-  const typeClass = typeCss(ev.eventType);
-  const icon = typeIcon(ev.eventType);
-  const node_id = `${prefix}agent-${ev.id}`;
-
-  let h = `<details class="agent-node" id="${node_id}">`;
-  h += `<summary class="agent-node-summary">`;
-  h += `<span class="tree-ts">${escHtml(ts)}</span>`;
-  h += `<span class="tree-icon ${typeClass}">${icon}</span>`;
-  h += `<span class="tree-name ${typeClass}">${escHtml(subtype)}</span>`;
-  if (childEvs.length) {
-    h += `<span class="run-badge">${childEvs.length} child${childEvs.length !== 1 ? 's' : ''}</span>`;
+  // --- One node per agent_complete event ---
+  const agentEvents = events.filter(e => (e.event || '') === 'agent_complete');
+  const agentCountMap = {}; // label -> count (dedup display labels)
+  for (const ae of agentEvents) {
+    const sub = (ae.subagent_type || 'agent').trim() || 'agent';
+    agentCountMap[sub] = (agentCountMap[sub] || 0) + 1;
   }
-  h += `</summary>`;
+  const agentRunIdx = {}; // label -> current index for dedup suffixing
 
-  // Agent I/O section
-  h += `<div class="agent-io">`;
-  h += `<div class="agent-io-label">subagent_type: <span style="color:var(--text)">${escHtml(subtype)}</span></div>`;
-  h += `<div class="agent-io-label" style="margin-top:6px;">Input:</div>`;
-  h += `<pre>${escHtml(inputText)}${inputText.length >= 500 ? '\n… (truncated)' : ''}</pre>`;
-  h += `<div class="agent-io-label">Output:</div>`;
-  h += `<pre>${escHtml(outputText)}${outputText.length >= 800 ? '\n… (truncated)' : ''}</pre>`;
-  h += `</div>`;
+  for (let i = 0; i < agentEvents.length; i++) {
+    const ae = agentEvents[i];
+    const sub = (ae.subagent_type || 'agent').trim() || 'agent';
+    agentRunIdx[sub] = (agentRunIdx[sub] || 0) + 1;
 
-  // Nested child events
-  if (childEvs.length) {
-    h += `<div class="agent-children">`;
-    for (const cev of childEvs) {
-      h += renderChildRow(cev, prefix);
-    }
-    h += `</div>`;
+    // Deduplicate label: if this subagent_type appears more than once, suffix with run index
+    const labelBase = sub;
+    const label = agentCountMap[sub] > 1
+      ? labelBase + '\n#' + agentRunIdx[sub]
+      : labelBase;
+
+    const inputSnippet = (ae.input || '').slice(0, 200) || '(no input)';
+    const outputSnippet = (ae.output || '').slice(0, 200) || '(no output)';
+    const nodeTitle = 'agent_complete: ' + sub
+      + '\nTime: ' + fmtTs(ae.ts)
+      + '\n\nInput:\n' + inputSnippet + (inputSnippet.length >= 200 ? '…' : '')
+      + '\n\nOutput:\n' + outputSnippet + (outputSnippet.length >= 200 ? '…' : '');
+
+    const nodeId = 'agent-' + i;
+    nodes.push({
+      id: nodeId,
+      label: label,
+      title: nodeTitle,
+      shape: 'ellipse',
+      color: COLORS.agent,
+      font: { color: '#dcfce7', size: 12, face: 'IBM Plex Mono, monospace' },
+      size: 24,
+      level: 1,
+    });
+    edges.push({ from: orchId, to: nodeId, arrows: 'to', color: { color: '#166534', highlight: '#22c55e' }, smooth: { type: 'cubicBezier' } });
   }
 
-  h += `</details>`;
-  return h;
+  return { nodes, edges };
 }
 
-// Render a single run group
-function renderRunGroup(run, isOpen, prefix) {
-  const sid = run.session_id;
-  const sidShort = sid === 'unknown' ? 'unknown' : sid.slice(0, 12) + '…';
-  const firstTs = fmtTs(run.first_ts);
-  const lastTs = fmtTs(run.last_ts);
-  const eventCount = run.events.length;
+/**
+ * Render (or re-render) the vis-network graph in #live-graph-container.
+ * Destroys the previous network if any, then builds a new one.
+ * Called once on tab open, and on Refresh.
+ */
+async function renderLiveGraph() {
+  const container = document.getElementById('live-graph-container');
+  const emptyEl   = document.getElementById('live-graph-empty');
+  const statusEl  = document.getElementById('live-status');
+  const infoEl    = document.getElementById('live-session-info');
 
-  let h = `<details class="run-group"${isOpen ? ' open' : ''}>`;
-  h += `<summary class="run-summary">`;
-  h += `<span class="run-sid">${escHtml(sidShort)}</span>`;
-  h += `<span class="run-meta">${escHtml(firstTs)}${lastTs && lastTs !== firstTs ? ' → ' + escHtml(lastTs) : ''}</span>`;
-  h += `<span class="run-badge">${eventCount} event${eventCount !== 1 ? 's' : ''}</span>`;
-  h += `</summary>`;
-  h += `<div class="run-body">`;
+  statusEl.textContent = 'Fetching latest session…';
 
-  // Build the tree: time-ordered events for this run
-  // Agent_complete events get their child session events nested
-  const evs = run.events; // time-ordered (ascending, as logged)
-
-  // Collect child session events keyed by parent agent_complete ts
-  // child sessions assigned to this run's session_id
-  const childMap = run.childMap || {};
-  const sessionMap = run.sessionMap || {};
-
-  // Find which child sessions belong to THIS parent session
-  const myChildSessions = Object.entries(childMap)
-    .filter(([cSid, info]) => info.parentSid === sid)
-    .map(([cSid, info]) => ({ cSid, agentCompleteTs: info.agentCompleteTs }));
-
-  // For each agent_complete, gather child events from child sessions
-  // that are time-sandwiched by it
-  for (const ev of evs) {
-    if (ev.raw.event !== 'agent_complete') continue;
-    const acTs = ev.raw.ts;
-    const acTime = new Date(acTs || 0).getTime();
-    // Find a preceding event's ts for dispatch time (event before this one)
-    const evIdx = evs.indexOf(ev);
-    const prevTs = evIdx > 0 ? evs[evIdx - 1].raw.ts : run.first_ts;
-    const dispatchTime = new Date(prevTs || 0).getTime();
-
-    // Gather child events from child sessions
-    const childEvsList = [];
-    for (const { cSid } of myChildSessions) {
-      const cEvs = (sessionMap[cSid] || []).filter(ce => {
-        const cTime = new Date(ce.raw.ts || 0).getTime();
-        return cTime >= dispatchTime && cTime <= acTime;
-      });
-      childEvsList.push(...cEvs);
-    }
-    // Sort by ts
-    childEvsList.sort((a, b) => (a.raw.ts || '') < (b.raw.ts || '') ? -1 : 1);
-    // Store on event object for rendering
-    ev._childEvs = childEvsList;
-  }
-
-  // Now render events
-  for (const ev of evs) {
-    if (ev.raw.event === 'agent_complete') {
-      h += renderAgentNode(ev, ev._childEvs || [], prefix);
-    } else {
-      h += renderFlatRow(ev, prefix);
-    }
-  }
-
-  h += `</div></details>`;
-  return h;
-}
-
-function renderLiveEvents() {
-  const container = document.getElementById('live-stream');
-  const empty = document.getElementById('live-empty');
-
-  const runs = buildRunGroups();
-
-  if (runs.length === 0) {
-    empty.style.display = 'flex';
-    // Clear any previously rendered run groups
-    container.querySelectorAll('.run-group, .show-older-btn').forEach(el => el.remove());
+  let sessionRun = null;
+  try {
+    const r = await fetch('/api/runs?n=1');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const runs = data.runs || [];
+    sessionRun = runs.length > 0 ? runs[0] : null;
+  } catch (err) {
+    statusEl.textContent = 'Error loading session: ' + err.message;
     return;
   }
-  empty.style.display = 'none';
 
-  // Split: last RUNS_DEFAULT_OPEN are recent (rendered + open); older = collapsed headers only until "show older"
-  recentRuns = runs.slice(0, RUNS_DEFAULT_OPEN);
-  olderRuns = runs.slice(RUNS_DEFAULT_OPEN);
-
-  // Build HTML for recent runs (rendered, open by default)
-  let html = '';
-  for (let i = 0; i < recentRuns.length; i++) {
-    html += renderRunGroup(recentRuns[i], true, `r${i}-`);
+  // Destroy previous network instance to free memory
+  if (liveNetwork) {
+    liveNetwork.destroy();
+    liveNetwork = null;
   }
 
-  // "Show older" button — visible when:
-  //   (a) there are in-memory older runs not yet shown, OR
-  //   (b) the server may have more older runs (moreOlderAvailable)
-  const hasLocalOlder = olderRuns.length > 0;
-  const showOlderBtn = (!olderShown && (hasLocalOlder || moreOlderAvailable));
-  if (showOlderBtn) {
-    const label = hasLocalOlder
-      ? `Show ${olderRuns.length} older run${olderRuns.length !== 1 ? 's' : ''} ▼`
-      : 'Show older runs ▼';
-    html += `<button class="show-older-btn" id="show-older-btn" onclick="showOlderRuns()">${label}</button>`;
-  } else if (olderRuns.length > 0 && olderShown) {
-    // Already shown: render them collapsed
-    for (let i = 0; i < olderRuns.length; i++) {
-      html += renderRunGroup(olderRuns[i], false, `o${i}-`);
-    }
-    // If server might have even more, offer another page
-    if (moreOlderAvailable) {
-      html += `<button class="show-older-btn" id="show-older-btn" onclick="showOlderRuns()">Load more older runs ▼</button>`;
-    }
+  if (!sessionRun || !sessionRun.events || sessionRun.events.length === 0) {
+    emptyEl.style.display = 'flex';
+    statusEl.textContent = 'No session data in log.';
+    infoEl.textContent = '';
+    return;
   }
 
-  container.innerHTML = html + empty.outerHTML;
-  document.getElementById('live-empty').style.display = 'none';
+  emptyEl.style.display = 'none';
+
+  const { nodes, edges } = buildGraphData(sessionRun);
+
+  const visNodes = new vis.DataSet(nodes);
+  const visEdges = new vis.DataSet(edges);
+
+  const options = {
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: 'UD',          // top-down (orchestrator → children)
+        sortMethod: 'directed',
+        levelSeparation: 130,
+        nodeSpacing: 120,
+        treeSpacing: 150,
+        blockShifting: true,
+        edgeMinimization: true,
+        parentCentralization: true,
+      },
+    },
+    physics: {
+      enabled: false,            // hierarchical layout → no physics needed; prevents freeze
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 150,
+      zoomView: true,
+      dragView: true,
+      selectConnectedEdges: true,
+    },
+    nodes: {
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 8, x: 2, y: 2 },
+    },
+    edges: {
+      width: 1.5,
+      selectionWidth: 3,
+      shadow: false,
+    },
+    // Dark background to match dashboard theme
+    configure: { enabled: false },
+  };
+
+  liveNetwork = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
+
+  // Fit the graph into the container after the layout settles
+  liveNetwork.once('afterDrawing', () => {
+    liveNetwork.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
+  });
+
+  // Status line
+  const totalEvents = sessionRun.events.length;
+  const bashCount = sessionRun.events.filter(e => (e.event || '') === 'bash_complete').length;
+  const agentCount = sessionRun.events.filter(e => (e.event || '') === 'agent_complete').length;
+  const sid = sessionRun.session_id || 'unknown';
+
+  statusEl.textContent = `Rendered ${nodes.length} node(s), ${edges.length} edge(s) — O(#agents+1) not O(events). Physics off.`;
+  infoEl.textContent = `Session: ${sid.slice(0, 16)}… | ${totalEvents} total events | bash ×${bashCount} | agent_complete ×${agentCount} | from ${fmtTs(sessionRun.first_ts)} to ${fmtTs(sessionRun.last_ts)}`;
 }
 
-async function showOlderRuns() {
-  olderShown = true;
-
-  // Find the oldest session_id currently rendered (the last entry in recentRuns)
-  // to use as the ?before cursor for fetching from the server.
-  const allRendered = [...recentRuns, ...olderRuns];
-  // allRendered is newest-first; oldest is the last element
-  const oldestSid = allRendered.length > 0
-    ? allRendered[allRendered.length - 1].session_id
-    : null;
-
-  if (moreOlderAvailable && oldestSid) {
-    try {
-      const url = '/api/runs?n=5&before=' + encodeURIComponent(oldestSid);
-      const r = await fetch(url);
-      const data = await r.json();
-      const fetchedRuns = data.runs || [];
-
-      if (fetchedRuns.length === 0) {
-        moreOlderAvailable = false;
-      } else {
-        // Merge fetched run events into liveEvents (dedup by session_id)
-        for (const run of fetchedRuns) {
-          if (seededSessionIds.has(run.session_id)) continue;
-          seededSessionIds.add(run.session_id);
-          for (const evObj of run.events) {
-            const t = classifyEvent(evObj);
-            liveEvents.push({
-              id: 'hist-' + run.session_id + '-' + liveEvents.length,
-              ts: evObj.ts,
-              eventType: t,
-              name: eventName(evObj, t),
-              raw: evObj,
-            });
-          }
-        }
-        // Sort liveEvents by ts so run grouping stays consistent
-        liveEvents.sort((a, b) => (a.raw.ts || '') < (b.raw.ts || '') ? -1 : 1);
-        // If the server returned fewer than requested, no more pages
-        if (fetchedRuns.length < 5) moreOlderAvailable = false;
-      }
-    } catch(_) {
-      // Network error: fall back to rendering what we have in memory
-    }
-  }
-
-  renderLiveEvents();
+function reloadLiveGraph() {
+  renderLiveGraph();
 }
 
 function toggleDetail(id) {
@@ -1060,99 +963,19 @@ function toggleDetail(id) {
   el.style.display = el.style.display === showValue ? 'none' : showValue;
 }
 
-function setFilter(f, btn) {
-  liveFilter = f;
-  olderShown = false;
-  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-  btn.classList.add('active');
-  renderLiveEvents();
+function startLiveGraph() {
+  if (liveGraphLoaded) return;
+  liveGraphLoaded = true;
+  renderLiveGraph();
+  // Auto-refresh every 15 seconds so the graph picks up new events
+  liveRefreshTimer = setInterval(renderLiveGraph, 15000);
 }
 
-// Seed liveEvents from the REST /api/runs?n=2 snapshot so the last 2 runs are
-// immediately visible without waiting for the SSE stream to replay history.
-async function loadInitialRuns() {
-  if (runsLoaded) return;
-  runsLoaded = true;
-  try {
-    const r = await fetch('/api/runs?n=2');
-    const data = await r.json();
-    const runs = data.runs || [];
-    for (const run of runs) {
-      seededSessionIds.add(run.session_id);
-      for (const evObj of run.events) {
-        const t = classifyEvent(evObj);
-        liveEvents.push({
-          id: 'hist-' + run.session_id + '-' + liveEvents.length,
-          ts: evObj.ts,
-          eventType: t,
-          name: eventName(evObj, t),
-          raw: evObj,
-        });
-      }
-    }
-    // Sort ascending by ts
-    liveEvents.sort((a, b) => (a.raw.ts || '') < (b.raw.ts || '') ? -1 : 1);
-    if (liveEvents.length > 0) renderLiveEvents();
-  } catch(_) {
-    // Server may not be running yet — SSE will deliver events when ready
-  }
-}
-
-function startLiveStream() {
-  if (liveEs) return; // already connected
-  loadInitialRuns();  // seed historical runs before SSE starts
-  liveEs = new EventSource('/api/events');
-
-  liveEs.onopen = () => {
-    document.getElementById('live-status').textContent = 'Connected — streaming live.';
-  };
-
-  liveEs.onmessage = (e) => {
-    liveLastSeen = Date.now();
-    let obj;
-    try { obj = JSON.parse(e.data); } catch(_) { return; }
-    const sid = obj.session_id || 'unknown';
-    // If this event belongs to a session already seeded from /api/runs, skip it
-    // UNLESS it's a session we seeded AND the event is newer than our snapshot
-    // (we can't tell easily, so we only skip whole sessions that were fully historical).
-    // Strategy: seededSessionIds contains sessions from the /api/runs snapshot.
-    // Once SSE delivers an event for a seeded session, it means the session is now
-    // live — remove it from seeded set so future events are accepted.
-    if (seededSessionIds.has(sid)) {
-      // Check if this is a new event by seeing if its ts is later than any we have
-      const existing = liveEvents.filter(ev => ev.raw.session_id === sid);
-      const lastExistingTs = existing.length > 0
-        ? existing[existing.length - 1].raw.ts || ''
-        : '';
-      if (obj.ts && obj.ts <= lastExistingTs) {
-        // Duplicate from replay — skip; don't render
-        return;
-      }
-      // It's a new event in a seeded session — allow it through and mark live
-      seededSessionIds.delete(sid);
-    }
-    const t = classifyEvent(obj);
-    liveEvents.push({ id: e.lastEventId || liveEvents.length, ts: obj.ts, eventType: t, name: eventName(obj, t), raw: obj });
-    renderLiveEvents();
-  };
-
-  liveEs.onerror = () => {
-    document.getElementById('live-status').textContent = 'reconnecting…';
-  };
-
-  // Stale-connection warning
-  setInterval(() => {
-    if (liveEs && liveEs.readyState === 1 && liveLastSeen && Date.now() - liveLastSeen > 5000) {
-      document.getElementById('live-status').textContent = 'reconnecting… (no events for 5s)';
-    }
-  }, 3000);
-}
-
-// Patch switchTab to start stream when Live tab is first opened
+// Patch switchTab to start graph when Live tab is first opened
 const _origSwitchTab = switchTab;
 window.switchTab = function(name, btn) {
   _origSwitchTab(name, btn);
-  if (name === 'live') startLiveStream();
+  if (name === 'live') startLiveGraph();
 };
 </script>
 </body>

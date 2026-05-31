@@ -17,9 +17,12 @@
     --green: #3fb950;
     --orange: #f97316;
     --teal: #22c55e;
+    --purple: #a855f7;
     --gray: #9ca3af;
     --red: #ef4444;
     --blue: #3b82f6;
+    --cyan: #06b6d4;
+    --amber: #eab308;
     --pass: #238636;
     --fail: #da3633;
     --warn: #b08800;
@@ -153,11 +156,15 @@
   .agent-table { width: 100%; }
   .agent-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
   .node-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; margin-top: 4px; }
-  .dot-skill { background: var(--teal); }
+  /* dot-* colors derive from NODE_COLORS (defined in JS) — skill=purple, generator=green */
+  .dot-skill { background: var(--purple); }
   .dot-critic { background: var(--orange); }
   .dot-generator { background: var(--green); }
-  .dot-hook { background: var(--gray); }
-  .dot-adr { background: var(--blue); }
+  .dot-hook { background: var(--red); }
+  .dot-adr { background: var(--cyan); }
+  .dot-orchestrator { background: var(--blue); }
+  .dot-bash { background: var(--gray); }
+  .dot-prd { background: var(--amber); }
   .node-name { color: var(--text); cursor: pointer; }
   .node-name:hover { text-decoration: underline; }
   .node-desc { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -177,6 +184,59 @@
   .agent-card .card-name { font-size: 12px; color: var(--text); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
   .agent-card .card-desc { font-size: 10px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .loading { color: var(--muted); padding: 20px 0; }
+  /* Topology graph (Architecture tab) */
+  #topology-graph-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    height: calc(100vh - 320px);
+    min-height: 480px;
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .hooks-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+  }
+  .hooks-event-group { margin-bottom: 12px; }
+  .hooks-event-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .hook-entry {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 0;
+    padding-left: 10px;
+    border-left: 2px solid var(--border);
+    margin-bottom: 2px;
+  }
+  .hook-entry .hook-event-tag { color: var(--red); }
+  .hook-entry .hook-desc { color: var(--text); }
+  .flat-list-toggle {
+    background: none;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 12px;
+    width: 100%;
+    text-align: left;
+  }
+  .flat-list-toggle:hover { color: var(--text); border-color: var(--muted); }
+  .flat-list-content { display: none; }
+  .flat-list-content.open { display: block; }
   /* Live tab */
   .live-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
   .chip {
@@ -215,11 +275,12 @@
   .event-detail { display: none; grid-column: 1 / -1; padding: 8px 12px; background: #0d1117; }
   .event-detail pre { font-size: 10px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
   .status-bar { color: var(--muted); font-size: 10px; padding: 6px 12px; border-top: 1px solid var(--border); }
+  /* type-* colors aligned with NODE_COLORS — no more skill/generator swap */
   .type-critic { color: var(--orange); }
-  .type-generator { color: var(--teal); }
-  .type-skill { color: var(--green); }
-  .type-hook { color: var(--gray); }
-  .type-bash { color: var(--blue); }
+  .type-generator { color: var(--green); }
+  .type-skill { color: var(--purple); }
+  .type-hook { color: var(--red); }
+  .type-bash { color: var(--gray); }
   /* Run tree styles */
   .run-group {
     border: 1px solid var(--border);
@@ -618,21 +679,38 @@ flowchart TD
   </div>
 
   <div class="section">
-    <h2>Component graph</h2>
-    <div class="legend">
-      <div class="legend-item"><span class="node-dot dot-skill"></span> Skills (teal)</div>
-      <div class="legend-item"><span class="node-dot dot-critic"></span> Critics (orange)</div>
+    <h2>Orchestration topology</h2>
+    <div class="legend" id="topology-legend">
+      <div class="legend-item"><span class="node-dot dot-orchestrator"></span> Orchestrator</div>
+      <div class="legend-item"><span class="node-dot dot-skill"></span> Skills (purple)</div>
       <div class="legend-item"><span class="node-dot dot-generator"></span> Generators (green)</div>
-      <div class="legend-item"><span class="node-dot dot-hook"></span> Hooks (gray)</div>
+      <div class="legend-item"><span class="node-dot dot-critic"></span> Critics (orange)</div>
+      <div class="legend-item"><span class="node-dot dot-hook"></span> Hooks (red)</div>
+      <div class="legend-item"><span class="node-dot dot-bash"></span> Bash (gray)</div>
+      <div class="legend-item"><span class="node-dot dot-adr"></span> ADR (cyan)</div>
     </div>
-    <div class="layout">
-      <div id="comp-graph">
-        <div class="loading">Loading component graph...</div>
-      </div>
-      <div class="side-panel" id="file-panel">
-        <h4>File viewer</h4>
-        <p style="color:var(--muted);font-size:11px;">Click any component name to view its file here.</p>
-        <pre id="file-content"></pre>
+    <div id="topology-graph-container">
+      <div class="loading" id="topology-loading" style="padding:20px;">Loading topology graph...</div>
+    </div>
+    <!-- Hooks section: grouped by lifecycle event -->
+    <div class="hooks-section" id="hooks-section" style="display:none;">
+      <h3 style="margin-bottom:10px;">Hooks — by lifecycle event</h3>
+      <div id="hooks-by-event"><div class="loading">Loading hooks...</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <button class="flat-list-toggle" onclick="toggleFlatList(this)">&#9654; Component list (flat view — click to expand)</button>
+    <div class="flat-list-content" id="flat-list-content">
+      <div class="layout">
+        <div id="comp-graph">
+          <div class="loading">Loading component graph...</div>
+        </div>
+        <div class="side-panel" id="file-panel">
+          <h4>File viewer</h4>
+          <p style="color:var(--muted);font-size:11px;">Click any component name to view its file here.</p>
+          <pre id="file-content"></pre>
+        </div>
       </div>
     </div>
   </div>
@@ -717,17 +795,278 @@ function badgeHtml(result) {
   return `<span class="badge badge-${cls}">${result}</span>`;
 }
 
+// --- NODE_COLORS: single source of truth for all node type colors ---
+// Both the topology graph node fills AND the legend dots derive from this map.
+// Fixes the green-on-green bug: skill is now purple, clearly distinct from generator green.
+const NODE_COLORS = {
+  orchestrator: '#3b82f6',  // blue
+  skill:        '#a855f7',  // purple  (was confusingly teal/green — now distinct)
+  generator:    '#3fb950',  // green
+  critic:       '#f97316',  // orange
+  hook:         '#ef4444',  // red
+  bash:         '#9ca3af',  // gray
+  adr:          '#06b6d4',  // cyan
+  prd:          '#eab308',  // amber
+};
+
+// Dispatch map grounded in skill bodies + ADR-0003.
+// Keys = skill name (matches discover_skills names); values = array of subagent/skill names dispatched.
+// Skills can dispatch other SKILLS (ship→to-prd) or AGENTS (to-prd→prd-critic); colored by true type.
+const DISPATCH_MAP = {
+  // ship orchestrates the full PRD→merge pipeline
+  'ship':              ['to-prd', 'to-issues', 'implementer', 'reviewer'],
+  // to-prd runs joint-APPROVE gate with both critics
+  'to-prd':           ['prd-critic', 'adr-critic'],
+  // to-issues runs slicer + slicer-critic
+  'to-issues':         ['slicer', 'slicer-critic'],
+  // qa-plan dispatches qa-tester for acceptance testing
+  'qa-plan':           ['qa-tester'],
+  // glossary-add and glossary-fold each gate through glossary-critic
+  'glossary-add':      ['glossary-critic'],
+  'glossary-fold':     ['glossary-critic'],
+  // promote-to-backlog gates through backlog-critic
+  'promote-to-backlog': ['backlog-critic'],
+  // build orchestrates grill-me → ship → qa-plan
+  'build':             ['grill-me', 'ship', 'qa-plan'],
+  // leaves — dispatch nothing; shown as orchestrator-run leaf skills
+  'grill-me':          [],
+  'audit-meta':        [],
+  'audit-subagents':   [],
+};
+
+// Node type classification: is a given name a skill, generator, or critic?
+// Agents declared in .claude/agents/: critics and generators
+const AGENT_TYPES = {
+  'implementer':      'generator',
+  'slicer':           'generator',
+  'qa-tester':        'generator',
+  'reviewer':         'critic',
+  'prd-critic':       'critic',
+  'adr-critic':       'critic',
+  'slicer-critic':    'critic',
+  'glossary-critic':  'critic',
+  'backlog-critic':   'critic',
+};
+
+function nodeTypeForName(name) {
+  if (name === 'orchestrator') return 'orchestrator';
+  if (name in DISPATCH_MAP) return 'skill';
+  if (name in AGENT_TYPES) return AGENT_TYPES[name];
+  // Fallback: names ending in -critic are critics
+  if (name.endsWith('-critic')) return 'critic';
+  return 'generator';
+}
+
 // --- Architecture ---
 let archData = null;
+let topoNetwork = null;
+
 async function loadArchitecture() {
   if (archData) return;
   try {
     const r = await fetch('/api/architecture');
     archData = await r.json();
+    renderTopologyGraph(archData);
+    renderHooksSection(archData);
     renderComponentGraph(archData);
   } catch(e) {
-    document.getElementById('comp-graph').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
+    document.getElementById('topology-loading').innerHTML =
+      `<span style="color:var(--fail)">Error: ${e.message}</span>`;
   }
+}
+
+/**
+ * Render the orchestration topology as a vis-network hierarchical graph.
+ * Layout: physics OFF, hierarchical (LR). Root = orchestrator.
+ * Level 1 = skills. Level 2 = subagents each skill dispatches.
+ * Every skill/agent/hook from the API is placed — none silently dropped.
+ */
+function renderTopologyGraph(data) {
+  const containerEl = document.getElementById('topology-graph-container');
+  document.getElementById('topology-loading').remove();
+
+  const nodes = [];
+  const edges = [];
+  const placedNames = new Set();
+
+  function addNode(id, label, type, level, extra) {
+    const c = NODE_COLORS[type] || NODE_COLORS.generator;
+    nodes.push({
+      id,
+      label,
+      level,
+      color: {
+        background: c,
+        border: type === 'orchestrator' ? '#93c5fd' : c,
+        highlight: { background: c, border: '#fff' },
+        hover: { background: c, border: '#fff' },
+      },
+      font: {
+        color: '#fff',
+        size: type === 'orchestrator' ? 14 : 12,
+        face: 'IBM Plex Mono, monospace',
+      },
+      shape: type === 'orchestrator' ? 'ellipse' : (type === 'critic' ? 'diamond' : 'box'),
+      borderWidth: type === 'orchestrator' ? 3 : 1.5,
+      shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 1, y: 2 },
+      ...extra,
+    });
+  }
+
+  function addEdge(from, to, color) {
+    edges.push({
+      from, to,
+      arrows: 'to',
+      color: { color: color || '#4b5563', highlight: '#9ca3af' },
+      smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
+      width: 1.5,
+    });
+  }
+
+  // Level 0: orchestrator root
+  addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
+  placedNames.add('orchestrator');
+
+  // Level 1: all skills from discover_skills, keyed by name/stem
+  const skillItems = data.skills || [];
+  const skillByName = {};
+  for (const sk of skillItems) {
+    const name = sk.name || sk.stem || '';
+    if (name) skillByName[name] = sk;
+  }
+
+  // Render all skills known to DISPATCH_MAP first (preserves ordering)
+  const skillsRendered = new Set();
+  for (const skillName of Object.keys(DISPATCH_MAP)) {
+    const nodeId = 'skill:' + skillName;
+    addNode(nodeId, '/' + skillName, 'skill', 1, {});
+    addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
+    placedNames.add(skillName);
+    skillsRendered.add(skillName);
+
+    // Level 2: dispatched agents/skills
+    const dispatched = DISPATCH_MAP[skillName] || [];
+    for (const childName of dispatched) {
+      const childId = 'child:' + skillName + ':' + childName;
+      const childType = nodeTypeForName(childName);
+      const label = childType === 'skill' ? '/' + childName : childName;
+      addNode(childId, label, childType, 2, {});
+      addEdge(nodeId, childId, NODE_COLORS[childType] + '99');
+      placedNames.add(childName);
+    }
+  }
+
+  // Any skills from the API not in DISPATCH_MAP → also orchestrator leaves
+  for (const sk of skillItems) {
+    const name = sk.name || sk.stem || '';
+    if (!name || skillsRendered.has(name)) continue;
+    const nodeId = 'skill:' + name;
+    addNode(nodeId, '/' + name, 'skill', 1, {});
+    addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
+    placedNames.add(name);
+  }
+
+  // Any agents from discover_agents not yet placed → add as unattached at level 2
+  const agentItems = data.agents || [];
+  for (const ag of agentItems) {
+    const name = ag.name || ag.stem || '';
+    if (!name || placedNames.has(name)) continue;
+    const childType = nodeTypeForName(name);
+    const nodeId = 'agent:unattached:' + name;
+    addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
+    // Attach unattached agents to orchestrator with dashed edge (no known dispatch parent)
+    addEdge('orchestrator', nodeId, '#374151');
+    placedNames.add(name);
+  }
+
+  // Create the vis-network
+  const nodesDataSet = new vis.DataSet(nodes);
+  const edgesDataSet = new vis.DataSet(edges);
+
+  const options = {
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: 'LR',
+        sortMethod: 'directed',
+        levelSeparation: 220,
+        nodeSpacing: 70,
+        treeSpacing: 140,
+        blockShifting: true,
+        edgeMinimization: true,
+        parentCentralization: true,
+      },
+    },
+    physics: { enabled: false },
+    interaction: {
+      hover: true,
+      tooltipDelay: 100,
+      zoomView: true,
+      dragView: true,
+      dragNodes: false,
+      selectConnectedEdges: true,
+    },
+    nodes: { borderWidth: 1.5 },
+    edges: { width: 1.5, selectionWidth: 3 },
+    configure: { enabled: false },
+  };
+
+  if (topoNetwork) topoNetwork.destroy();
+  topoNetwork = new vis.Network(containerEl, { nodes: nodesDataSet, edges: edgesDataSet }, options);
+  topoNetwork.once('afterDrawing', () => {
+    topoNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+  });
+}
+
+/**
+ * Render hooks grouped by lifecycle event.
+ * Thin display: event — description (matcher enrichment is slice #421).
+ */
+function renderHooksSection(data) {
+  const hooks = data.hooks || [];
+  const sectionEl = document.getElementById('hooks-section');
+  const containerEl = document.getElementById('hooks-by-event');
+  if (hooks.length === 0) { sectionEl.style.display = 'none'; return; }
+
+  sectionEl.style.display = '';
+
+  // Group by event (lifecycle phase order)
+  const EVENT_ORDER = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'];
+  const byEvent = {};
+  for (const h of hooks) {
+    const ev = h.event || 'Unknown';
+    if (!byEvent[ev]) byEvent[ev] = [];
+    byEvent[ev].push(h);
+  }
+
+  // Collect events in lifecycle order, then any extras alphabetically
+  const orderedEvents = [
+    ...EVENT_ORDER.filter(e => byEvent[e]),
+    ...Object.keys(byEvent).filter(e => !EVENT_ORDER.includes(e)).sort(),
+  ];
+
+  let html = '';
+  for (const ev of orderedEvents) {
+    const group = byEvent[ev];
+    html += `<div class="hooks-event-group">`;
+    html += `<div class="hooks-event-label">${escHtml(ev)} (${group.length})</div>`;
+    for (const h of group) {
+      const desc = h.description || h.command || h.name || '(no description)';
+      html += `<div class="hook-entry">`;
+      html += `<span class="hook-event-tag">${escHtml(ev)}</span>`;
+      html += ` &mdash; <span class="hook-desc">${escHtml(desc.slice(0, 120))}</span>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  containerEl.innerHTML = html || '<span style="color:var(--muted)">No hooks discovered.</span>';
+}
+
+function toggleFlatList(btn) {
+  const content = document.getElementById('flat-list-content');
+  const isOpen = content.classList.toggle('open');
+  btn.textContent = (isOpen ? '▼' : '►') + ' Component list (flat view — click to ' + (isOpen ? 'collapse' : 'expand') + ')';
 }
 
 function renderComponentGraph(data) {
@@ -740,7 +1079,6 @@ function renderComponentGraph(data) {
       .filter(e => e.targetType === 'adr')
       .map(e => e.target)
   );
-  const adrItems = (data.adrs || []).filter(a => edgeTargetAdrs.has(a.name));
 
   // Fix C: render ALL skills/agents/hooks regardless of edges; ADRs = edge-targets only (graph)
   const sections = [
@@ -748,7 +1086,6 @@ function renderComponentGraph(data) {
     { title: 'Agents', items: data.agents || [], dotClass: null },
     {
       title: 'Hooks', items: data.hooks || [], dotClass: 'dot-hook',
-      // Fix C: hooks display "fires on <event> → <description>"
       descFn: item => `fires on ${item.event}${item.description ? ' → ' + item.description : ''}`,
     },
     { title: 'ADRs', items: data.adrs || [], dotClass: 'dot-adr' },

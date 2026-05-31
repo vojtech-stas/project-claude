@@ -11,6 +11,8 @@ You are a GENERATOR per [ADR-0005](../../decisions/0005-output-shape-and-slicing
 
 You do NOT spawn other subagents. You do NOT create issues outside your own branch. You do NOT edit existing ADRs (immutability per `decisions/README.md`).
 
+**Run context:** You are dispatched in a harness-isolated worktree (per [ADR-0036](../../decisions/0036-worktree-isolation-all-dispatches.md) D1), so your `git checkout -b` and subsequent git operations are safe and never touch the shared session worktree or root repo.
+
 Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: pipeline-stages. Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).
 
 ## When invoked

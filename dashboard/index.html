@@ -1441,6 +1441,30 @@ function buildGraphData(sessionRun) {
     }
   }
 
+  // --- 3b. Build skill windows from skill_invoke events (ADR-0015/0016, Phase 2 slice #425) ---
+  // If no skill_invoke events exist (old logs) → skillWindows is empty and all graph
+  // logic below degrades to the existing orch→agent direct wiring (backward-compat).
+  const skillInvokeEvents = events
+    .filter(e => (e.event || '') === 'skill_invoke' && (e.skill || ''))
+    .sort((a, b) => tsToSecs(a.ts || '') - tsToSecs(b.ts || ''));
+
+  // Each window: {skill, startSec, endSec, nodeId, ts}
+  const skillWindows = skillInvokeEvents.map((ev, idx) => {
+    const startSec = tsToSecs(ev.ts || '');
+    const nextEv   = skillInvokeEvents[idx + 1];
+    const endSec   = nextEv ? tsToSecs(nextEv.ts || '') : sessionEndSec;
+    const nodeId   = 'skill-' + idx + '-' + (ev.skill || '');
+    return { skill: ev.skill || '', startSec, endSec, nodeId, ts: ev.ts || '' };
+  });
+
+  // Returns the skill window that contains a given timestamp (seconds), or null.
+  function windowForSec(sec) {
+    for (const w of skillWindows) {
+      if (sec >= w.startSec && sec <= w.endSec) return w;
+    }
+    return null;
+  }
+
   // --- 4. Build X positions ---
   // Orchestrator at center (x=0). Each agent span gets its own column.
   // Fan spans left and right of center with 220px spacing.
@@ -1534,6 +1558,43 @@ function buildGraphData(sessionRun) {
     });
   }
 
+  // --- 5b. Build skill nodes (Phase 2 — additive; guarded so old logs render unchanged) ---
+  // One purple node per skill_invoke; orch → skill edge; skill → agents/bashes below.
+  // Skill nodes are placed to the far right column cluster, stacked by timestamp.
+  const skillNodeXBase = (spans.length > 0) ? (spanX(spans.length - 1) + X_SPACING) : X_SPACING;
+
+  for (let wi = 0; wi < skillWindows.length; wi++) {
+    const w = skillWindows[wi];
+    const skillY   = normY(w.startSec);
+    const skillColor = { background: NODE_COLORS.skill, border: '#c084fc', highlight: { background: '#c084fc', border: '#e9d5ff' } };
+
+    nodeDetailMap[w.nodeId] = {
+      kind: 'skill',
+      skill: w.skill,
+      ts: w.ts,
+      windowStart: w.startSec,
+      windowEnd: w.endSec,
+    };
+    nodes.push({
+      id: w.nodeId,
+      label: '/' + w.skill,
+      title: 'skill: /' + w.skill + '\n' + fmtTs(w.ts),
+      shape: 'ellipse',
+      color: skillColor,
+      font: { color: '#e9d5ff', size: 13, face: 'IBM Plex Mono, monospace' },
+      size: 24,
+      x: skillNodeXBase + wi * 40,
+      y: skillY,
+      fixed: { x: true, y: true },
+    });
+    edges.push({
+      from: 'orch', to: w.nodeId,
+      arrows: 'to',
+      color: { color: NODE_COLORS.skill + '88', highlight: NODE_COLORS.skill },
+      smooth: { type: 'curvedCW', roundness: 0.15 },
+    });
+  }
+
   // Per-agent span nodes + their bash bubbles
   const agentCountMap = {}; // sub → run index for dedup labels
   for (let i = 0; i < spans.length; i++) {
@@ -1588,8 +1649,13 @@ function buildGraphData(sessionRun) {
       y: agY,
       fixed: { x: true, y: true },
     });
+    // Route edge through skill node if agent falls within a skill window (Phase 2).
+    // Backward-compat: if no skill windows, edgeFrom stays 'orch'.
+    const agentMidSec = (startSec + completeSec) / 2;
+    const agentSkillWindow = windowForSec(agentMidSec);
+    const edgeFrom = (agentSkillWindow) ? agentSkillWindow.nodeId : 'orch';
     edges.push({
-      from: 'orch', to: 'agent-' + i,
+      from: edgeFrom, to: 'agent-' + i,
       arrows: 'to',
       color: { color: '#3b5bdb', highlight: '#4c6ef5' },
       smooth: { type: 'curvedCW', roundness: 0.15 },

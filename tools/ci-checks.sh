@@ -56,8 +56,8 @@ echo "--- CHECK 3: commit subjects over origin/main..HEAD ---"
 # Fetch origin/main so the range is available in CI (ADR-0041 D2).
 git fetch origin main --quiet 2>/dev/null || true
 
-CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci|hotfix)(\(.+\))?: .+'
-RANGE_COMMITS=$(git log --format='%s' origin/main..HEAD 2>/dev/null || true)
+CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci)(\(.+\))?: .+'
+RANGE_COMMITS=$(git log --no-merges --format='%s' origin/main..HEAD 2>/dev/null || true)
 
 if [ -z "$RANGE_COMMITS" ]; then
     pass "no commits ahead of origin/main — nothing to check"
@@ -104,7 +104,7 @@ while IFS= read -r mdfile; do
             fail "dangling ADR link '$target' in $mdfile"
             CHECK4_FAIL=1
         fi
-    done < <(grep -oE 'decisions/[0-9]{4}-[a-z0-9-]+\.md' "$mdfile" 2>/dev/null || true)
+    done < <(grep -oE 'decisions/[0-9]{4}-[a-z0-9-]+\.md' "$mdfile" 2>/dev/null | sort -u || true)
 done < <(git ls-files '*.md' 2>/dev/null)
 
 if [ "$CHECK4_FAIL" -eq 0 ]; then

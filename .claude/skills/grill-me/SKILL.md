@@ -16,6 +16,10 @@ Use the **AskUserQuestion** tool for every decision point so the options are cli
 5. Resolve one decision (or a small batch of tightly-related decisions) per `AskUserQuestion` call; walk the dependency tree so my earlier answers constrain the later questions.
 6. Always include your own recommendation and the reasoning; if a question can be answered by exploring the codebase, explore the codebase instead of asking.
 
+## What NOT to grill — scope boundary
+
+The grill resolves **design decisions, acceptance criteria, and appetite** (the substance + rough size of WHAT to build). It does **NOT** decide **slice decomposition** — how many slices, where boundaries fall, or the walking-skeleton cut. That is owned by the `slicer` + `slicer-critic` (per [ADR-0013](../../../decisions/0013-slicer-n3-contract-refined.md), [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D3). Never ask the user "how should we slice this?" / "how many slices?" — finish the design grill, then `/to-issues` hands the PRD to the slicer to decompose.
+
 ## Optional doc-path argument (per [ADR-0007](../../../decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D6)
 
 `/grill-me <path>` reads `<path>` before asking Q1. Use this when the grill is about an existing spec, PRD, or external doc that should anchor the questions. Single optional local path only — not multi-doc, not config-file, not URL.

@@ -39,6 +39,8 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 - **Slice** — GitHub sub-issue under the PRD (linked via the native sub-issue mechanism), label `slice`. One INVEST-shaped vertical, fits in one PR.
 - **PR** — one merged change, closes exactly one slice via `Closes #<slice-issue>` in the PR body.
 
+**Slice decomposition is the slicer's job — not the grill's, not the user's.** How many slices, where the slice boundaries fall, and the walking-skeleton cut are owned by the `slicer` + `slicer-critic` (per [ADR-0013](decisions/0013-slicer-n3-contract-refined.md) + [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3). The grill / PRD-authoring phase settles **design, acceptance criteria, and appetite** (the rough size/ambition) — then hands the PRD to `/to-issues`, which dispatches the slicer to decompose. Never grill the user with "how should we slice this?" / "how many slices?" — produce the design, let the slicer cut it.
+
 **Labels:**
 - Use `prd` and `slice` exclusively for hierarchy. **There is no `feature` label** — the PRD plays that role.
 - `trivial` for the trivial lane (see I3 below).

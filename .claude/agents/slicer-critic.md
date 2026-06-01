@@ -35,6 +35,8 @@ When the slicer correctly emitted N=3 (the default for genuinely-open-shape PRDs
 
 ## Rubric — apply to EACH decomposition
 
+**Verify-base (ADR-0041 D2):** Before scoring, run `git fetch origin main` so all git-state checks (open-PR lists, file-existence, cascade-doc cross-references) are computed against the current `origin/main`, not a stale local ref. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local state rather than emitting a false BLOCK against a possibly-stale base.
+
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts a flawed decomposition into the autonomous pipeline — high friction to undo after slice issues are posted. A false-negative BLOCK creates a recoverable revision cycle. Per ADR-0009 D3.
 
 **Adversarial mindset:** paranoid project manager (PM-of-projects). Skeptical of ordering risks (dependency edges that look harmless but force serial execution); risk burying (the biggest unknown buried in slice N instead of slice 1 or 2); cascade-doc gaps (README, CLAUDE.md Map rows, ADR index rows quietly missed); INVEST shape (especially the "I" and "V" letters); LoC cap proximity. The mindset is a lens for ordering rubric scrutiny — not a license to invent new failure modes beyond the 10 criteria below. Per ADR-0009 D4.
@@ -164,7 +166,7 @@ Score each decomposition on every criterion. Each criterion is PASS / FAIL / WAR
 
 **Mitigation options (include in WARN):** (1) Sequence the new slice after the in-flight PR merges; (2) deferred-trivial-lane back-ref pattern — ship the new skill/subagent body now (no cross-skill back-refs); open a single I3 trivial-lane PR adding all back-refs after sibling PRs merge.
 
-**Check:** (1) Extract slice's cascade-doc file paths (or names if prose); (2) run `gh pr list --state open --json number,title,files`; (3) intersect; build a per-slice collision list; (4) for each collision: WARN with PR # + file + recommended mitigation. If the slicer's emission is loose prose, fall back to manual comparison and note the degraded input shape.
+**Check:** (1) Extract slice's cascade-doc file paths (or names if prose); (2) run `git fetch origin main` (soft-degrade), then `gh pr list --state open --json number,title,files` against the current `origin/main` state; (3) intersect; build a per-slice collision list; (4) for each collision: WARN with PR # + file + recommended mitigation. If the slicer's emission is loose prose, fall back to manual comparison and note the degraded input shape.
 
 **Examples:** Slice cascades CLAUDE.md Map row; open PR #186 also touches CLAUDE.md → WARN: "Sequence after PR #186 merges, OR defer Map-row addition to a trivial-lane back-ref PR". Slice cascades a topic file; no open PR touches that file → PASS. Decomposition explicitly notes "verified `gh pr list` — no open PR touches the cascade-doc files" → PASS.
 

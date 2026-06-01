@@ -65,6 +65,8 @@ Always read these in order before forming a verdict:
 
 These are non-negotiable. Block immediately; explain which rule and which file/line.
 
+**Verify-base (ADR-0041 D2):** Every diff-based rule below computes its diff against `origin/main` after an explicit `git fetch origin main`. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local ref rather than emitting a false BLOCK against a possibly-stale base.
+
 ### R-SCOPE — Scope drift
 
 **Mechanic:** For each file in `gh pr diff <PR> --name-only`, ask: *is this file's modification justified by the PR body's Scope section?* A scope-aligned file with a scope-misaligned change (e.g., a reviewer.md thinning PR that also adds a new rule) is also a drift BLOCK.
@@ -73,7 +75,7 @@ These are non-negotiable. Block immediately; explain which rule and which file/l
 
 **Rationale:** Uncontrolled drift compounds across PRs. Without enforcement, "while I'm here" edits land silently; future reverts unwind unrelated work. The PR body's Scope section is the spec contract; this rule enforces the diff matches it.
 
-**Check:** `gh pr diff <PR> --name-only` then cross-reference each file against `## Scope` section. Cascade-doc updates named in the slice body are pre-approved scope expansion.
+**Check:** Run `git fetch origin main` (soft-degrade if it fails). Then `git diff origin/main..HEAD --name-only` (or `gh pr diff <PR> --name-only`) to enumerate changed files; cross-reference each against the `## Scope` section. Cascade-doc updates named in the slice body are pre-approved scope expansion.
 
 ### R-YAGNI — YAGNI violation
 
@@ -157,6 +159,7 @@ grep -E '^## Verification' /tmp/pr-body.md
 **Mechanic:** For each ADR in the area of the PR, cross-check: does the diff contradict any explicit D-ID decision? If yes AND no superseding ADR ships in the same PR → BLOCK.
 
 ```bash
+git fetch origin main 2>/dev/null || echo "could not fetch origin — base may be stale"
 git diff origin/main..HEAD --name-only | grep -E '^decisions/[0-9]+-' || true
 grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 ```
@@ -179,7 +182,7 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 
 **Non-runtime** (NOT counted, uncapped): `decisions/*.md`, `docs/**/*.md`, `CLAUDE.md`, `README.md`, `tests/`, `.github/`, `.githooks/`.
 
-**Check:**
+**Check:** Run `git fetch origin main` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (`origin/main`):
 ```bash
 gh pr view <PR> --json files --jq '.files[] | select(.path | startswith(".claude/agents/") or startswith(".claude/skills/") or startswith(".claude/hooks/") or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
 ```
@@ -228,6 +231,9 @@ Catches both drift modes: (a) someone hand-edited `README.md` directly; (b) a so
 **How to check:**
 
 ```bash
+# Ensure origin/main is current before diff-base check (ADR-0041 D2)
+git fetch origin main 2>/dev/null || echo "could not fetch origin — base may be stale"
+
 # Regenerate README from template + filesystem
 python dashboard/server.py --generate-readme
 

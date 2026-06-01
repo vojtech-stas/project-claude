@@ -50,7 +50,9 @@ Concreteness signals (any combination suffices):
 
 ### Step 3 — Ship (autonomous middle)
 
-Invoke [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) with the grilled/concrete input as context.
+**Guard:** Before invoking `/ship`, capture `EXPECTED=$(git rev-parse --abbrev-ref HEAD)`. After `/ship` returns, run `bash tools/worktree-guard.sh branch-restore "$EXPECTED"` to ff-restore the orchestrator's worktree if it drifted (per [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) D1). After `/ship` reports slices merged, run `bash tools/worktree-guard.sh root-sync` to ff-sync the root repo to `origin/main` so the dashboard reflects live state (per ADR-0041 D3). Both guard calls soft-degrade — a guard failure is logged and execution continues.
+
+Invoke [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) with the grilled/concrete input as context. Pass `invoked_by: build` so `/ship` skips its own production-verify gate (dedup rule — step 5 owns the gate here).
 
 `/ship` internally runs: `to-prd → prd-critic (+ adr-critic) → to-issues → slicer → slicer-critic → implementer (DAG-parallel) → reviewer (auto-merge)`. Do NOT reimplement any of that logic here (ADR-0034 D1).
 
@@ -72,6 +74,8 @@ If the generator exits non-zero, emit a warning with the error output and contin
 ### Step 5 — Production-verify gate (MANDATORY, blocking — per ADR-0037 D1)
 
 This step replaces the former optional `/qa-plan` tail with a **mandatory blocking production-verification gate**. A feature is NOT "done" until it passes.
+
+**Guard:** Before each `qa-tester` or `implementer` dispatch below, capture `EXPECTED=$(git rev-parse --abbrev-ref HEAD)`; after the dispatch returns, run `bash tools/worktree-guard.sh branch-restore "$EXPECTED"` (ADR-0041 D1, soft-degrade).
 
 **Dispatch** `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
 
@@ -126,6 +130,7 @@ BLOCKED_SLICES: <from /ship's trailer; empty if none>
 - [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester stays a generator), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode)
 - [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) — D1 (thin orchestrator), D2 (sub-skills atomic), D3 (grill-conditional + no blocking question), D7 (doc-generator), D10 (generator is subprocess-invoked, not hook-spawned)
 - [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) — isolated dispatch of qa-tester + implementer
+- [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) — D1 (post-dispatch leak-guard: capture branch + restore after each dispatch via `branch-restore`); D3 (root ff-sync after `/ship` merges via `root-sync`; only ff-only + clean-only + soft-degrade)
 - [ADR-0033](../../../decisions/0033-tooling-spawn-hook-scope.md) — D1 (tooling-spawn carveout; dashboard-autostart.sh authorized)
 - Sub-skills this skill chains: [`.claude/skills/grill-me/SKILL.md`](../grill-me/SKILL.md), [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md)
 - qa-tester subagent (production-verify mode): [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md)

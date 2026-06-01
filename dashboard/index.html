@@ -1043,62 +1043,39 @@ const NODE_COLORS = {
   prd:          '#eab308',  // amber
 };
 
-// Dispatch map grounded in ADR-0034 D1 (/build conductor) + ADR-0003 (pipeline).
-// Keys = skill/agent name; values = array of child skill/agent names dispatched.
-// Skills can dispatch other SKILLS (build→ship→to-prd) or AGENTS (to-prd→prd-critic);
-// nodes are colored by their TRUE type (skill=purple, generator=green, critic=orange).
-// Hierarchy: orchestrator → build (primary pipeline entry) + utility siblings.
-const DISPATCH_MAP = {
-  // build is the primary full-lifecycle conductor (ADR-0034 D1)
-  'build':             ['grill-me', 'ship', 'qa-plan'],
-  // ship orchestrates the full PRD→merge pipeline (ADR-0003)
-  'ship':              ['to-prd', 'to-issues', 'implementer', 'reviewer'],
-  // to-prd runs joint-APPROVE gate with both critics
-  'to-prd':            ['prd-critic', 'adr-critic'],
-  // to-issues runs slicer + slicer-critic
-  'to-issues':         ['slicer', 'slicer-critic'],
-  // qa-plan dispatches qa-tester for acceptance testing (downstream, at acceptance)
-  'qa-plan':           ['qa-tester'],
-  // utility skills — orchestrator/agent-invoked siblings, NOT under build
-  'glossary-add':      ['glossary-critic'],
-  'glossary-fold':     ['glossary-critic'],
-  'promote-to-backlog': ['backlog-critic'],
-  // leaves — dispatch nothing
-  'grill-me':          [],
-  'audit-meta':        [],
-  'audit-subagents':   [],
-};
+// Topology spec is fetched from GET /api/pipeline (ADR-0039 D1/D2).
+// DISPATCH_MAP and ORCHESTRATOR_CHILDREN are no longer hardcoded here;
+// the topology renders from the server-side PIPELINE spec instead.
+// _pipelineSpec is populated by loadPipelineSpec() before renderTopologyGraph runs.
+let _pipelineSpec = null;
 
-// Direct children of the orchestrator node.
-// build is the primary pipeline entry; utility skills are siblings (not under build).
-const ORCHESTRATOR_CHILDREN = [
-  'build',
-  'glossary-add', 'glossary-fold',
-  'promote-to-backlog',
-  'audit-meta', 'audit-subagents',
-];
+// Build DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched spec.
+function _dispatchMapFromSpec(spec) {
+  const map = {};
+  for (const [name, node] of Object.entries(spec)) {
+    if (name === 'orchestrator') continue;
+    map[name] = node.children || [];
+  }
+  return map;
+}
 
-// Node type classification: is a given name a skill, generator, or critic?
-// Agents declared in .claude/agents/: critics and generators
-const AGENT_TYPES = {
-  'implementer':      'generator',
-  'slicer':           'generator',
-  'qa-tester':        'generator',
-  'reviewer':         'critic',
-  'prd-critic':       'critic',
-  'adr-critic':       'critic',
-  'slicer-critic':    'critic',
-  'glossary-critic':  'critic',
-  'backlog-critic':   'critic',
-};
+function _orchestratorChildrenFromSpec(spec) {
+  const orch = spec['orchestrator'];
+  return orch ? (orch.children || []) : [];
+}
 
 function nodeTypeForName(name) {
   if (name === 'orchestrator') return 'orchestrator';
-  if (name in DISPATCH_MAP) return 'skill';
-  if (name in AGENT_TYPES) return AGENT_TYPES[name];
-  // Fallback: names ending in -critic are critics
-  if (name.endsWith('-critic')) return 'critic';
-  return 'generator';
+  if (!_pipelineSpec) {
+    if (name.endsWith('-critic')) return 'critic';
+    return 'generator';
+  }
+  const node = _pipelineSpec[name];
+  if (!node) {
+    if (name.endsWith('-critic')) return 'critic';
+    return 'generator';
+  }
+  return node.type || 'generator';
 }
 
 // --- Architecture ---
@@ -1108,8 +1085,14 @@ let topoNetwork = null;
 async function loadArchitecture() {
   if (archData) return;
   try {
-    const r = await fetch('/api/architecture');
-    archData = await r.json();
+    // Fetch both the architecture data and the pipeline spec in parallel.
+    // The pipeline spec (ADR-0039 D2) replaces the former hardcoded DISPATCH_MAP.
+    const [archResp, pipeResp] = await Promise.all([
+      fetch('/api/architecture'),
+      fetch('/api/pipeline'),
+    ]);
+    archData = await archResp.json();
+    _pipelineSpec = await pipeResp.json();
     renderTopologyGraph(archData);
     renderHooksSection(archData);
     renderComponentGraph(archData);
@@ -1179,6 +1162,11 @@ function renderTopologyGraph(data) {
     if (name) skillByName[name] = sk;
   }
 
+  // Derive DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched pipeline spec
+  // (ADR-0039 D2 — no hardcoded copy; single source is /api/pipeline).
+  const DISPATCH_MAP = _pipelineSpec ? _dispatchMapFromSpec(_pipelineSpec) : {};
+  const ORCHESTRATOR_CHILDREN = _pipelineSpec ? _orchestratorChildrenFromSpec(_pipelineSpec) : [];
+
   // Recursively render a node and all its DISPATCH_MAP children at the correct tree depth.
   // Uses a unique node ID that encodes the path (parentId + ':' + name) so a skill appearing
   // under multiple parents (e.g. glossary-critic under both glossary-add and glossary-fold)
@@ -1197,7 +1185,7 @@ function renderTopologyGraph(data) {
     placedNames.add(name);
     skillsRendered.add(name);
 
-    // Recurse into DISPATCH_MAP children
+    // Recurse into DISPATCH_MAP children (now derived from fetched spec)
     const dispatched = DISPATCH_MAP[name] || [];
     for (const childName of dispatched) {
       renderNode(childName, nodeId, level + 1);

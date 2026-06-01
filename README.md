@@ -107,59 +107,60 @@ The whole autonomous composition at a glance: the human enters at **`/grill-me`*
 ```mermaid
 flowchart TD
   subgraph S1["Stage 1: Idea capture"]
-    U1[User] --> GM["/grill-me"]
-    GM -->|settled design| SHIP["/ship"]
+    U1[User] --> grill_me["/grill-me"]
+    grill_me -->|settled design| ship["/ship"]
   end
-  subgraph S2["Stage 2: PRD authoring"]
-    SHIP --> TOPRD["/to-prd"]
-    TOPRD --> PRDC[prd-critic]
-    TOPRD -.if ADR.-> ADRC[adr-critic]
-    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
-    ADRC -->|joint APPROVE| PRDISSUE
-    PRDC -.BLOCK ≤3 rounds.-> TOPRD
-    ADRC -.BLOCK ≤3 rounds.-> TOPRD
+  subgraph S2["Stage 2–3: PRD + slice decomposition"]
+    ship --> to_prd["/to-prd"]
+    to_prd --> prd_critic[prd-critic]
+    to_prd -.if ADR.-> adr_critic[adr-critic]
+    prd_critic -->|joint APPROVE| prd_issue[(PRD issue)]
+    adr_critic -->|joint APPROVE| prd_issue
+    prd_critic -.BLOCK.-> to_prd
+    prd_issue --> to_issues["/to-issues"]
+    to_issues --> slicer[slicer]
+    slicer -->|N alternatives| slicer_critic[slicer-critic]
+    slicer_critic -->|APPROVE| slice_issues[(slice issues)]
+    slicer_critic -.BLOCK.-> slicer
   end
-  subgraph S3["Stage 3: Slice decomposition"]
-    PRDISSUE --> TOISSUES["/to-issues"]
-    TOISSUES --> SLICER[slicer]
-    SLICER -->|N alternatives| SLICERC[slicer-critic]
-    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
-    SLICERC -.BLOCK ≤1 revision.-> SLICER
+  subgraph S3["Stage 4: Implementation"]
+    slice_issues --> implementer[implementer]
+    implementer --> pr[(PR Closes #N)]
+    pr --> reviewer{reviewer}
+    reviewer -->|APPROVE| merge[(merged on main)]
+    reviewer -.BLOCK.-> implementer
+    reviewer -.round-3 BLOCK.-> nh[needs-human]
   end
-  subgraph S4["Stage 4: Implementation"]
-    SLICEISSUES --> IMPL[implementer]
-    IMPL --> PR[(PR with Closes #N)]
-    PR --> REV[reviewer]
-    REV -->|APPROVE| MERGE[(merged on main)]
-    REV -.BLOCK ≤3 rounds.-> IMPL
-    REV -.round-3 BLOCK.-> NH[needs-human label]
-  end
-  subgraph S5["Stage 5: Acceptance"]
-    MERGE --> QA["/qa-plan"]
-    QA --> U2[User accepts PRD]
+  subgraph S4["Stage 5: Acceptance"]
+    merge --> qa_plan["/qa-plan"]
+    qa_plan --> qa_tester[qa-tester]
+    qa_tester --> U2[User accepts PRD]
   end
   subgraph SS["Side workflows"]
-    AUTO["/audit-subagents"] -.periodic.- REV
-    GA["/glossary"] --> GC[glossary-critic]
-    GC -->|APPROVE| GAPR[(glossary PR)]
-    GAPR --> REV
-    CAP[captured issue] --> PTB["/promote-to-backlog"]
-    PTB --> BC[backlog-critic]
-    BC -->|APPROVE| BL[backlog label]
-    BC -->|BLOCK| CAPSTAY[stays in captured tier]
+    audit_subagents["/audit-subagents"] -.periodic.- reviewer
+    audit_meta["/audit-meta"] -.periodic.- reviewer
+    glossary["/glossary"] --> glossary_critic[glossary-critic]
+    glossary_critic -->|APPROVE| glossary_pr[(glossary PR)]
+    glossary_pr --> reviewer
+    cap[captured issue] --> ptb["/promote-to-backlog"]
+    ptb --> backlog_critic[backlog-critic]
+    backlog_critic -->|APPROVE| bl[backlog label]
+    backlog_critic -->|BLOCK| capstay[stays captured]
   end
+  build["/build"] --> ship
+  U1 --> build
   classDef human fill:#3b82f6,color:#fff
   classDef skill fill:#14b8a6,color:#fff
   classDef gen fill:#22c55e,color:#fff
   classDef critic fill:#f97316,color:#fff
-  classDef reviewer fill:#ef4444,color:#fff
+  classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class U1,U2 human
-  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
-  class SLICER,IMPL gen
-  class PRDC,ADRC,SLICERC,GC,BC critic
-  class REV reviewer
-  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
+  class grill_me,ship,to_prd,to_issues,qa_plan,audit_subagents,audit_meta,glossary,ptb,build skill
+  class slicer,implementer,qa_tester gen
+  class prd_critic,adr_critic,slicer_critic,glossary_critic,backlog_critic critic
+  class reviewer reviewer_cls
+  class prd_issue,slice_issues,pr,merge,nh,glossary_pr,cap,bl,capstay artifact
 ```
 
 ### Legend
@@ -315,7 +316,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 37 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 38 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -335,7 +336,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 10 skill(s), 6 critic(s) + 3 generator(s), 13 hook(s), 37 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 10 skill(s), 6 critic(s) + 3 generator(s), 13 hook(s), 38 ADR(s).
 
 ## License
 

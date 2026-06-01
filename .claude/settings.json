@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); INPUT=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' 2>/dev/null | cut -c1-300); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sub \"$SUB\" --arg inp \"$INPUT\" '{ts: $ts, session_id: $sid, event: \"agent_start\", subagent_type: $sub, input: $inp}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+            "command": "STDIN=$(cat); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); INPUT=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' 2>/dev/null | cut -c1-300); jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sub \"$SUB\" --arg inp \"$INPUT\" '{ts: $ts, session_id: $sid, event: \"agent_start\", subagent_type: $sub, input: $inp}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
           }
         ]
       },
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); SKILL=$(echo \"$STDIN\" | jq -r '.tool_input.skill // .tool_input.command // .tool_input.name // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); [ -n \"$SKILL\" ] && { mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sk \"$SKILL\" '{ts: $ts, session_id: $sid, event: \"skill_invoke\", skill: $sk, source: \"skill_tool\"}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\"; }; exit 0"
+            "command": "STDIN=$(cat); SKILL=$(echo \"$STDIN\" | jq -r '.tool_input.skill // .tool_input.command // .tool_input.name // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); [ -n \"$SKILL\" ] && { jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sk \"$SKILL\" '{ts: $ts, session_id: $sid, event: \"skill_invoke\", skill: $sk, source: \"skill_tool\"}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\"; }; exit 0"
           }
         ]
       }
@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); FILE_PATH=$(echo \"$STDIN\" | jq -r '.tool_input.file_path // \"\"' 2>/dev/null); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && echo \"$(date -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" >> \"$CLAUDE_PROJECT_DIR/.claude/logs/subagent-edits.log\"; fi"
+            "command": "STDIN=$(cat); FILE_PATH=$(echo \"$STDIN\" | jq -r '.tool_input.file_path // \"\"' 2>/dev/null); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then echo \"$(date -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" | LOGFILE=subagent-edits.log bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\"; fi"
           }
         ]
       },
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); INPUT=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' 2>/dev/null | cut -c1-300); OUTPUT=$(echo \"$STDIN\" | jq -r '.tool_response // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sub \"$SUB\" --arg inp \"$INPUT\" --arg out \"$OUTPUT\" '{ts: $ts, session_id: $sid, event: \"agent_complete\", subagent_type: $sub, input: $inp, output: $out}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+            "command": "STDIN=$(cat); SUB=$(echo \"$STDIN\" | jq -r '.tool_input.subagent_type // \"\"' 2>/dev/null); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); INPUT=$(echo \"$STDIN\" | jq -r '.tool_input.description // \"\"' 2>/dev/null | cut -c1-300); OUTPUT=$(echo \"$STDIN\" | jq -r '.tool_response // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg sub \"$SUB\" --arg inp \"$INPUT\" --arg out \"$OUTPUT\" '{ts: $ts, session_id: $sid, event: \"agent_complete\", subagent_type: $sub, input: $inp, output: $out}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
           }
         ]
       },
@@ -93,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); CMD=$(echo \"$STDIN\" | jq -r '.tool_input.command // \"\"' 2>/dev/null | cut -c1-200); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg cmd \"$CMD\" '{ts: $ts, session_id: $sid, event: \"bash_complete\", command: $cmd}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+            "command": "STDIN=$(cat); CMD=$(echo \"$STDIN\" | jq -r '.tool_input.command // \"\"' 2>/dev/null | cut -c1-200); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg cmd \"$CMD\" '{ts: $ts, session_id: $sid, event: \"bash_complete\", command: $cmd}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
           }
         ]
       },
@@ -102,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); Q=$(echo \"$STDIN\" | jq -r '.tool_input // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); A=$(echo \"$STDIN\" | jq -r '.tool_response // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg q \"$Q\" --arg a \"$A\" '{ts: $ts, session_id: $sid, event: \"grill_qa\", question: $q, answer: $a}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+            "command": "STDIN=$(cat); SID=$(echo \"$STDIN\" | jq -r '.session_id // \"\"' 2>/dev/null); Q=$(echo \"$STDIN\" | jq -r '.tool_input // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); A=$(echo \"$STDIN\" | jq -r '.tool_response // \"\" | if type == \"object\" then tostring else . end' 2>/dev/null | cut -c1-300); jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"$SID\" --arg q \"$Q\" --arg a \"$A\" '{ts: $ts, session_id: $sid, event: \"grill_qa\", question: $q, answer: $a}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
           }
         ]
       }
@@ -113,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.claude/logs\" && jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"${CLAUDE_CODE_SESSION_ID:-}\" '{ts: $ts, session_id: $sid, event: \"session_stop\"}' >> \"$CLAUDE_PROJECT_DIR/.claude/logs/workflow-events.jsonl\""
+            "command": "jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"${CLAUDE_CODE_SESSION_ID:-}\" '{ts: $ts, session_id: $sid, event: \"session_stop\"}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
           },
           {
             "type": "command",

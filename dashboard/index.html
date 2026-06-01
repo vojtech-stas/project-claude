@@ -189,12 +189,76 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    height: calc(100vh - 320px);
-    min-height: 480px;
+    height: calc(100vh - 360px);
+    min-height: 460px;
     position: relative;
     overflow: hidden;
     margin-bottom: 16px;
   }
+  /* Measured-overlay mode control */
+  .topo-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .topo-mode-label {
+    font-size: 11px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  .seg-ctrl {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .seg-btn {
+    background: none;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn.active { background: #1a2e1a; color: var(--green); }
+  .seg-btn:hover:not(.active) { color: var(--text); background: #1c2128; }
+  /* Drift legend (shown in Both mode) */
+  .drift-legend {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    font-size: 10px;
+    color: var(--muted);
+    flex-wrap: wrap;
+    padding: 4px 0;
+  }
+  .drift-legend.visible { display: flex; }
+  .drift-legend-item { display: flex; align-items: center; gap: 5px; }
+  .drift-swatch {
+    display: inline-block;
+    width: 28px;
+    height: 3px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .drift-swatch-unexpected { background: #ef4444; }
+  .drift-swatch-unseen { background: #6b7280; border-top: 1px dashed #9ca3af; }
+  .drift-swatch-observed { background: #22c55e; }
+  /* Measured-empty notice */
+  .measured-notice {
+    font-size: 11px;
+    color: var(--muted);
+    font-style: italic;
+    padding: 4px 0;
+    display: none;
+  }
+  .measured-notice.visible { display: block; }
   .hooks-section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -899,6 +963,21 @@ flowchart TD
       <div class="legend-item"><span class="node-dot dot-bash"></span> Bash (gray)</div>
       <div class="legend-item"><span class="node-dot dot-adr"></span> ADR (cyan)</div>
     </div>
+    <!-- Measured-overlay mode selector (slice #464) -->
+    <div class="topo-mode-bar">
+      <span class="topo-mode-label">View:</span>
+      <div class="seg-ctrl" id="topo-mode-ctrl">
+        <button class="seg-btn active" data-mode="declared" onclick="setTopoMode('declared', this)">Declared</button>
+        <button class="seg-btn" data-mode="measured" onclick="setTopoMode('measured', this)">Measured</button>
+        <button class="seg-btn" data-mode="both" onclick="setTopoMode('both', this)">Both</button>
+      </div>
+      <div class="drift-legend" id="drift-legend">
+        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-unexpected"></span>unexpected (measured not in spec)</div>
+        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-unseen"></span>not seen (declared never observed)</div>
+        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-observed"></span>observed (declared &amp; measured match)</div>
+      </div>
+      <span class="measured-notice" id="measured-notice">no measured events yet (runs accumulate from new sessions)</span>
+    </div>
     <div id="topology-graph-container">
       <div class="loading" id="topology-loading" style="padding:20px;">Loading topology graph...</div>
     </div>
@@ -1049,6 +1128,160 @@ const NODE_COLORS = {
 // _pipelineSpec is populated by loadPipelineSpec() before renderTopologyGraph runs.
 let _pipelineSpec = null;
 
+// --- Measured-overlay mode state (slice #464) ---
+// Values: 'declared' | 'measured' | 'both'
+let _topoMode = 'declared';
+
+// Measured edges derived from real events; populated by deriveMeasuredEdges().
+// Each entry: { from: string, to: string }  (logical names like the spec uses)
+let _measuredEdges = [];
+
+// Whether measured data has been fetched at least once for this session.
+let _measuredFetched = false;
+
+/**
+ * Switch the topology display mode and re-render.
+ * Called by the segmented control onclick handlers.
+ * @param {string} mode - 'declared' | 'measured' | 'both'
+ * @param {HTMLElement} btn - the clicked button element
+ */
+function setTopoMode(mode, btn) {
+  _topoMode = mode;
+  // Update button states
+  document.querySelectorAll('#topo-mode-ctrl .seg-btn').forEach(function(b) {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  // Show/hide drift legend (only in Both mode)
+  const legendEl = document.getElementById('drift-legend');
+  if (legendEl) legendEl.classList.toggle('visible', mode === 'both');
+
+  // Re-render with new mode (archData and _pipelineSpec already loaded)
+  if (archData && _pipelineSpec) {
+    // Measured/Both: ensure events are fetched first
+    if (mode === 'measured' || mode === 'both') {
+      if (!_measuredFetched) {
+        fetchMeasuredEvents().then(function() {
+          renderTopologyGraph(archData);
+        });
+      } else {
+        renderTopologyGraph(archData);
+      }
+    } else {
+      renderTopologyGraph(archData);
+    }
+  }
+}
+
+/**
+ * Fetch all sessions from /api/runs and derive measured edges from skill_invoke +
+ * agent_complete events across all available sessions.
+ * Populates the module-level _measuredEdges array.
+ * Never throws — on error, _measuredEdges stays empty.
+ */
+async function fetchMeasuredEvents() {
+  _measuredFetched = true;
+  try {
+    const r = await fetch('/api/runs?n=20');
+    if (!r.ok) return;
+    const data = await r.json();
+    const runs = data.runs || [];
+
+    // Collect all events from all sessions (fetch full events per session)
+    // For efficiency, fetch each session in parallel (up to 5).
+    const sessionIds = runs.map(function(run) { return run.session_id; }).filter(Boolean);
+    // Fetch full events for each session (in parallel, max 5 concurrent)
+    const allEvents = [];
+    for (let i = 0; i < sessionIds.length; i += 5) {
+      const batch = sessionIds.slice(i, i + 5);
+      const results = await Promise.all(batch.map(async function(sid) {
+        try {
+          const rr = await fetch('/api/runs?session=' + encodeURIComponent(sid));
+          if (!rr.ok) return [];
+          const dd = await rr.json();
+          return (dd.run && dd.run.events) ? dd.run.events : [];
+        } catch (_) { return []; }
+      }));
+      for (const evs of results) {
+        for (const ev of evs) allEvents.push(ev);
+      }
+    }
+
+    _measuredEdges = deriveMeasuredEdges(allEvents);
+  } catch (_) {
+    _measuredEdges = [];
+  }
+
+  // Update the measured-notice visibility
+  _updateMeasuredNotice();
+}
+
+/**
+ * Derive orchestrator→skill and skill→agent edges from a flat event list.
+ *
+ * Algorithm:
+ *   - Each skill_invoke event yields an orchestrator→skill edge.
+ *   - Each agent_complete event is attributed to the most-recent skill_invoke
+ *     before it (by timestamp). That yields a skill→agent edge.
+ *   - Edges are de-duplicated (same {from,to} pair counted once).
+ *   - Returns [] when no relevant events exist (graceful-empty).
+ *
+ * @param {Array} events - flat array of event objects from the log
+ * @returns {Array<{from: string, to: string}>}
+ */
+function deriveMeasuredEdges(events) {
+  if (!events || events.length === 0) return [];
+
+  // Sort all events by timestamp ascending
+  const sorted = events.slice().sort(function(a, b) {
+    return tsToSecs(a.ts || '') - tsToSecs(b.ts || '');
+  });
+
+  const edgeSet = new Set();  // "from::to" keys for dedup
+  const edgesArr = [];
+
+  function addEdge(from, to) {
+    const key = from + '::' + to;
+    if (!edgeSet.has(key)) {
+      edgeSet.add(key);
+      edgesArr.push({ from, to });
+    }
+  }
+
+  // Walk events in order; track the most-recent skill_invoke
+  let lastSkill = null;  // skill name string or null
+
+  for (const ev of sorted) {
+    const etype = (ev.event || '').trim();
+
+    if (etype === 'skill_invoke' && ev.skill) {
+      const skillName = ev.skill;
+      // orchestrator → skill
+      addEdge('orchestrator', skillName);
+      lastSkill = skillName;
+    } else if (etype === 'agent_complete' && ev.subagent_type) {
+      const agentName = ev.subagent_type;
+      // skill → agent (use most-recent skill before this event)
+      if (lastSkill) {
+        addEdge(lastSkill, agentName);
+      } else {
+        // No prior skill_invoke: attribute directly to orchestrator
+        addEdge('orchestrator', agentName);
+      }
+    }
+  }
+
+  return edgesArr;
+}
+
+/** Show/hide the "no measured events yet" notice based on _measuredEdges. */
+function _updateMeasuredNotice() {
+  const noticeEl = document.getElementById('measured-notice');
+  if (!noticeEl) return;
+  const show = _measuredFetched && _measuredEdges.length === 0 &&
+               (_topoMode === 'measured' || _topoMode === 'both');
+  noticeEl.classList.toggle('visible', show);
+}
+
 // Build DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched spec.
 function _dispatchMapFromSpec(spec) {
   const map = {};
@@ -1107,10 +1340,20 @@ async function loadArchitecture() {
  * Layout: physics OFF, hierarchical (LR). Root = orchestrator.
  * Levels 1+ = recursive tree: orchestrator → build → ship → to-prd → critics (ADR-0034 D1 / ADR-0003).
  * Every skill/agent from the API is placed — none silently dropped.
+ *
+ * Mode (slice #464): controlled by module-level _topoMode ('declared'|'measured'|'both').
+ *   declared: spec topology only (unchanged from #463).
+ *   measured: observed edges from skill_invoke/agent_complete events only.
+ *   both:     declared graph with measured edges overlaid; drift flagged by color.
  */
 function renderTopologyGraph(data) {
   const containerEl = document.getElementById('topology-graph-container');
-  document.getElementById('topology-loading').remove();
+  // Remove loading indicator only the first time
+  const loadingEl = document.getElementById('topology-loading');
+  if (loadingEl) loadingEl.remove();
+
+  // Update measured-notice visibility
+  _updateMeasuredNotice();
 
   const nodes = [];
   const edges = [];
@@ -1140,85 +1383,273 @@ function renderTopologyGraph(data) {
     });
   }
 
-  function addEdge(from, to, color) {
+  function addEdge(from, to, color, dashes, width) {
     edges.push({
       from, to,
       arrows: 'to',
       color: { color: color || '#4b5563', highlight: '#9ca3af' },
       smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
-      width: 1.5,
+      width: width || 1.5,
+      dashes: dashes || false,
     });
   }
 
-  // Level 0: orchestrator root
-  addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
-  placedNames.add('orchestrator');
-
-  // Level 1: all skills from discover_skills, keyed by name/stem
-  const skillItems = data.skills || [];
-  const skillByName = {};
-  for (const sk of skillItems) {
-    const name = sk.name || sk.stem || '';
-    if (name) skillByName[name] = sk;
-  }
-
-  // Derive DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched pipeline spec
+  // ---- Derive DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched pipeline spec ----
   // (ADR-0039 D2 — no hardcoded copy; single source is /api/pipeline).
   const DISPATCH_MAP = _pipelineSpec ? _dispatchMapFromSpec(_pipelineSpec) : {};
   const ORCHESTRATOR_CHILDREN = _pipelineSpec ? _orchestratorChildrenFromSpec(_pipelineSpec) : [];
 
-  // Recursively render a node and all its DISPATCH_MAP children at the correct tree depth.
-  // Uses a unique node ID that encodes the path (parentId + ':' + name) so a skill appearing
-  // under multiple parents (e.g. glossary-critic under both glossary-add and glossary-fold)
-  // renders as a distinct visual node at each call site.
-  const skillsRendered = new Set(); // tracks names placed anywhere in tree (for catch-alls)
-  function renderNode(name, parentNodeId, level) {
-    const nodeType = nodeTypeForName(name);
-    const nodeId = parentNodeId + ':' + name;
-    const label = nodeType === 'skill' ? '/' + name : name;
-    addNode(nodeId, label, nodeType, level, {});
-    if (parentNodeId === 'orchestrator') {
-      addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
-    } else {
-      addEdge(parentNodeId, nodeId, NODE_COLORS[nodeType] + '99');
-    }
-    placedNames.add(name);
-    skillsRendered.add(name);
-
-    // Recurse into DISPATCH_MAP children (now derived from fetched spec)
-    const dispatched = DISPATCH_MAP[name] || [];
-    for (const childName of dispatched) {
-      renderNode(childName, nodeId, level + 1);
+  // ---- Build declared edge set for drift comparison ----
+  // Each entry: "fromNodeId::toNodeId" using the encoded path-node IDs
+  // We also track logical name pairs: "fromName::toName"
+  const declaredNamePairs = new Set(); // "parentName::childName"
+  function collectDeclaredEdges(name, parentName) {
+    declaredNamePairs.add((parentName || 'orchestrator') + '::' + name);
+    const children = DISPATCH_MAP[name] || [];
+    for (const c of children) {
+      collectDeclaredEdges(c, name);
     }
   }
-
-  // Render the orchestrator's direct children and their full subtrees
   for (const childName of ORCHESTRATOR_CHILDREN) {
-    renderNode(childName, 'orchestrator', 1);
+    collectDeclaredEdges(childName, 'orchestrator');
   }
 
-  // Any skills from the API not yet rendered → add as orchestrator leaves
-  for (const sk of skillItems) {
-    const name = sk.name || sk.stem || '';
-    if (!name || skillsRendered.has(name)) continue;
-    const nodeId = 'orchestrator:' + name;
-    addNode(nodeId, '/' + name, 'skill', 1, {});
-    addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
-    placedNames.add(name);
-    skillsRendered.add(name);
+  // ---- Build measured edge set for drift comparison ----
+  // logical name pairs: "fromName::toName"
+  const measuredNamePairs = new Set();
+  for (const me of _measuredEdges) {
+    measuredNamePairs.add((me.from || '') + '::' + (me.to || ''));
   }
 
-  // Any agents from discover_agents not yet placed → add as unattached at level 2
-  const agentItems = data.agents || [];
-  for (const ag of agentItems) {
-    const name = ag.name || ag.stem || '';
-    if (!name || placedNames.has(name)) continue;
-    const childType = nodeTypeForName(name);
-    const nodeId = 'agent:unattached:' + name;
-    addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
-    // Attach unattached agents to orchestrator with dashed edge (no known dispatch parent)
-    addEdge('orchestrator', nodeId, '#374151');
-    placedNames.add(name);
+  const mode = _topoMode;
+
+  // =========================================================================
+  // MODE: 'declared' (default — unchanged from #463 behavior)
+  // =========================================================================
+  if (mode === 'declared') {
+    // Level 0: orchestrator root
+    addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
+    placedNames.add('orchestrator');
+
+    const skillItems = data.skills || [];
+    const skillsRendered = new Set();
+
+    function renderNode(name, parentNodeId, level) {
+      const nodeType = nodeTypeForName(name);
+      const nodeId = parentNodeId + ':' + name;
+      const label = nodeType === 'skill' ? '/' + name : name;
+      addNode(nodeId, label, nodeType, level, {});
+      if (parentNodeId === 'orchestrator') {
+        addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
+      } else {
+        addEdge(parentNodeId, nodeId, NODE_COLORS[nodeType] + '99');
+      }
+      placedNames.add(name);
+      skillsRendered.add(name);
+      const dispatched = DISPATCH_MAP[name] || [];
+      for (const childName of dispatched) {
+        renderNode(childName, nodeId, level + 1);
+      }
+    }
+
+    for (const childName of ORCHESTRATOR_CHILDREN) {
+      renderNode(childName, 'orchestrator', 1);
+    }
+    for (const sk of skillItems) {
+      const name = sk.name || sk.stem || '';
+      if (!name || skillsRendered.has(name)) continue;
+      const nodeId = 'orchestrator:' + name;
+      addNode(nodeId, '/' + name, 'skill', 1, {});
+      addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
+      placedNames.add(name);
+      skillsRendered.add(name);
+    }
+    const agentItems = data.agents || [];
+    for (const ag of agentItems) {
+      const name = ag.name || ag.stem || '';
+      if (!name || placedNames.has(name)) continue;
+      const childType = nodeTypeForName(name);
+      const nodeId = 'agent:unattached:' + name;
+      addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
+      addEdge('orchestrator', nodeId, '#374151');
+      placedNames.add(name);
+    }
+  }
+
+  // =========================================================================
+  // MODE: 'measured' — show only observed edges; no spec
+  // =========================================================================
+  else if (mode === 'measured') {
+    if (_measuredEdges.length === 0) {
+      // Graceful-empty: show declared topology only (fallback) so graph is never blank
+      // The measured-notice already explains why
+      addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
+      placedNames.add('orchestrator');
+    } else {
+      // Build nodes from measured edges
+      const measuredNodeNames = new Set(['orchestrator']);
+      for (const me of _measuredEdges) {
+        if (me.from) measuredNodeNames.add(me.from);
+        if (me.to)   measuredNodeNames.add(me.to);
+      }
+
+      // Assign levels: orchestrator=0, direct orch children=1, rest=2
+      const measuredLevels = { orchestrator: 0 };
+      for (const me of _measuredEdges) {
+        if ((me.from || '') === 'orchestrator') {
+          measuredLevels[me.to] = 1;
+        }
+      }
+      for (const me of _measuredEdges) {
+        if ((me.from || '') !== 'orchestrator' && measuredLevels[me.to] === undefined) {
+          measuredLevels[me.to] = 2;
+        }
+      }
+
+      for (const name of measuredNodeNames) {
+        const nodeType = name === 'orchestrator' ? 'orchestrator' : nodeTypeForName(name);
+        const level = measuredLevels[name] !== undefined ? measuredLevels[name] : 2;
+        const label = nodeType === 'skill' ? '/' + name : name;
+        addNode('m:' + name, label, nodeType, level, name === 'orchestrator' ? { size: 30 } : {});
+        placedNames.add(name);
+      }
+
+      // Add measured edges (green — observed)
+      for (const me of _measuredEdges) {
+        addEdge('m:' + (me.from || ''), 'm:' + (me.to || ''), '#22c55e99', false, 2);
+      }
+    }
+  }
+
+  // =========================================================================
+  // MODE: 'both' — declared graph + measured overlay; drift flagged
+  // =========================================================================
+  else if (mode === 'both') {
+    // Render declared topology as the base (same as declared mode)
+    addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
+    placedNames.add('orchestrator');
+
+    const skillItems2 = data.skills || [];
+    const skillsRendered2 = new Set();
+
+    // Track which declared edges are observed vs not-seen
+    const declaredEdgeIds = new Set(); // "fromId::toId"
+
+    function renderNodeBoth(name, parentNodeId, level) {
+      const nodeType = nodeTypeForName(name);
+      const nodeId = parentNodeId + ':' + name;
+      const label = nodeType === 'skill' ? '/' + name : name;
+      addNode(nodeId, label, nodeType, level, {});
+
+      // Determine parent logical name for drift check
+      // parentNodeId format: "orchestrator:skillA:childB..." → last segment is parent name
+      const parentParts = parentNodeId.split(':');
+      const parentLogicalName = parentParts[parentParts.length - 1]; // 'orchestrator' for root
+      const pairKey = parentLogicalName + '::' + name;
+      const isObserved = measuredNamePairs.has(pairKey);
+
+      // Edge color based on drift:
+      //   observed (in both declared+measured): green
+      //   not-seen (declared but never observed): gray dashed
+      let edgeColor, dashed;
+      if (isObserved) {
+        edgeColor = '#22c55e';  // green — declared & measured match
+        dashed = false;
+      } else {
+        edgeColor = '#6b7280';  // gray — declared but never observed
+        dashed = true;
+      }
+      if (parentNodeId === 'orchestrator') {
+        addEdge('orchestrator', nodeId, edgeColor, dashed, 2);
+      } else {
+        addEdge(parentNodeId, nodeId, edgeColor, dashed, 2);
+      }
+      const edgeKey = parentNodeId + '::' + nodeId;
+      declaredEdgeIds.add(edgeKey);
+
+      placedNames.add(name);
+      skillsRendered2.add(name);
+      const dispatched = DISPATCH_MAP[name] || [];
+      for (const childName of dispatched) {
+        renderNodeBoth(childName, nodeId, level + 1);
+      }
+    }
+
+    for (const childName of ORCHESTRATOR_CHILDREN) {
+      renderNodeBoth(childName, 'orchestrator', 1);
+    }
+    for (const sk of skillItems2) {
+      const name = sk.name || sk.stem || '';
+      if (!name || skillsRendered2.has(name)) continue;
+      const nodeId = 'orchestrator:' + name;
+      addNode(nodeId, '/' + name, 'skill', 1, {});
+      const isObs = measuredNamePairs.has('orchestrator::' + name);
+      addEdge('orchestrator', nodeId, isObs ? '#22c55e' : '#6b7280', !isObs, 2);
+      placedNames.add(name);
+      skillsRendered2.add(name);
+    }
+    const agentItems2 = data.agents || [];
+    for (const ag of agentItems2) {
+      const name = ag.name || ag.stem || '';
+      if (!name || placedNames.has(name)) continue;
+      const childType = nodeTypeForName(name);
+      const nodeId = 'agent:unattached:' + name;
+      addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
+      addEdge('orchestrator', nodeId, '#374151');
+      placedNames.add(name);
+    }
+
+    // Overlay: add UNEXPECTED measured edges (observed but NOT in declared spec)
+    // These are edges from the measured data that have no matching declared pair.
+    // We add them as extra edges; the endpoints may already be in the graph (if they
+    // are known nodes) or we add them as new "unexpected" nodes.
+    for (const me of _measuredEdges) {
+      const pairKey = (me.from || '') + '::' + (me.to || '');
+      if (declaredNamePairs.has(pairKey)) continue;  // already a declared edge — skip
+
+      // Unexpected edge: find or create node IDs
+      let fromId = (me.from === 'orchestrator') ? 'orchestrator' : null;
+      if (!fromId) {
+        // Check if this node was placed in declared rendering (any nodeId ending in ':name')
+        // We use the canonical declared nodeId if available, else create a measured-only node
+        fromId = 'orchestrator:' + me.from; // most likely placement in declared tree
+        if (!placedNames.has(me.from)) {
+          // Add unexpected source node
+          const srcType = nodeTypeForName(me.from || '');
+          addNode('m:' + me.from, me.from, srcType, 1, {
+            borderWidth: 2.5,
+            borderDashes: [4, 3],
+          });
+          placedNames.add(me.from);
+          fromId = 'm:' + me.from;
+        }
+      }
+
+      let toId = null;
+      if (placedNames.has(me.to || '')) {
+        // Find the declared node ID — use canonical path (may be nested)
+        // Simplified: look for the first occurrence in nodes array
+        const existingNode = nodes.find(function(n) {
+          const parts = String(n.id).split(':');
+          return parts[parts.length - 1] === me.to;
+        });
+        toId = existingNode ? existingNode.id : null;
+      }
+      if (!toId) {
+        // Add unexpected target node
+        const tgtType = nodeTypeForName(me.to || '');
+        const tgtLabel = tgtType === 'skill' ? '/' + me.to : (me.to || '?');
+        addNode('m:' + me.to, tgtLabel, tgtType, 2, {
+          borderWidth: 2.5,
+          borderDashes: [4, 3],
+        });
+        placedNames.add(me.to || '');
+        toId = 'm:' + me.to;
+      }
+
+      // Draw unexpected edge in red
+      addEdge(fromId, toId, '#ef4444', false, 2.5);
+    }
   }
 
   // Create the vis-network

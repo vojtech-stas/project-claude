@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash`. On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
+description: Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash --auto` (queued merge-when-checks-pass per ADR-0042 D3). On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
 tools: Read, Glob, Grep, Bash
 model: sonnet
 ---
@@ -310,10 +310,10 @@ The canonical verdict template + CRITIC trailer field schema is defined in [ADR-
 Execute IMMEDIATELY after posting the comment:
 
 ```bash
-gh pr merge <PR> --squash --delete-branch
+gh pr merge <PR> --squash --auto --delete-branch
 ```
 
-You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). If `gh pr merge` fails, do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment explaining the failure.
+You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). With R4 (required status checks) enabled, this queues the merge — GitHub completes it once CI passes; a red-CI PR never merges even on APPROVE; the orchestrator waits for the queued merge before production-verify. If `gh pr merge` fails, do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment explaining the failure.
 
 ### If BLOCK: return to implementer
 
@@ -341,7 +341,7 @@ You ARE authorized to execute these specific shell commands:
 - `gh pr view`, `gh pr diff`, `gh pr list`, `gh pr checks` — read-only PR queries
 - `gh issue view`, `gh issue list` — read-only issue queries
 - `gh pr comment <PR> --body-file <tempfile>` — post your verdict
-- `gh pr merge <PR> --squash --delete-branch` — ONLY when your own verdict is APPROVE; ONLY `--squash`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002)
+- `gh pr merge <PR> --squash --auto --delete-branch` — ONLY when your own verdict is APPROVE; ONLY `--squash`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002)
 - `gh pr edit <PR> --add-label needs-human` — ONLY on round-3 BLOCK escalation (per ADR-0003 D4 / I5); ONLY the `needs-human` label; never any other label
 - `gh issue comment <parent-prd-number> --body-file <tempfile>` — ONLY on round-3 BLOCK escalation, ONLY on the parent PRD issue, ONLY with the escalation summary template (per ADR-0003 D4 / I5)
 

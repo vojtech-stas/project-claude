@@ -7,5 +7,5 @@
   "restrictions": null,
   "allow_force_pushes": false,
   "allow_deletions": false,
-  "required_status_checks": null
+  "required_status_checks": { "strict": true, "checks": [ { "context": "ci" } ] }
 }

@@ -252,19 +252,25 @@ fi
 
 # ---- step 5: branch protection R1 + R2 on main ----------------------------
 
-step 5 "branch protection R1+R2 on main"
+step 5 "branch protection R1+R2+R4 on main"
 
 # R1 = require PR (required_pull_request_reviews block present, count=0).
 # R2 = no force-push, no deletion (allow_force_pushes=false, allow_deletions=false).
-# R3 / R4 are intentionally OMITTED here — they depend on CI infrastructure
-# (status checks, code owners) and ship in PRD-CI.
+# R4 (required status checks) — payload is included here but NOT enabled
+# mid-PRD. See comment below.
 #
 # This call requires admin permission on the repo. Fork contributors and
 # non-admin collaborators will get 403 — that's the canonical warn-and-proceed
 # case. We discard stderr so the contributor isn't scared by a raw API error;
 # the summary line tells them what happened.
+#
+# R4 (required status checks) — enable is OWNER-RUN after this PRD's slices
+# merge AND the CI workflow has produced a named check run on main.
+# Do NOT enable mid-PRD: it would block this PRD's own merges.
+# The context "ci" matches the GitHub Actions job name in
+# .github/workflows/ci.yml (ADR-0042 D2).
 BP_BODY='{
-  "required_status_checks": null,
+  "required_status_checks": { "strict": true, "checks": [ { "context": "ci" } ] },
   "enforce_admins": false,
   "required_pull_request_reviews": {
     "required_approving_review_count": 0,

@@ -34,7 +34,12 @@ Per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D1, a criterion 
 
 You RETURN residuals as data — you do NOT post `needs-human-check` issues yourself (the writer owns the GitHub audit-trail per ADR-0020 D4). You do NOT call `AskUserQuestion` (subagents can't). You do NOT fold PROVISIONAL into PASS in your output — the PROVISIONAL count is reported distinctly in the trailer so the writer can queue each one.
 
-**In ui-mode and production-verify mode:** when a check's only available proof would be `browser_evaluate` of internal JS state (not real-click + observed-render), report it `PROVISIONAL`. Real interaction (`browser_click`/`browser_type`/`browser_navigate`) plus `browser_snapshot`/screenshot is the primary proof; `browser_evaluate` is a last-resort disambiguator only (ADR-0040 D5 — S2 tightening). This slice (S1) names the signal; S2 enforces the fidelity rule in detail.
+**In ui-mode and production-verify mode (ADR-0040 D5 — browser-route fidelity rule):** the machine must drive REAL interaction and assert on what a human sees. The ordering is strict:
+
+1. **Drive real interaction first** — `browser_click`, `browser_type`, `browser_navigate`. Navigate then immediately evaluate without clicking is NOT a real-click.
+2. **Assert on what a human sees — primary proof** — `browser_snapshot` (accessibility tree) + `browser_take_screenshot` as the **primary** proof of a passing check. The screenshot / accessibility-tree excerpt IS the evidence; include it in PROOF.
+3. **`browser_evaluate` is a last-resort disambiguator only** — permitted ONLY when the snapshot is ambiguous about a specific value (e.g., a rendered number that is hard to read in the accessibility tree) and ONLY to resolve that ambiguity — never as the sole or primary evidence of a passing check.
+4. **Eval-only proof → PROVISIONAL, not PASS.** If the only available proof for a check would be `browser_evaluate` of internal JS state (no rendered snapshot / screenshot evidence), you MUST report that criterion `PROVISIONAL` (→ a residual for the human to eyeball), not PASS. Do not shortcut.
 
 ## Mandatory reading order
 
@@ -105,7 +110,7 @@ Per [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) D3 (narrow
 - **`mcp__playwright__browser_take_screenshot`** — capture per-step screenshots for LLM-judgment.
 - **`mcp__playwright__browser_snapshot`** — capture accessibility-tree snapshot when screenshot insufficient.
 - **`mcp__playwright__browser_wait_for`** — synchronize before screenshot when navigation/render is async.
-- **`mcp__playwright__browser_evaluate`** — sanity-check page-state via DOM query when judgment ambiguity arises.
+- **`mcp__playwright__browser_evaluate`** — **last-resort disambiguator only** (ADR-0040 D5): permitted to resolve snapshot ambiguity (e.g., an exact rendered number) or read JS-side-channels with no accessibility-tree equivalent (e.g., `window.__consoleErrors`). Never the primary evidence of a passing visual check; never used as a shortcut to avoid real-click + snapshot. A check whose only available proof is `browser_evaluate` of internal JS state → report `PROVISIONAL`, not PASS.
 - **`mcp__playwright__browser_close`** — clean up Playwright session on exit.
 
 Explicitly **forbidden** in BOTH modes (per [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) D3, retained per ADR-0025 D1's "ALL OTHER ADR-0020 decisions PRESERVED"):
@@ -160,16 +165,16 @@ Reuses the existing ui-mode Playwright machinery (ADR-0025 D1; same `mcp__playwr
 
 **Step 2 — Perform the declared interaction.** Parse the "Production check:" line and execute the steps it declares using `mcp__playwright__browser_click`, `mcp__playwright__browser_type`, `mcp__playwright__browser_wait_for` as needed. Scope the interaction exactly to what the line declares — no exploratory clicks.
 
-**Step 3 — Assert the three required conditions:**
-- (A) **Renders** — the target element/view is visible (evaluate via `mcp__playwright__browser_snapshot` or `mcp__playwright__browser_evaluate`).
-- (B) **Zero console errors** — `mcp__playwright__browser_evaluate` runs `window.__consoleErrors || []` (scoped to the feature's behavior — ignore pre-existing unrelated errors if they were present before the feature under test; note any filtering decision in REASON).
-- (C) **Declared behavior** — the specific outcome stated in the "Production check:" line (e.g., "graph renders", "Live tab shows data") evaluated via snapshot/DOM query.
+**Step 3 — Assert the three required conditions using real-click evidence (ADR-0040 D5):**
+- (A) **Renders** — the target element/view is visible. Assert via `mcp__playwright__browser_snapshot` (accessibility tree) as primary; `mcp__playwright__browser_take_screenshot` as supporting visual proof. Do NOT use `browser_evaluate` as the sole evidence for this assertion — if snapshot is ambiguous, use `browser_evaluate` as a disambiguator only and note it as such in PROOF.
+- (B) **Zero console errors** — `mcp__playwright__browser_evaluate` runs `window.__consoleErrors || []` (scoped to the feature's behavior — ignore pre-existing unrelated errors if they were present before the feature under test; note any filtering decision in REASON). This is the one assertion where `browser_evaluate` is the canonical primary tool — it reads a JS-level side-channel that has no accessibility-tree equivalent. Report the raw array in PROOF.
+- (C) **Declared behavior** — the specific outcome stated in the "Production check:" line (e.g., "graph renders", "Live tab shows data") asserted via `browser_snapshot` + screenshot as PRIMARY evidence. If the declared behavior can only be proven via `browser_evaluate` of internal state (not rendered output), report this criterion `PROVISIONAL` — return it as a residual for the human to eyeball (ADR-0040 D5).
 
-**Step 4 — Capture proof (best-effort, non-blocking).**
+**Step 4 — Capture proof (PRIMARY = screenshot + snapshot; eval is supplementary).**
 
-Primary: `mcp__playwright__browser_take_screenshot` → record the path. If the screenshot tool times out or is unavailable (observed real failure mode, ADR-0037 D2 fallback), skip screenshot silently.
+PRIMARY proof: `mcp__playwright__browser_take_screenshot` → record the path. Then `mcp__playwright__browser_snapshot` → record the accessibility-tree excerpt covering the asserted element. Both run together — they are the primary human-faithful evidence. If screenshot times out or is unavailable (observed real failure mode, ADR-0037 D2 fallback), fall back to snapshot alone; note the fallback in PROOF.
 
-Fallback (always runs if screenshot fails): `mcp__playwright__browser_snapshot` for DOM/state extraction → record the accessibility-tree excerpt covering the asserted element.
+Supplementary only: `mcp__playwright__browser_evaluate` for numerical values or JS-side-channel data that the snapshot cannot express (e.g., `window.__consoleErrors`). Never the sole entry in PROOF for a visual assertion.
 
 **Step 5 — Determine PASS/FAIL.**
 
@@ -254,12 +259,12 @@ REASON: <one sentence — e.g., "browser gate PASS: renders + 0 console errors +
 ARTIFACTS: <screenshot path if captured (browser route), else empty>
 PRODUCTION_VERIFY: PASS | FAIL
 ROUTE: browser | hook-fire | command-run | static-check
-PROOF: <route-specific: screenshot path / "DOM-state: <excerpt>" (browser); "exit=0, log: <line>" (hook-fire); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static-check)>
+PROOF: <route-specific: "screenshot: <path> + snapshot: <a11y-tree excerpt>" (browser — primary human-faithful evidence; eval supplements only); "exit=0, log: <line>" (hook-fire); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static-check)>
 ASSERTIONS_CHECKED: <route-specific field list — see below>
 ```
 
 `ASSERTIONS_CHECKED` is route-specific:
-- **browser:** `renders=<PASS|FAIL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL>`
+- **browser:** `renders=<PASS|FAIL|PROVISIONAL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — PROVISIONAL appears when the only available proof would be `browser_evaluate` of internal JS state; that criterion is returned as a residual, not forced to PASS (ADR-0040 D5)
 - **hook-fire:** `exit_code=<PASS|FAIL>, log_line=<PASS|FAIL|N/A>`
 - **command-run:** `exit_code=<PASS|FAIL>, output_assertion=<PASS|FAIL|N/A>`
 - **static-check:** `assertion_1=<PASS|FAIL>[, assertion_2=<PASS|FAIL>, ...]`

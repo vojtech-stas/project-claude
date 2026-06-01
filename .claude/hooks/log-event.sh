@@ -1,0 +1,59 @@
+#!/bin/bash
+# log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+#
+# CONTRACT: reads one event JSON line on stdin; resolves the MAIN repo's
+# .claude/logs/workflow-events.jsonl and appends the line there.
+#
+# HOOKS AUDIT RATIONALE (7 hooks, none redundant):
+#   agent_start   PreToolUse·Agent  — fires BEFORE subagent is invoked; captures
+#                                     invocation intent + ts for duration-start.
+#   agent_complete PostToolUse·Agent — fires AFTER subagent returns; captures
+#                                      output + ts for duration-end (span pairing).
+#                                      Both are REQUIRED to measure subagent durations.
+#   bash_complete  PostToolUse·Bash — fires AFTER the command ran (result available).
+#   subagent_edit  PostToolUse·Edit — fires AFTER an edit to a .claude/agents/ file;
+#                                     nudges /audit-subagents (writes subagent-edits.log,
+#                                     NOT workflow-events.jsonl). Routed via this script
+#                                     with LOGFILE override.
+#   skill_invoke   PreToolUse·Skill — fires at skill invocation; also detected on
+#                                     UserPromptSubmit for typed /commands. Pre is
+#                                     correct (the invocation event, not the result).
+#                                     NOTE: Skill tool matcher is empirically unverified
+#                                     (#430) but harmless — soft-degrades if never fires.
+#   grill_qa       PostToolUse·AskUserQuestion — fires AFTER user answers; captures Q+A.
+#                                     NOTE: AskUserQuestion matcher unverified (#402)
+#                                     but harmless.
+#   session_stop   Stop             — fires at session end; records ts for session-length.
+#
+# CANONICAL RESOLUTION (per PRD #467):
+#   git rev-parse --path-format=absolute --git-common-dir returns <root>/.git for both
+#   the main repo AND any linked worktree, so dirname → <root> in all cases.
+#
+# SOFT-DEGRADE: if git resolution fails, write to $CLAUDE_PROJECT_DIR (worktree).
+#   Never exit non-zero. Never lose the event. Never hang.
+#
+# LOGFILE env var: if set, overrides the target filename within .claude/logs/
+#   (used by the subagent-edit nudge which writes subagent-edits.log instead).
+#
+# Usage (inline loggers in settings.json / user-prompt-submit.sh):
+#   jq -cn --arg ... '{...}' | bash "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh"
+#   LOGFILE=subagent-edits.log; echo "..." | bash "...log-event.sh"
+
+LINE=$(cat)
+[ -z "$LINE" ] && exit 0
+
+ROOT="${CLAUDE_PROJECT_DIR:-.}"
+COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ -n "$COMMON" ]; then
+  MAIN=$(dirname "$COMMON")
+else
+  MAIN="$ROOT"
+fi
+[ -d "$MAIN" ] || MAIN="$ROOT"
+
+LOG_DIR="$MAIN/.claude/logs"
+mkdir -p "$LOG_DIR" 2>/dev/null
+
+TARGET_FILE="${LOGFILE:-workflow-events.jsonl}"
+printf '%s\n' "$LINE" >> "$LOG_DIR/$TARGET_FILE" 2>/dev/null || true
+exit 0

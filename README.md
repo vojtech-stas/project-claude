@@ -305,13 +305,13 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
-- **[`agent_start logger`](.claude/settings.json)** (`PreToolUse · Agent`) — logs agent start events to workflow-events.jsonl
-- **[`skill_invoke logger`](.claude/settings.json)** (`PreToolUse · Skill`) — logs workflow event to workflow-events.jsonl
-- **[`subagent-edit nudge`](.claude/settings.json)** (`PostToolUse · Edit|MultiEdit|Write`) — logs agent file edits; suggests /audit-subagents on agent .md changes
-- **[`agent_complete logger`](.claude/settings.json)** (`PostToolUse · Agent`) — logs agent completions to workflow-events.jsonl
-- **[`bash logger`](.claude/settings.json)** (`PostToolUse · Bash`) — logs bash completions to workflow-events.jsonl
-- **[`grill_qa logger`](.claude/settings.json)** (`PostToolUse · AskUserQuestion`) — logs workflow event to workflow-events.jsonl
-- **[`session_stop logger`](.claude/settings.json)** (`Stop`) — logs session-stop event to workflow-events.jsonl
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PreToolUse · Agent`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PreToolUse · Skill`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PostToolUse · Edit|MultiEdit|Write`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PostToolUse · Agent`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PostToolUse · Bash`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`PostToolUse · AskUserQuestion`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
+- **[`log-event`](.claude/hooks/log-event.sh)** (`Stop`) — log-event.sh — canonical event-log appender (ADR-0016 / PRD #467 / slice #468).
 - **[`stop-reviewer-gate`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 
 ### Architecture Decision Records
@@ -336,7 +336,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 10 skill(s), 6 critic(s) + 3 generator(s), 13 hook(s), 38 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 10 skill(s), 6 critic(s) + 3 generator(s), 9 hook(s), 38 ADR(s).
 
 ## License
 

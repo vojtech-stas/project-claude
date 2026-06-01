@@ -26,13 +26,12 @@ FIRST_TOKEN=$(echo "$PROMPT" | sed 's/^[[:space:]]*//' | awk '{print $1}')
 if [ -n "$FIRST_TOKEN" ] && [ "${FIRST_TOKEN:0:1}" = "/" ]; then
   SKILL_CMD="${FIRST_TOKEN:1}"  # strip leading /
   if [ -n "$SKILL_CMD" ]; then
-    mkdir -p "${CLAUDE_PROJECT_DIR:-}/.claude/logs" 2>/dev/null
     jq -cn \
       --arg ts "$(date -Iseconds)" \
       --arg sid "$SID" \
       --arg sk "$SKILL_CMD" \
       '{ts: $ts, session_id: $sid, event: "skill_invoke", skill: $sk, source: "user_typed"}' \
-      >> "${CLAUDE_PROJECT_DIR:-}/.claude/logs/workflow-events.jsonl" 2>/dev/null || true
+      2>/dev/null | bash "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh" 2>/dev/null || true
   fi
 fi
 

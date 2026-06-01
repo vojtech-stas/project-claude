@@ -1338,27 +1338,6 @@ def render_pipeline_mermaid(pipeline: dict) -> str:
     without quoting; labels restore the original name / slash-prefix.
     """
 
-    def node_id(name: str) -> str:
-        """Sanitise a name to a valid mermaid node ID."""
-        return name.replace("-", "_")
-
-    def node_label(name: str, ntype: str) -> str:
-        """Human-readable label for a node in the mermaid diagram."""
-        if ntype == "orchestrator":
-            return "orchestrator"
-        if ntype == "skill":
-            return f"/{name}"
-        return name
-
-    def node_shape(name: str, ntype: str, label: str) -> str:
-        """Mermaid node shape syntax: [box], (rounded), {rhombus}, ((circle))."""
-        if ntype == "orchestrator":
-            return f"{node_id(name)}(({label}))"
-        if ntype == "critic":
-            return f"{node_id(name)}{{{{{label}}}}}"  # {label} = diamond
-        # skill or generator: plain box
-        return f"{node_id(name)}[{label}]"
-
     # Build the lines
     lines: list = []
     lines.append("```mermaid")

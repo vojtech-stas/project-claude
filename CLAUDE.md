@@ -112,6 +112,8 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | README template | `README.template.md` | source of truth for README.md — static prose + `{{GENERATED:*}}` placeholders; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D4 |
 | README generator | `dashboard/server.py --generate-readme` | reads template + filesystem → writes `README.md`; reuses dashboard's `discover_*` engine; no LLM calls; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D7 |
 | `/qa-review` skill | `.claude/skills/qa-review/SKILL.md` | clears `needs-human-check` QA residual queue: lists open issues, presents each via `AskUserQuestion`, accept→close / reject→relabel+capture; per [ADR-0040](decisions/0040-qa-human-residual-model.md) D4 |
+| CI gate workflow | `.github/workflows/ci.yml` | GitHub Actions workflow; fires on pull_request; runs `tools/ci-checks.sh`; job name `ci` is the R4 required-status-check context; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
+| CI check script | `tools/ci-checks.sh` | deterministic CLI-runnable checks (settings.json validity, README regen-clean, ≤72-char commit subjects, dangling ADR links, decisions/README.md index); run locally before pushing; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
 
 ---
 

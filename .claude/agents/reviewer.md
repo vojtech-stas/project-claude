@@ -113,6 +113,15 @@ gh pr view <PR> --json commits --jq '.commits[].messageHeadline'
 ```
 Subject regex: `^(feat|fix|docs|chore|refactor|test|perf|style|build|ci)(\([a-z0-9-]+\))?: [a-z].+$`, length ≤72 chars.
 
+**Mechanical length check (in addition to the regex above):**
+```bash
+git log origin/main..HEAD --pretty=%s | awk '{ if (length($0) > 72) { print NR": "length($0)" "$0; n++ } } END { exit n>0 }'
+```
+Any commit with a subject >72 chars → BLOCK with the literal:
+`R-CONV-COMMITS: commit <sha> subject is <N> chars; cap is 72`
+
+Use `origin/main..HEAD` as the commit range per ADR-0041 D2 (never local `main`, which may be stale). Soft-degrade if `git fetch origin main` fails (note the degradation; do not emit a false BLOCK).
+
 **Rationale:** `git log` is the project's changelog (CLAUDE.md rule #6). Consistent format makes the log skimmable and machine-parseable. Exemption: `git revert` auto-generated `Revert "..."` shape is accepted.
 
 ### R-NO-MAIN — Commits to `main`

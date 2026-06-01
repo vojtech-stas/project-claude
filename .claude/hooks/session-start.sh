@@ -12,6 +12,14 @@ DIV="(fetch failed)"
 git fetch origin main 2>/dev/null && DIV=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
 LOG=$(git log --oneline -5 2>/dev/null || echo "(no log)")
 
+HOOKS_WARN=""
+if command -v git >/dev/null 2>&1; then
+  HOOKS=$(git config --get core.hooksPath 2>/dev/null || echo "__unset__")
+  if [ "$HOOKS" != ".githooks" ]; then
+    HOOKS_WARN=$(printf "\n*** WARNING: git core.hooksPath is not '.githooks' (got: %s). Commit-subject length cap and other git hooks are NOT active. Fix: run ./.githooks/install.sh ***\n" "$HOOKS")
+  fi
+fi
+
 JQ_OK=0; GH_OK=0
 command -v jq >/dev/null 2>&1 && JQ_OK=1
 [ "$JQ_OK" -eq 1 ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && GH_OK=1
@@ -33,8 +41,8 @@ if [ "$JQ_OK" -ne 1 ]; then
   JQ_WARN=$(printf "\nWARNING: jq is missing on this system. PreToolUse Edit/Write hook may prompt on every edit (rule #10 ask fallback). Install via bootstrap.sh or winget install jqlang.jq (Windows) / brew install jq (macOS) / apt-get install jq (Linux).\n")
 fi
 
-CTX=$(printf "Branch: %s | divergence vs origin/main: %s commit(s) behind\n\nRecent commits:\n%s\n\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s%s\n" \
-  "$BR" "$DIV" "$LOG" "$SL" "$PR" "$CAP" "$JQ_WARN" | head -c 4096 | head -n 50)
+CTX=$(printf "Branch: %s | divergence vs origin/main: %s commit(s) behind\n\nRecent commits:\n%s\n\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s%s%s\n" \
+  "$BR" "$DIV" "$LOG" "$SL" "$PR" "$CAP" "$HOOKS_WARN" "$JQ_WARN" | head -c 4096 | head -n 50)
 
 if [ "$JQ_OK" -eq 1 ]; then
   jq -cn --arg ctx "$CTX" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'

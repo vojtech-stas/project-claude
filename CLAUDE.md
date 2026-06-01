@@ -4,42 +4,58 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 
 ---
 
-## Cross-cutting rules (apply to every action you take)
+## 1. Cross-cutting constraints (apply to every action you take)
 
-1. **YAGNI — rule #1.** Never add code outside the current slice's scope. Reviewer's first job is to enforce this. If you feel the urge to add something "while you're here", STOP and ask the user.
-2. **Walking-skeleton mindset.** Smallest end-to-end version first; iterate on the weakest stage. Never build a primitive perfectly before the whole pipeline runs.
-3. **Build primitives first, orchestrate last.** Do not write an orchestrator before the things it orchestrates exist and have been dogfooded.
-4. **Never push directly to `main`.** Every change ships through a feature branch + PR. Branch protection (when configured) enforces this; meanwhile it's a discipline rule.
-5. **Conventional Commits, tightened.** Every commit message follows `<type>(<optional scope>): <subject>`. Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`. Additional hard rules:
+1. **YAGNI — rule #1.** Never add code outside the current slice's scope. If you feel the urge to add something "while you're here", STOP and ask the user. (Reviewer's first enforcement job.)
+2. **Walking-skeleton mindset — rule #2.** Smallest end-to-end version first; iterate on the weakest stage. Never build a primitive perfectly before the whole pipeline runs.
+3. **Build primitives first, orchestrate last — rule #3.** Do not write an orchestrator before the things it orchestrates exist and have been dogfooded.
+4. **Never push directly to `main` — rule #4.** Every change ships through a feature branch + PR. Branch protection (when configured) enforces this; meanwhile it's a discipline rule.
+5. **Conventional Commits, tightened — rule #5.** Every commit message follows `<type>(<optional scope>): <subject>`. Types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `style`, `build`, `ci`. Additional hard rules:
    - **Lowercase subject** after the colon (`feat: add ship skill`, not `feat: Add Ship Skill`).
    - **≤72 character hard cap** on the subject line.
    - **`Closes #<slice-issue>`** belongs in the PR body, not the commit subject (reviewer enforces).
    - **`Co-authored-by:` trailer** on every agent-authored commit.
    - Body (after blank line) explains WHY, not what.
-6. **`git log` is the changelog.** Don't create a separate CHANGELOG file. Good commit messages do the job.
-7. **Practices are colocated.** Skills/subagents embody their own practice in their own body. No separate `docs/practices/` folder. Cross-cutting rules (this list) live HERE.
-8. **One thing at a time.** One in-progress todo. One in-flight PR per slice.
-9. **DRY for docs.** Don't duplicate info. Link/point to where the canonical version lives.
-10. **Main-agent meta-output discipline.** Main agent never hand-authors ANY tracked file. All edits to tracked files flow through the PRD/slice/PR pipeline via `/to-prd`, `/to-issues`, `/ship`, an implementer Agent invocation, the trivial-lane (I3) workflow, or any other reviewer-gated PR channel. Per [ADR-0009](decisions/0009-discipline-tightening.md) D1 (supersedes [ADR-0004](decisions/0004-bypass-prevention.md) D4's enumerated-path scope).
-11. **Surface deferred work as captured issues.** Every agent MUST capture every deferred or follow-up item it encounters as a `captured`-labeled GitHub issue (per [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4 as amended forward by [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8). The autopilot's `backlog-critic` filters quality downstream per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2 — agents are not the bouncer. When in doubt about whether an item is worth capturing, capture it; the autopilot will BLOCK noise into the captured-tier graveyard where lazy human review can cull. Per [ADR-0009](decisions/0009-discipline-tightening.md) D2 (supersedes [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4's discretionary phrasing). The `captured` tier is the noisy raw layer; `backlog` is the curated forward queue — `backlog-critic` filters one into the other. BLOCKed captures remain visible for rescue if mis-classified.
-12. **Claude Code hooks are logging/validation/notification only.** Per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md), Claude Code hooks are configured in `.claude/settings.json` and may log to local files, validate by exit code, or notify via stderr. Hooks may NOT auto-invoke skills or subagents (technically impossible), and they do NOT replace the `.githooks/pre-commit` server-side layer or the ADR-0008 D3 inline-firing convention — they are additive. See ADR-0015 for the scope policy.
-13. **Root-cause workflow capture (Symptoms ≠ causes).** When any agent encounters a workflow mistake — a recurring failure pattern, a critic round that should have been one round shorter, a manual orchestration bypass, a cascade-doc conflict, or any "I had to work around this" moment — it MUST capture a `captured`-labeled GitHub issue with a 3-part body naming (a) the **symptom** observed, (b) the **root cause** analyzed, and (c) the **proposed** workflow change that prevents recurrence. Symptom-only fixes in the in-flight PR are necessary but insufficient; the workflow change is the deliverable. Same downstream mechanism as rule #11: `/promote-to-backlog` fires inline per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3 and `backlog-critic`'s 4-criterion rubric (per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4) filters quality. Complementary to rule #11 (forward-work, open shape); rule #13 covers backward/root-cause analyses (3-part shape). Per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md).
+6. **`git log` is the changelog — rule #6.** Don't create a separate CHANGELOG file. Good commit messages do the job.
+8. **One PR per slice — rule #8.** One PR per slice (1:1); independent slices may run in parallel; only dependent work serializes. Per [ADR-0036](decisions/0036-worktree-isolation-all-dispatches.md) D1–D3.
+9. **DRY for docs — rule #9.** Don't duplicate info. Link/point to where the canonical version lives.
+10. **Main-agent meta-output discipline — rule #10.** Main agent never hand-authors ANY tracked file. All edits to tracked files flow through the PRD/slice/PR pipeline via `/to-prd`, `/to-issues`, `/ship`, an implementer Agent invocation, the trivial-lane (I3) workflow, or any other reviewer-gated PR channel. Per [ADR-0009](decisions/0009-discipline-tightening.md) D1 (supersedes [ADR-0004](decisions/0004-bypass-prevention.md) D4's enumerated-path scope).
 
-15. **Every feature is production-verified before "done".** After all slices merge, `qa-tester` must return `PRODUCTION_VERIFY: PASS` (via `/build` step 5 or standalone `/ship` step 6) before the feature is considered complete. A feature is NOT "done" on reviewer APPROVE alone — the production gate is the final, blocking step. Per [ADR-0037](decisions/0037-production-verification-gate.md) D1.
+### Capture discipline
+
+11. **Surface deferred work as captured issues — rule #11.** Every agent MUST capture every deferred or follow-up item it encounters as a `captured`-labeled GitHub issue. When in doubt, capture it — `backlog-critic` filters quality downstream; agents are not the bouncer. Shape: open forward-work (any form). Per [ADR-0006](decisions/0006-backlog-and-session-continuity.md) D4 + [ADR-0009](decisions/0009-discipline-tightening.md) D2.
+13. **Root-cause workflow capture — rule #13.** When any agent encounters a workflow mistake, it MUST capture a `captured`-labeled GitHub issue with a 3-part body: (a) **symptom** observed, (b) **root cause** analyzed, (c) **proposed** workflow change. Symptom-only fixes are necessary but insufficient. Shape: 3-part backward/root-cause analysis. Per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md) D2/D3.
+
+Both rules share the same downstream mechanism: `backlog-critic` filters `captured` → `backlog` via the `promote-to-backlog` skill per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3/D4. Rule #11 = forward-work (open shape); rule #13 = backward/root-cause (3-part shape). Complementary per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md) D2.
+
+12. **Claude Code hooks are logging/validation/notification only — rule #12.** Hooks may NOT auto-invoke skills or subagents. See [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for full scope policy.
+
+15. **Every feature is production-verified before "done" — rule #15.** `qa-tester` must return `PRODUCTION_VERIFY: PASS` (via `/build` step 5 or `/ship` step 6) before a feature is complete. Per [ADR-0037](decisions/0037-production-verification-gate.md) D1.
 
 _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) D2. Slot explicitly retired; the separate KB layer no longer exists. Future rules may use #15+.)_
 
+16. **Slice-decomposition is the slicer's job — rule #16.** How many slices, where boundaries fall, and the walking-skeleton cut are owned by the `slicer` + `slicer-critic`. The grill / PRD-authoring phase settles design + acceptance criteria, then hands off — never decide slicing during grill. Per [ADR-0013](decisions/0013-slicer-n3-contract-refined.md) (decomposition contract) + [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3 (cascade-doc identification at decomposition time).
+17. **Skill-vs-subagent litmus — rule #17.** Subagent = isolated-context + handed-a-task + returns-a-result. Skill = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D1.
+
 ---
 
-## Hierarchy — PRD → Slice → PR (3-tier)
+## 2. Naming
+
+**Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<short-summary>` for trivial lane (I3).
+
+**Issue titles:** Posted PRDs follow the canonical `PRD: <one-line feature summary>` form. Backlog issue titles are descriptive only — a short noun phrase, no codename prefixes. Session codenames (PRD-A, PRD-B, …) are conversation shortcuts only; they never appear in tracked artifact titles. On promotion `backlog` → `prd`, the title is rewritten into `PRD:` form. Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D5.
+
+---
+
+## 3. Hierarchy + workflow conventions
+
+### PRD → Slice → PR (3-tier)
 
 Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-of-delivery hierarchy is exactly three tiers:
 
 - **PRD** — GitHub Issue, label `prd`. One feature-sized deliverable per PRD. Multi-feature PRDs are a smell.
 - **Slice** — GitHub sub-issue under the PRD (linked via the native sub-issue mechanism), label `slice`. One INVEST-shaped vertical, fits in one PR.
 - **PR** — one merged change, closes exactly one slice via `Closes #<slice-issue>` in the PR body.
-
-**Slice decomposition is the slicer's job — not the grill's, not the user's.** How many slices, where the slice boundaries fall, and the walking-skeleton cut are owned by the `slicer` + `slicer-critic` (per [ADR-0013](decisions/0013-slicer-n3-contract-refined.md) + [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3). The grill / PRD-authoring phase settles **design, acceptance criteria, and appetite** (the rough size/ambition) — then hands the PRD to `/to-issues`, which dispatches the slicer to decompose. Never grill the user with "how should we slice this?" / "how many slices?" — produce the design, let the slicer cut it.
 
 **Labels:**
 - Use `prd` and `slice` exclusively for hierarchy. **There is no `feature` label** — the PRD plays that role.
@@ -48,20 +64,7 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 **Milestones** are reserved for **Releases** (groups of merged PRDs). Not in use yet — left empty until the first release ships.
 
-### Issue-title naming convention
-
-Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D5:
-
-- **Posted PRDs** follow the canonical `PRD: <one-line feature summary>` form (every issue from #3 onward).
-- **Backlog issue titles** are descriptive only — a short noun phrase that names what the item IS. No codename prefixes (`PRD-C —`), no topical classifiers (`PRD-qa-automation:`).
-- **Session codenames** (PRD-A, PRD-B, PRD-C, PRD-D, …) are conversation/transcript shortcuts only; they never appear in tracked artifact titles.
-- On promotion `backlog` → `prd`, the title is rewritten into the canonical `PRD:` form.
-
-Rationale: codename-prefixed titles in `backlog` pre-bias candidate selection (they read as "this WILL be next" rather than "this is a candidate"). The backlog must function as a neutral pool from which `/grill-me` picks based on current priorities. Binds forward per ADR-0008 D8; no retroactive sweep beyond the 2026-05-16 cleanup of #47 and #57.
-
----
-
-## Workflow improvements I1–I6
+### Workflow improvements I1–I6
 
 These are load-bearing conventions that supplement the cross-cutting rules. Per PRD #3 §4 and [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md).
 
@@ -79,13 +82,11 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ---
 
-## Skill vs subagent — the litmus rule
+## 4. Map + Glossary
 
-**Subagent** = isolated-context + handed-a-task + returns-a-result (heavy work / adversarial review / parallel); **skill** = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. "Skills dispatch subagents" is the intended topology, not an anti-pattern — it is the only model the runtime permits. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md).
+### Map — where things live
 
----
-
-## Map — where things live
+_Note: Each skill and subagent embodies its own practice in its own body file (former rule #7, demoted per [ADR-0043](decisions/0043-claude-md-restructure.md) D5). No separate `docs/practices/` folder._
 
 | Thing | Path | Summary |
 |---|---|---|
@@ -117,7 +118,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ---
 
-## Glossary (key terms)
+### Glossary (key terms)
 
 Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5).
 
@@ -143,11 +144,3 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 - **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
 - **walking-skeleton** — practice of shipping the smallest end-to-end version of the whole pipeline first, then iterating on the weakest stage; slice 1 of every multi-slice PRD must be a walking-skeleton per SC-WALKING-SKELETON.
 - **YAGNI** — "You Aren't Gonna Need It"; rule #1 — never add code or content outside the current slice's scope; the reviewer's first job is to enforce this on every PR.
-
----
-
-## Where to look for more
-
-- Autonomous merge policy: [`decisions/0002-autonomous-merge-policy.md`](decisions/0002-autonomous-merge-policy.md)
-- Autonomous multi-stage pipeline with critics: [`decisions/0003-autonomous-pipeline-with-critics.md`](decisions/0003-autonomous-pipeline-with-critics.md)
-- Matt Pocock's upstream skills: https://github.com/mattpocock/skills

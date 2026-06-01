@@ -4,6 +4,7 @@ dashboard/server.py — project-claude workflow dashboard server.
 
 Serves: GET /               -> dashboard/index.html
         GET /api/architecture -> JSON {skills, agents, hooks, adrs, edges}
+        GET /api/pipeline     -> JSON pipeline spec (PIPELINE dict — canonical topology)
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
@@ -33,6 +34,80 @@ from urllib.parse import parse_qs, urlparse
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
+
+
+# ---------------------------------------------------------------------------
+# PIPELINE spec — canonical single source for the workflow topology (ADR-0039 D1)
+# This is the ONE hand-edited declaration.  Both the dashboard Architecture
+# topology (served via GET /api/pipeline → fetched by index.html) and the
+# README pipeline diagram (rendered by render_pipeline_mermaid() inside
+# --generate-readme) are generated from this structure.
+# Keys = skill/agent name.  Values = {children: [...], type: str}.
+# type: 'skill' | 'generator' | 'critic'
+# Hierarchy grounded in ADR-0034 D1 (/build conductor) + ADR-0003 (pipeline)
+# + ADR-0038 D3 (glossary merged) + ADR-0008 D7 (6-critic cap).
+# ---------------------------------------------------------------------------
+PIPELINE: dict = {
+    "orchestrator": {
+        "type": "orchestrator",
+        "children": [
+            "build",
+            "glossary",
+            "audit-meta",
+            "audit-subagents",
+            "promote-to-backlog",
+        ],
+    },
+    # build is the primary full-lifecycle conductor (ADR-0034 D1)
+    "build": {
+        "type": "skill",
+        "children": ["grill-me", "ship", "qa-plan"],
+    },
+    # ship orchestrates the full PRD→merge pipeline (ADR-0003)
+    "ship": {
+        "type": "skill",
+        "children": ["to-prd", "to-issues", "implementer", "reviewer"],
+    },
+    # to-prd runs joint-APPROVE gate with both critics
+    "to-prd": {
+        "type": "skill",
+        "children": ["prd-critic", "adr-critic"],
+    },
+    # to-issues runs slicer + slicer-critic
+    "to-issues": {
+        "type": "skill",
+        "children": ["slicer", "slicer-critic"],
+    },
+    # qa-plan dispatches qa-tester for acceptance testing
+    "qa-plan": {
+        "type": "skill",
+        "children": ["qa-tester"],
+    },
+    # utility skills — orchestrator siblings, NOT under build
+    # glossary = merged glossary-add + glossary-fold (ADR-0038 D3)
+    "glossary": {
+        "type": "skill",
+        "children": ["glossary-critic"],
+    },
+    "promote-to-backlog": {
+        "type": "skill",
+        "children": ["backlog-critic"],
+    },
+    # leaves — dispatch nothing
+    "grill-me":          {"type": "skill",     "children": []},
+    "audit-meta":        {"type": "skill",     "children": []},
+    "audit-subagents":   {"type": "skill",     "children": []},
+    # agents
+    "implementer":       {"type": "generator", "children": []},
+    "slicer":            {"type": "generator", "children": []},
+    "qa-tester":         {"type": "generator", "children": []},
+    "reviewer":          {"type": "critic",    "children": []},
+    "prd-critic":        {"type": "critic",    "children": []},
+    "adr-critic":        {"type": "critic",    "children": []},
+    "slicer-critic":     {"type": "critic",    "children": []},
+    "glossary-critic":   {"type": "critic",    "children": []},
+    "backlog-critic":    {"type": "critic",    "children": []},
+}
 
 
 def _resolve_invoking_repo_root() -> Path:
@@ -1162,6 +1237,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             }
             self._send_json(data)
 
+        elif path == "/api/pipeline":
+            # Canonical topology spec (ADR-0039 D1).
+            # Returns PIPELINE as JSON; dashboard index.html fetches this instead
+            # of embedding a hardcoded DISPATCH_MAP.
+            self._send_json(PIPELINE)
+
         elif path == "/api/health":
             data = {
                 "auditMeta": audit_meta(),
@@ -1231,68 +1312,129 @@ def main():
 # README generator  (--generate-readme CLI mode)
 # ---------------------------------------------------------------------------
 
-# Fixed pipeline diagram — canonical Mermaid block; static because the diagram
-# represents the *designed* pipeline topology, not a runtime-derived graph.
-# Reuse discover_* for the component-map and counts sections.
+# render_pipeline_mermaid: generates a mermaid flowchart TD from the PIPELINE
+# spec (ADR-0039 D2).  Both the README diagram and the dashboard topology are
+# sourced from the same PIPELINE dict — editing PIPELINE changes both.
+#
+# The generated diagram is a simplified high-level topology:
+#   orchestrator → skills → agents (critics/generators)
+# It intentionally mirrors the structure of the old hand-written diagram
+# while being derived from the canonical PIPELINE spec.
 
-_PIPELINE_DIAGRAM = """\
-```mermaid
-flowchart TD
-  subgraph S1["Stage 1: Idea capture"]
-    U1[User] --> GM["/grill-me"]
-    GM -->|settled design| SHIP["/ship"]
-  end
-  subgraph S2["Stage 2: PRD authoring"]
-    SHIP --> TOPRD["/to-prd"]
-    TOPRD --> PRDC[prd-critic]
-    TOPRD -.if ADR.-> ADRC[adr-critic]
-    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
-    ADRC -->|joint APPROVE| PRDISSUE
-    PRDC -.BLOCK ≤3 rounds.-> TOPRD
-    ADRC -.BLOCK ≤3 rounds.-> TOPRD
-  end
-  subgraph S3["Stage 3: Slice decomposition"]
-    PRDISSUE --> TOISSUES["/to-issues"]
-    TOISSUES --> SLICER[slicer]
-    SLICER -->|N alternatives| SLICERC[slicer-critic]
-    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
-    SLICERC -.BLOCK ≤1 revision.-> SLICER
-  end
-  subgraph S4["Stage 4: Implementation"]
-    SLICEISSUES --> IMPL[implementer]
-    IMPL --> PR[(PR with Closes #N)]
-    PR --> REV[reviewer]
-    REV -->|APPROVE| MERGE[(merged on main)]
-    REV -.BLOCK ≤3 rounds.-> IMPL
-    REV -.round-3 BLOCK.-> NH[needs-human label]
-  end
-  subgraph S5["Stage 5: Acceptance"]
-    MERGE --> QA["/qa-plan"]
-    QA --> U2[User accepts PRD]
-  end
-  subgraph SS["Side workflows"]
-    AUTO["/audit-subagents"] -.periodic.- REV
-    GA["/glossary"] --> GC[glossary-critic]
-    GC -->|APPROVE| GAPR[(glossary PR)]
-    GAPR --> REV
-    CAP[captured issue] --> PTB["/promote-to-backlog"]
-    PTB --> BC[backlog-critic]
-    BC -->|APPROVE| BL[backlog label]
-    BC -->|BLOCK| CAPSTAY[stays in captured tier]
-  end
-  classDef human fill:#3b82f6,color:#fff
-  classDef skill fill:#14b8a6,color:#fff
-  classDef gen fill:#22c55e,color:#fff
-  classDef critic fill:#f97316,color:#fff
-  classDef reviewer fill:#ef4444,color:#fff
-  classDef artifact fill:#9ca3af,color:#fff
-  class U1,U2 human
-  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
-  class SLICER,IMPL gen
-  class PRDC,ADRC,SLICERC,GC,BC critic
-  class REV reviewer
-  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
-```"""
+def render_pipeline_mermaid(pipeline: dict) -> str:
+    """Render the PIPELINE spec to a mermaid flowchart TD string.
+
+    Returns a complete ```mermaid ... ``` fenced block suitable for embedding
+    in README.md via the {{GENERATED:pipeline-diagram}} placeholder.
+
+    The diagram groups nodes into four subgraphs for clarity:
+      S1 Idea capture  — grill-me, ship
+      S2 PRD+Slice     — to-prd, prd-critic, adr-critic, to-issues, slicer, slicer-critic
+      S3 Implementation — implementer, reviewer
+      S4 Acceptance    — qa-plan, qa-tester
+    Plus a side-workflows subgraph for utility skills.
+
+    Node IDs are sanitised (hyphens → underscores) so mermaid parses them
+    without quoting; labels restore the original name / slash-prefix.
+    """
+
+    def node_id(name: str) -> str:
+        """Sanitise a name to a valid mermaid node ID."""
+        return name.replace("-", "_")
+
+    def node_label(name: str, ntype: str) -> str:
+        """Human-readable label for a node in the mermaid diagram."""
+        if ntype == "orchestrator":
+            return "orchestrator"
+        if ntype == "skill":
+            return f"/{name}"
+        return name
+
+    def node_shape(name: str, ntype: str, label: str) -> str:
+        """Mermaid node shape syntax: [box], (rounded), {rhombus}, ((circle))."""
+        if ntype == "orchestrator":
+            return f"{node_id(name)}(({label}))"
+        if ntype == "critic":
+            return f"{node_id(name)}{{{{{label}}}}}"  # {label} = diamond
+        # skill or generator: plain box
+        return f"{node_id(name)}[{label}]"
+
+    # Build the lines
+    lines: list = []
+    lines.append("```mermaid")
+    lines.append("flowchart TD")
+
+    # --- Subgraph S1: Idea capture ---
+    lines.append('  subgraph S1["Stage 1: Idea capture"]')
+    lines.append("    U1[User] --> grill_me[\"/grill-me\"]")
+    lines.append("    grill_me -->|settled design| ship[\"/ship\"]")
+    lines.append("  end")
+
+    # --- Subgraph S2: PRD authoring + slice decomposition ---
+    lines.append('  subgraph S2["Stage 2–3: PRD + slice decomposition"]')
+    lines.append("    ship --> to_prd[\"/to-prd\"]")
+    lines.append("    to_prd --> prd_critic[prd-critic]")
+    lines.append("    to_prd -.if ADR.-> adr_critic[adr-critic]")
+    lines.append("    prd_critic -->|joint APPROVE| prd_issue[(PRD issue)]")
+    lines.append("    adr_critic -->|joint APPROVE| prd_issue")
+    lines.append("    prd_critic -.BLOCK.-> to_prd")
+    lines.append("    prd_issue --> to_issues[\"/to-issues\"]")
+    lines.append("    to_issues --> slicer[slicer]")
+    lines.append("    slicer -->|N alternatives| slicer_critic[slicer-critic]")
+    lines.append("    slicer_critic -->|APPROVE| slice_issues[(slice issues)]")
+    lines.append("    slicer_critic -.BLOCK.-> slicer")
+    lines.append("  end")
+
+    # --- Subgraph S3: Implementation ---
+    lines.append('  subgraph S3["Stage 4: Implementation"]')
+    lines.append("    slice_issues --> implementer[implementer]")
+    lines.append("    implementer --> pr[(PR Closes #N)]")
+    lines.append("    pr --> reviewer{reviewer}")
+    lines.append("    reviewer -->|APPROVE| merge[(merged on main)]")
+    lines.append("    reviewer -.BLOCK.-> implementer")
+    lines.append("    reviewer -.round-3 BLOCK.-> nh[needs-human]")
+    lines.append("  end")
+
+    # --- Subgraph S4: Acceptance ---
+    lines.append('  subgraph S4["Stage 5: Acceptance"]')
+    lines.append("    merge --> qa_plan[\"/qa-plan\"]")
+    lines.append("    qa_plan --> qa_tester[qa-tester]")
+    lines.append("    qa_tester --> U2[User accepts PRD]")
+    lines.append("  end")
+
+    # --- Subgraph SS: Side workflows ---
+    lines.append('  subgraph SS["Side workflows"]')
+    lines.append("    audit_subagents[\"/audit-subagents\"] -.periodic.- reviewer")
+    lines.append("    audit_meta[\"/audit-meta\"] -.periodic.- reviewer")
+    lines.append("    glossary[\"/glossary\"] --> glossary_critic[glossary-critic]")
+    lines.append("    glossary_critic -->|APPROVE| glossary_pr[(glossary PR)]")
+    lines.append("    glossary_pr --> reviewer")
+    lines.append("    cap[captured issue] --> ptb[\"/promote-to-backlog\"]")
+    lines.append("    ptb --> backlog_critic[backlog-critic]")
+    lines.append("    backlog_critic -->|APPROVE| bl[backlog label]")
+    lines.append("    backlog_critic -->|BLOCK| capstay[stays captured]")
+    lines.append("  end")
+
+    # --- build conductor wrapping ship ---
+    lines.append("  build[\"/build\"] --> ship")
+    lines.append("  U1 --> build")
+
+    # --- class styles ---
+    lines.append("  classDef human fill:#3b82f6,color:#fff")
+    lines.append("  classDef skill fill:#14b8a6,color:#fff")
+    lines.append("  classDef gen fill:#22c55e,color:#fff")
+    lines.append("  classDef critic fill:#f97316,color:#fff")
+    lines.append("  classDef reviewer_cls fill:#ef4444,color:#fff")
+    lines.append("  classDef artifact fill:#9ca3af,color:#fff")
+    lines.append("  class U1,U2 human")
+    lines.append("  class grill_me,ship,to_prd,to_issues,qa_plan,audit_subagents,audit_meta,glossary,ptb,build skill")
+    lines.append("  class slicer,implementer,qa_tester gen")
+    lines.append("  class prd_critic,adr_critic,slicer_critic,glossary_critic,backlog_critic critic")
+    lines.append("  class reviewer reviewer_cls")
+    lines.append("  class prd_issue,slice_issues,pr,merge,nh,glossary_pr,cap,bl,capstay artifact")
+    lines.append("```")
+
+    return "\n".join(lines)
 
 
 def _build_component_map() -> str:
@@ -1444,7 +1586,7 @@ def generate_readme() -> None:
     template = template_path.read_text(encoding="utf-8")
 
     substitutions = {
-        "{{GENERATED:pipeline-diagram}}": _PIPELINE_DIAGRAM,
+        "{{GENERATED:pipeline-diagram}}": render_pipeline_mermaid(PIPELINE),
         "{{GENERATED:component-map}}": _build_component_map().rstrip("\n"),
         "{{GENERATED:counts}}": _build_counts(),
     }

@@ -1532,9 +1532,6 @@ function renderTopologyGraph(data) {
     const skillItems2 = data.skills || [];
     const skillsRendered2 = new Set();
 
-    // Track which declared edges are observed vs not-seen
-    const declaredEdgeIds = new Set(); // "fromId::toId"
-
     function renderNodeBoth(name, parentNodeId, level) {
       const nodeType = nodeTypeForName(name);
       const nodeId = parentNodeId + ':' + name;
@@ -1564,9 +1561,6 @@ function renderTopologyGraph(data) {
       } else {
         addEdge(parentNodeId, nodeId, edgeColor, dashed, 2);
       }
-      const edgeKey = parentNodeId + '::' + nodeId;
-      declaredEdgeIds.add(edgeKey);
-
       placedNames.add(name);
       skillsRendered2.add(name);
       const dispatched = DISPATCH_MAP[name] || [];

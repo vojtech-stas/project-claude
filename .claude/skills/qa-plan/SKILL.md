@@ -1,11 +1,11 @@
 ---
 name: qa-plan
-description: Writer/orchestrator for QA automation per ADR-0020, and the production-verify executor dispatched by /build (step 5) and /ship (step 6 standalone) per ADR-0037 D1. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment for audit, dispatches the qa-tester subagent to execute, renders JUDGMENT and EXTRACT_FAILED rows via AskUserQuestion, and auto-closes the PRD on all-PASS + all-judgment-ACCEPT. Invoke at PRD acceptance — the terminal human checkpoint refined per ADR-0020 D10. Backward-compatible with /ship invocation surface.
+description: Writer/orchestrator for QA automation per ADR-0020 + ADR-0040. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment, dispatches qa-tester, collects PROVISIONAL residuals, posts each as a needs-human-check GitHub issue (writer posts, not qa-tester), reports the single top headline, and auto-closes the PRD on machine-PASS alone (ADR-0040 D2 — no longer waits on all-judgment-ACCEPT). Also the production-verify executor dispatched by /build (step 5) and /ship (step 6 standalone) per ADR-0037 D1.
 ---
 
 # /qa-plan — writer/orchestrator for QA automation
 
-This skill runs in **main-agent context** (so it can call `AskUserQuestion`); it does not modify code. It distills PRD §2 prose into a mechanical plan, hands execution to the [`qa-tester`](../../agents/qa-tester.md) subagent, and renders judgment rows back to the user. Per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D1 the writer/executor split mirrors slicer + slicer-critic (one plans, one executes); per D10 the human checkpoint is refined (judge subjective outcomes, not run grep commands).
+This skill runs in **main-agent context** (so it can call `AskUserQuestion`); it does not modify code. It distills PRD §2 prose into a mechanical plan, hands execution to the [`qa-tester`](../../agents/qa-tester.md) subagent, collects any PROVISIONAL residuals from the executor, and queues them as async `needs-human-check` GitHub issues. Per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D1 the writer/executor split mirrors slicer + slicer-critic (one plans, one executes). Per [ADR-0040](../../../decisions/0040-qa-human-residual-model.md) D1/D2/D3, the human checkpoint moves from synchronous plan-time `AskUserQuestion` to the async `/qa-review` clearing skill — the writer's job here is to queue residuals and surface ONE headline, not to render every judgment row synchronously.
 
 **Role as production-verify executor (per [ADR-0037](../../../decisions/0037-production-verification-gate.md) D1):** `/build` (step 5) and standalone `/ship` (step 6) dispatch this skill — or qa-tester directly in production-verify mode — as the mandatory production-verification gate after all slices merge. In that role, the input is the PRD body + "Production check:" line + merged diff summary, and the output is a PASS/FAIL proof consumed by the orchestrator for blocking enforcement. This role is additive to, not a replacement for, the PRD-acceptance QA role described above.
 
@@ -21,8 +21,15 @@ This skill runs in **main-agent context** (so it can call `AskUserQuestion`); it
 2. **LLM-extract the structured plan.** For each numbered criterion in §2, infer either a runnable bash check (the criterion's own "Verifiable: ..." prose often gives it directly) OR mark `JUDGMENT` if subjective. Failed extractions become `EXTRACT_FAILED` per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D2. Build a 3-column Markdown table: `criterion # | bash check or "JUDGMENT" | expected result`.
 3. **Persist the plan as a PRD comment.** `gh issue comment <N> --repo vojtech-stas/project-claude --body-file <tempfile>` containing the table under a `## QA-plan v1 (<YYYY-MM-DD>)` heading. Audit trail + re-runnability per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D4. Capture the resulting comment URL as the trailer `ARTIFACTS:` value.
 4. **Dispatch the qa-tester subagent.** Invoke via `Agent` tool with `subagent_type: "qa-tester"`, passing the plan table inline in the prompt. Receive back the per-criterion verdict table + canonical GENERATOR trailer (`PASS_COUNT`, `FAIL_COUNT`, `JUDGMENT_COUNT`, `EXTRACT_FAILED_COUNT`).
-5. **Render JUDGMENT and EXTRACT_FAILED rows.** For each such row, call `AskUserQuestion` with option-format LLM-inferred from the criterion prose (per PRD #166 §6 OQ slice-2 implementer judgment: LLM-infer specific accept/reject options from each criterion's wording, matching the PRD #147 dogfood pattern; fallback to generic "Accept / Reject + reason" only when criterion prose is too thin to infer specific options). Collect responses.
-6. **Decide PRD disposition.** If all mechanical PASS AND all judgment ACCEPT → `gh issue close <N> --reason completed --repo vojtech-stas/project-claude --comment <qa-pass-summary>` per [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) D5. If any mechanical FAIL → `AskUserQuestion` with options accept-FAIL / reopen-for-fix / cull-as-won't-fix; act on the user's choice (no auto-close on FAIL).
+5. **Collect residuals and queue as `needs-human-check` issues (ADR-0040 D2/D3).** Examine the qa-tester trailer for `PROVISIONAL` verdicts (residuals — criteria the machine could not faithfully verify). For each residual:
+   - Rank residuals by this heuristic: (a) user-facing surface area first (UI/behavior visible to the user ranks above internal-state checks); (b) within that, machine-uncertainty depth (if the executor noted ambiguity, rank higher than a clean "couldn't reach" result). Document the ranking in the run summary.
+   - For each residual (in ranked order): `gh issue create --label needs-human-check --repo vojtech-stas/project-claude --title "QA residual: <criterion summary> (PRD #<N>)" --body "PRD: #<N>\n\nCriterion: <criterion text>\n\nWhat to eyeball: <executor's PROVISIONAL detail / what the machine could not settle>\n\nRanked #<position> of <total> residuals."` — the **writer** posts these issues; `qa-tester` does not.
+   - **Zero residuals** → no `needs-human-check` issue; clean machine-PASS (the human is not bothered).
+   - **One or more residuals** → the top-ranked residual is the **"now check this" headline** reported prominently in the run summary. Extras are posted as issues but de-emphasized — the human culls them lazily like the `captured` tier.
+   - JUDGMENT and EXTRACT_FAILED rows that have NO corresponding PROVISIONAL from the executor → still queue as needs-human-check if the executor flagged them as uncertain; else note as "machine could not classify" in the run summary.
+6. **Decide PRD disposition (ADR-0040 D2 — machine-PASS closes; FAIL blocks).** Machine-PASS = every criterion is PASS or a queued residual (residuals are async, not blocking). Machine-FAIL = any criterion returned FAIL. Action:
+   - **Machine-PASS (zero FAILs; residuals are OK):** `gh issue close <N> --reason completed --repo vojtech-stas/project-claude --comment <qa-pass-summary>`. PRD auto-closes immediately — does NOT wait for human resolution of `needs-human-check` issues (ADR-0040 D2 supersedes the ADR-0020 D5 all-judgment-ACCEPT wait).
+   - **Machine-FAIL (any FAIL):** `AskUserQuestion` with options: (A) accept-FAIL-as-known / (B) reopen-for-fix / (C) cull-as-won't-fix; act on the user's choice (no auto-close on FAIL). The ADR-0037 D5 failure loop still applies — machine FAILs block.
 
 ## Tool boundaries
 
@@ -34,16 +41,17 @@ After step 6, emit the canonical **GENERATOR trailer** (per [ADR-0005](../../../
 
 ```
 RESULT: SUCCESS | STOPPED | INVALID_INPUT
-REASON: <one sentence — e.g., "PRD #N auto-closed: 13 PASS + 3 judgment-ACCEPT" or "halted: 2 mechanical FAILs surfaced via AskUserQuestion">
+REASON: <one sentence — e.g., "PRD #N auto-closed: 13 PASS + 0 residuals" or "halted: 2 mechanical FAILs">
 ARTIFACTS: <URL of the persisted QA-plan comment>
 PASS_COUNT: <integer>
 FAIL_COUNT: <integer>
-JUDGMENT_COUNT: <integer>
+PROVISIONAL_COUNT: <integer — residuals queued as needs-human-check issues>
 EXTRACT_FAILED_COUNT: <integer>
+RESIDUAL_HEADLINE: <URL of the top-ranked needs-human-check issue, or "none">
 PRD_DISPOSITION: closed-completed | reopened-for-fix | culled | left-open-pending-fix
 ```
 
-`PASS_COUNT` / `FAIL_COUNT` / `JUDGMENT_COUNT` / `EXTRACT_FAILED_COUNT` carry forward from the qa-tester subagent's trailer (per [`qa-tester.md`](../../agents/qa-tester.md) output shape). `PRD_DISPOSITION` is a per-agent extension naming the resulting PRD state so `/ship` and post-run audits can correlate without re-fetching.
+`PASS_COUNT` / `FAIL_COUNT` / `EXTRACT_FAILED_COUNT` carry forward from the qa-tester subagent's trailer (per [`qa-tester.md`](../../agents/qa-tester.md) output shape). `PROVISIONAL_COUNT` is the count of residuals queued as `needs-human-check` issues. `RESIDUAL_HEADLINE` is the URL of the top-ranked issue (the "now check this" item) or `"none"` if zero residuals. `PRD_DISPOSITION` names the resulting PRD state so `/ship` and post-run audits can correlate without re-fetching.
 
 ## References
 
@@ -53,5 +61,7 @@ PRD_DISPOSITION: closed-completed | reopened-for-fix | culled | left-open-pendin
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer schema.
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D4 — terminal human checkpoint (refined, not removed, per ADR-0020 D10).
 - [ADR-0037](../../../decisions/0037-production-verification-gate.md) D1 — mandatory blocking gate; this skill is the production-verify executor dispatched by /build step 5 and /ship step 6 (standalone).
+- [ADR-0040](../../../decisions/0040-qa-human-residual-model.md) — D1 (PROVISIONAL as residual signal), D2 (async non-blocking queue; PRD closes on machine-PASS alone — supersedes ADR-0020 D5 all-judgment-ACCEPT clause), D3 (one headline per feature; zero residuals → silent), D4 (writer queues residuals; `/qa-review` clears them).
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent PRD; this skill's rewrite is slice [#168](https://github.com/vojtech-stas/project-claude/issues/168).
 - PRD [#452](https://github.com/vojtech-stas/project-claude/issues/452) — production-verify gate PRD; this skill gains the production-verify executor role per slice #454.
+- PRD [#474](https://github.com/vojtech-stas/project-claude/issues/474) — QA residual model PRD; this skill's step-5/6 rework ships in slice #475.

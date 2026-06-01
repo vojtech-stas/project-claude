@@ -89,7 +89,7 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 
 ## Local vocabulary
 
-Per [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) D1. Folded to CLAUDE.md by [`/glossary-fold`](../glossary-fold/SKILL.md) when entries pass the [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2 citation threshold and `glossary-critic` rubric.
+Per [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) D1. Folded to CLAUDE.md by [`/glossary fold`](../glossary/SKILL.md) when entries pass the [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2 citation threshold and `glossary-critic` rubric.
 
 - **pipeline metadata footer** — the one-line `> **Pipeline metadata** — Approved by prd-critic round <N>/3...` audit trailer that `/to-prd` appends to every posted PRD body so `/ship` and downstream critics can mechanically verify upstream APPROVE without re-running the loop.
   - *Scope:* (a) project jargon coined here

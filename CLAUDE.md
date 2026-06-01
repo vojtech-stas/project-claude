@@ -77,6 +77,12 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ---
 
+## Skill vs subagent — the litmus rule
+
+**Subagent** = isolated-context + handed-a-task + returns-a-result (heavy work / adversarial review / parallel); **skill** = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. "Skills dispatch subagents" is the intended topology, not an anti-pattern — it is the only model the runtime permits. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md).
+
+---
+
 ## Map — where things live
 
 | Thing | Path | Summary |
@@ -88,7 +94,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 | qa-tester subagent | `.claude/agents/qa-tester.md` | dual-mode bash/ui executor of QA plans |
 | `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts |
 | `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit |
-| glossary-add / glossary-fold skills | `.claude/skills/glossary-{add,fold}/SKILL.md` | interactive single-entry and bulk fold flows for the glossary INDEX |
+| `/glossary` skill (add\|fold subcommands) | `.claude/skills/glossary/SKILL.md` | interactive single-entry (`add`) and bulk fold (`fold`) flows for the glossary INDEX; per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D3 |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 | Cascade-aware deps | `tools/cascade-finder.py` | advisory tool for cascade-aware workflow; see [tools/README.md](tools/README.md) |
 | Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh` |
@@ -108,7 +114,7 @@ Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7, the 
 
 ## Glossary (key terms)
 
-Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary-add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5).
+Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5).
 
 - **PRD** — feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`; top tier of the PRD→Slice→PR hierarchy; one feature-sized deliverable per PRD.
 - **ADR** — Architecture Decision Record; immutable, supersession-based numbered file in `decisions/`; never edited, only superseded by a newer ADR.

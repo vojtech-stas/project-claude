@@ -1272,7 +1272,7 @@ flowchart TD
   end
   subgraph SS["Side workflows"]
     AUTO["/audit-subagents"] -.periodic.- REV
-    GA["/glossary-add"] --> GC[glossary-critic]
+    GA["/glossary"] --> GC[glossary-critic]
     GC -->|APPROVE| GAPR[(glossary PR)]
     GAPR --> REV
     CAP[captured issue] --> PTB["/promote-to-backlog"]

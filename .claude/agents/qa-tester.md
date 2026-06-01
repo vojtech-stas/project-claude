@@ -1,6 +1,6 @@
 ---
 name: qa-tester
-description: Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (Playwright click-recipe), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1): Playwright MCP-driven dogfood self-test then click recipes, LLM-judges screenshots, PROVISIONAL_PASS auto-captures. production-verify mode (per ADR-0037 D2): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
+description: Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (Playwright click-recipe), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1): Playwright MCP-driven dogfood self-test then click recipes, LLM-judges screenshots, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
 tools: Read, Bash, Grep, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_type, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_snapshot, mcp__playwright__browser_close, mcp__playwright__browser_wait_for, mcp__playwright__browser_evaluate
 model: sonnet
 ---
@@ -23,6 +23,18 @@ Three mutually-exclusive modes — selection driven by the caller's invocation p
 - **More than one mode token in one prompt** → return `RESULT: INVALID_INPUT` with reason `"mode ambiguous — caller must pick exactly one of bash-mode, ui-mode, production-verify mode"`.
 
 If the bash-mode input is missing the table, the column shape is wrong, or no rows can be parsed → `RESULT: INVALID_INPUT`. If the ui-mode input is missing the `ui-mode` token, the `recipes` block, or no recipe rows can be parsed → `RESULT: INVALID_INPUT`. If the production-verify input is missing any of the three required inputs → `RESULT: INVALID_INPUT`. Verdict table omitted in any case; trailer only.
+
+## Residual signal — PROVISIONAL / "uncertain — needs human eye" (ADR-0040 D1)
+
+Per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D1, a criterion you **cannot faithfully verify** is returned as `PROVISIONAL` / "uncertain — needs a human eye". This is the **residual** signal — it is NOT a PASS and NOT a FAIL:
+
+- **PROVISIONAL is NOT a silent PASS.** The machine attempted the check but could not settle it with confidence. The criterion is unknown, not confirmed.
+- **PROVISIONAL is NOT a FAIL.** The machine did not observe a failure — it observed uncertainty.
+- **PROVISIONAL is the residual.** The writer (`/qa-plan`) receives it as data and queues it as a `needs-human-check` GitHub issue. The human clears it via `/qa-review` on their own cadence (ADR-0040 D4).
+
+You RETURN residuals as data — you do NOT post `needs-human-check` issues yourself (the writer owns the GitHub audit-trail per ADR-0020 D4). You do NOT call `AskUserQuestion` (subagents can't). You do NOT fold PROVISIONAL into PASS in your output — the PROVISIONAL count is reported distinctly in the trailer so the writer can queue each one.
+
+**In ui-mode and production-verify mode:** when a check's only available proof would be `browser_evaluate` of internal JS state (not real-click + observed-render), report it `PROVISIONAL`. Real interaction (`browser_click`/`browser_type`/`browser_navigate`) plus `browser_snapshot`/screenshot is the primary proof; `browser_evaluate` is a last-resort disambiguator only (ADR-0040 D5 — S2 tightening). This slice (S1) names the signal; S2 enforces the fidelity rule in detail.
 
 ## Mandatory reading order
 
@@ -278,3 +290,4 @@ No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent of bash-mode (Tier 1 of backlog #57); §2 acceptance criteria mapped to the bash-mode plan.
 - PRD [#215](https://github.com/vojtech-stas/project-claude/issues/215) — parent of ui-mode (PRD-Q1; ADR-0025 source); §2 acceptance criteria mapped to ui-mode click recipes.
 - PRD [#452](https://github.com/vojtech-stas/project-claude/issues/452) — parent of production-verify mode (mandatory production-verification gate); browser route per slice #453; hook-fire, command-run, static-check routes + tiebreak per slice #454.
+- [ADR-0040](../../decisions/0040-qa-human-residual-model.md) — D1 (PROVISIONAL as the residual signal, returned not posted; empirical not predicted), D5 (browser-route fidelity tightening — real-click primary, `browser_evaluate` last-resort; S2 scope). See also [`.claude/skills/qa-plan/SKILL.md`](../skills/qa-plan/SKILL.md) (writer queues residuals) and [`.claude/skills/qa-review/SKILL.md`](../skills/qa-review/SKILL.md) (human clearing skill).

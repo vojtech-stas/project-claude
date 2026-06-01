@@ -1,6 +1,6 @@
 ---
 name: audit-subagents
-description: Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 10-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
+description: Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 11-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
 ---
 
 This skill is the mechanical drift-detector for subagent prompts under `.claude/agents/`. Per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md), it codifies conventions from [ADR-0001](../../../decisions/0001-foundational-design.md) D6, [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1, [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8, and [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 as literal `grep` patterns producing deterministic PASS/FAIL per (subagent, applicable check) pair.
@@ -33,9 +33,9 @@ No arguments per [ADR-0011](../../../decisions/0011-subagent-quality-framework.m
 
 ---
 
-## Rubric (10 checks; ADR-0011 D4)
+## Rubric (11 checks; ADR-0011 D4)
 
-**Coverage arithmetic** (ADR-0011 D4 at current 6-critic + 2-generator baseline): 5 × 8 + 4 × 6 + 1 × 2 = baseline 66 evaluations; effective 64 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`.
+**Coverage arithmetic** (ADR-0011 D4 at current 6-critic + 2-generator baseline): 6 × 9 + 4 × 6 + 1 × 2 = baseline 74 evaluations; effective 72 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`.
 
 **Per-check `excludes:` schema.** A check MAY declare `excludes: <comma-separated subagent filenames>`. For excluded pairs the runner renders `N/A (excluded per rubric)` instead of PASS/FAIL and omits the pair from the FAIL enumeration.
 
@@ -86,6 +86,21 @@ The pattern matches line-starts only (anchored `^`), so YAML fields embedded ins
 **Mechanic:** `grep -cE "^#+\s*(Mandatory reading order|When invoked)" <file>` — count ≥ 1 → **PASS**; count = 0 → **FAIL**. Either variant satisfies the check.
 
 **Rationale:** Subagents run in isolated context windows; they do NOT inherit the main agent's context. Without an explicit "read this first" section, the subagent risks operating on stale assumptions or missing constraints from ADRs / parent PRDs / linked issues. Critics typically have "Mandatory reading order" (ground the verdict in linked artifacts); generators typically have "When invoked" (walk a deterministic process from clear input to clear output). Missing both is a strong signal the subagent will silently make wrong calls on cold-start invocations.
+
+---
+
+### AS-ALL-6 — skill-vs-agent placement (scope: all; advisory — WARN only)
+
+**Mechanic:** Two grep passes over the file; WARN if either fires:
+
+1. `grep -nE '(calls?|uses?|invokes?|can\s+ask|will\s+ask)\s+AskUserQuestion' <file>` — matches language implying the agent **affirmatively uses** `AskUserQuestion` (a skill-only tool). Subagents have no `AskUserQuestion` per ADR-0038 D1; an agent body claiming to use it is misclassified and belongs as a skill.
+2. `grep -nE '(calls?|uses?|invokes?|dispatches?|spawns?|fires?|launch(es)?)\s+(the\s+)?(Agent|Task)\s+tool' <file>` — matches language implying the agent **affirmatively dispatches** other subagents via the `Agent`/`Task` tool. Subagents cannot dispatch subagents per ADR-0010 D6; an agent claiming to do so is a placement error (the dispatcher must be a skill running in main-agent context).
+
+Either match → **WARN** with the offending file and matched line(s). No match → **PASS**.
+
+**Severity: WARN (advisory).** Per ADR-0038 D4: the check is advisory, not a hard FAIL. A WARN means the file warrants human review; it may be a false positive (e.g., a mock example or edge phrasing not caught by the exclusions). The two patterns target **affirmative-use language** (the agent claims to use the tool) rather than **prohibitory/explanatory prose** (the agent says the tool is forbidden or explains why it's unavailable). Mentions of `AskUserQuestion` inside rubric descriptions, prohibitory clauses ("you may NOT use AskUserQuestion"), or explanatory notes ("subagents lack AskUserQuestion because…") do NOT match these patterns. However, because this check is WARN-only, any borderline match is one user-glance to confirm, not a pipeline BLOCK.
+
+**Rationale:** [ADR-0038](../../../decisions/0038-skill-vs-agent-rule.md) D1 establishes the litmus: a capability that *needs to ask the user* cannot be a subagent; a capability that *needs to dispatch other subagents* must be a skill. D4 mandates this advisory check so the rule stays enforced going forward. The check is WARN (not FAIL) to mirror the overall advisory posture of `/audit-subagents` (per ADR-0011 D5) and because edge-prose cases can generate false positives that are harmless to review.
 
 ---
 
@@ -170,7 +185,7 @@ RESULT: SUCCESS | STOPPED | INVALID_INPUT
 REASON: <one sentence — e.g., "audited 8 subagents, 5 FAILs (all ALL-4, duplicates of backlog #93)">
 ARTIFACTS: <path to report if persisted, else "stdout">
 SUBAGENTS_AUDITED: <integer>
-CHECK_EVALUATIONS: <integer; baseline 66, effective 64 with current CRIT-2 + ALL-4 exclusions of backlog-critic.md>
+CHECK_EVALUATIONS: <integer; baseline 74, effective 72 with current CRIT-2 + ALL-4 exclusions of backlog-critic.md>
 FAIL_COUNT: <integer>
 ```
 
@@ -188,11 +203,12 @@ Forbidden: `Edit`, `Write` (advisory only); `Agent` (no recursive invocation —
 
 ## References
 
-- [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — D1 (skill ownership), D2 (mechanical-only rubric), D3 (classifier), D4 (the 10 checks), D5 (single Markdown report, no auto-capture), D6 (rubric embedded), D7 (no-args invocation), D8 (bootstrap-mode + non-recursive), D9 (sibling backlog relationships).
+- [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — D1 (skill ownership), D2 (mechanical-only rubric), D3 (classifier), D4 (the 11 checks), D5 (single Markdown report, no auto-capture), D6 (rubric embedded), D7 (no-args invocation), D8 (bootstrap-mode + non-recursive), D9 (sibling backlog relationships).
 - [ADR-0001](../../../decisions/0001-foundational-design.md) D6 — subagent definition (sources AS-ALL-1, AS-ALL-2).
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a/D1b/D1c — verdict template + CRITIC + GENERATOR trailers (sources AS-CRIT-3, AS-CRIT-4, AS-GEN-1, this skill's own output shape).
 - [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 (6-critic-cap, honored), D8 (surfacing convention — sources AS-ALL-4).
 - [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3 (default-BLOCK — sources AS-CRIT-1), D4 (adversarial mindsets — sources AS-CRIT-2).
+- [ADR-0038](../../../decisions/0038-skill-vs-agent-rule.md) D1 (skill-vs-agent litmus — sources AS-ALL-6), D4 (advisory placement check mandate — sources AS-ALL-6), with ADR-0010 D6 (subagent tool boundaries).
 - [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; full rule bodies previously in the KB layer (now inlined per ADR-0032 D1).
 - Backlog [#93](https://github.com/vojtech-stas/project-claude/issues/93) — surfacing-convention drift fix that AS-ALL-4 detects.
 - Backlog [#47](https://github.com/vojtech-stas/project-claude/issues/47) — future post-PRD audit pipeline; natural consumer of this skill per ADR-0011 D9.

@@ -19,8 +19,8 @@
 #   - Matt Pocock skills install                    — user-level concern
 #   - MCP server configuration                      — user-level concern
 #   - CI / GitHub Actions / bot identity            — deferred to PRD-CI
-#   - Branch protection R3 (status checks)          — deferred to PRD-CI
-#   - Branch protection R4 (non-author review)      — deferred to PRD-CI
+#   - Branch protection R4 (required status checks)  — payload applied per ADR-0042; owner enables
+#   - Branch protection R3 (required approving reviews / non-author review) — deferred to a future bot-identity PRD
 #   - `--global` git config changes                 — out of scope
 #   - `--check` / dry-run mode                      — YAGNI (ADR-0008 OQ)
 #   - GitHub Project v2 board creation              — complex GraphQL; manual

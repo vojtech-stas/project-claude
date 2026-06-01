@@ -153,7 +153,7 @@ grep -rlF "GLOSSARY.md" --include="*.md" . \
 ```
 Empty → PASS; non-empty → FAIL with file list.
 
-**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Two files legitimately reference it (this skill body and `grill-me/SKILL.md`); both are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per ADR-0001 D8). (Previously 5 allowlisted files; 3 KB-layer entries removed per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) D1.)
+**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Two files legitimately reference it (this skill body and `grill-me/SKILL.md`); both are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per the `decisions/README.md` immutability convention). (Previously 5 allowlisted files; 3 KB-layer entries removed per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) D1.)
 
 ### DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves
 
@@ -174,7 +174,7 @@ Empty → PASS; non-empty → FAIL with file list.
 3. For each pair, grep `decisions/README.md` Status column for the `superseded by` annotation referencing the superseder.
 4. PASS if all annotations present (or no supersessions found); WARN with missing-annotation list otherwise.
 
-**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history (ADR-0001 D8 immutability). Readers landing on a superseded ADR need a clear "replaced by ADR-NNNN" pointer in the index. WARN-level (not FAIL) because the ADR body has the authoritative `- **Supersedes:**` line; the README annotation is a discoverability convenience that lags by convention. Note: the pattern `^- \*\*Supersedes:\*\*` (with `- ` prefix) matches the actual ADR bullet format; the bare `^\*\*Supersedes:\*\*` pattern silently never fires since no ADR uses that format.
+**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history (per the `decisions/README.md` immutability convention). Readers landing on a superseded ADR need a clear "replaced by ADR-NNNN" pointer in the index. WARN-level (not FAIL) because the ADR body has the authoritative `- **Supersedes:**` line; the README annotation is a discoverability convenience that lags by convention. Note: the pattern `^- \*\*Supersedes:\*\*` (with `- ` prefix) matches the actual ADR bullet format; the bare `^\*\*Supersedes:\*\*` pattern silently never fires since no ADR uses that format.
 
 ### DOCS-9 — CLAUDE.md glossary entry count ≤ 35 (ADR-0012 D5 soft cap; WARN)
 

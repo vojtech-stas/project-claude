@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css">
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -74,7 +75,6 @@
     margin-bottom: 16px;
   }
   .mermaid { text-align: center; }
-  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; }
   .side-panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -90,6 +90,69 @@
     color: var(--muted);
   }
   .side-panel h4 { font-size: 11px; color: var(--text); margin-bottom: 8px; }
+  /* File summary header block (topology node click / component card) */
+  .file-summary {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    display: none;
+  }
+  .file-summary.visible { display: block; }
+  .file-summary-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .file-summary-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-right: 6px;
+    color: #fff;
+    vertical-align: middle;
+  }
+  .file-summary-desc {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-top: 4px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* Rendered markdown body */
+  .md-body { font-size: 12px; color: var(--text); line-height: 1.7; }
+  .md-body h1, .md-body h2, .md-body h3 {
+    color: var(--text); margin: 12px 0 6px; font-size: 13px; font-weight: 600;
+    border-bottom: 1px solid var(--border); padding-bottom: 3px;
+  }
+  .md-body h1 { font-size: 14px; }
+  .md-body p { margin: 6px 0; }
+  .md-body ul, .md-body ol { margin: 6px 0 6px 16px; }
+  .md-body li { margin: 2px 0; }
+  .md-body code {
+    background: #1c2128; border: 1px solid var(--border);
+    border-radius: 3px; padding: 1px 4px; font-size: 11px;
+  }
+  .md-body pre { background: #1c2128; border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px; overflow-x: auto; margin: 8px 0;
+  }
+  .md-body pre code { background: none; border: none; padding: 0; }
+  .md-body a { color: var(--blue); text-decoration: none; }
+  .md-body a:hover { text-decoration: underline; }
+  .md-body blockquote {
+    border-left: 3px solid var(--border); padding-left: 8px;
+    color: var(--muted); margin: 6px 0;
+  }
+  /* "No source file" muted message in the topology sidebar */
+  .file-no-source {
+    font-size: 11px; color: var(--muted); font-style: italic; margin-top: 8px;
+  }
   /* Health cards */
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
   .card {
@@ -184,7 +247,14 @@
   .agent-card .card-name { font-size: 12px; color: var(--text); margin-bottom: 3px; display: flex; align-items: center; gap: 6px; }
   .agent-card .card-desc { font-size: 10px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .loading { color: var(--muted); padding: 20px 0; }
-  /* Topology graph (Architecture tab) */
+  /* Topology graph + detail sidebar (Architecture tab) */
+  .topo-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: start;
+  }
   #topology-graph-container {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -193,7 +263,10 @@
     min-height: 460px;
     position: relative;
     overflow: hidden;
-    margin-bottom: 16px;
+  }
+  .topo-layout .side-panel {
+    height: calc(100vh - 360px);
+    min-height: 460px;
   }
   /* Measured-overlay mode control */
   .topo-mode-bar {
@@ -978,8 +1051,18 @@ flowchart TD
       </div>
       <span class="measured-notice" id="measured-notice">no measured events yet (runs accumulate from new sessions)</span>
     </div>
-    <div id="topology-graph-container">
-      <div class="loading" id="topology-loading" style="padding:20px;">Loading topology graph...</div>
+    <!-- Topology graph + detail sidebar: side-by-side layout -->
+    <div class="topo-layout">
+      <div id="topology-graph-container">
+        <div class="loading" id="topology-loading" style="padding:20px;">Loading topology graph...</div>
+      </div>
+      <!-- Shared detail sidebar: populated by topology-node clicks AND component-card clicks -->
+      <div class="side-panel" id="file-panel">
+        <h4 id="file-panel-title">File viewer</h4>
+        <p id="file-panel-hint" style="color:var(--muted);font-size:11px;">Click any node or component to view its file here.</p>
+        <div class="file-summary" id="file-summary"></div>
+        <div class="md-body" id="file-content"></div>
+      </div>
     </div>
     <!-- Hooks section: grouped by lifecycle event -->
     <div class="hooks-section" id="hooks-section" style="display:none;">
@@ -991,15 +1074,8 @@ flowchart TD
   <div class="section">
     <button class="flat-list-toggle" onclick="toggleFlatList(this)">&#9654; Component list (flat view — click to expand)</button>
     <div class="flat-list-content" id="flat-list-content">
-      <div class="layout">
-        <div id="comp-graph">
-          <div class="loading">Loading component graph...</div>
-        </div>
-        <div class="side-panel" id="file-panel">
-          <h4>File viewer</h4>
-          <p style="color:var(--muted);font-size:11px;">Click any component name to view its file here.</p>
-          <pre id="file-content"></pre>
-        </div>
+      <div id="comp-graph">
+        <div class="loading">Loading component graph...</div>
       </div>
     </div>
   </div>
@@ -1314,6 +1390,8 @@ function nodeTypeForName(name) {
 // --- Architecture ---
 let archData = null;
 let topoNetwork = null;
+// Map: nodeId → { name, type, path|null } — rebuilt on every renderTopologyGraph call.
+let topoNodeFileMap = {};
 
 async function loadArchitecture() {
   if (archData) return;
@@ -1355,12 +1433,33 @@ function renderTopologyGraph(data) {
   // Update measured-notice visibility
   _updateMeasuredNotice();
 
+  // Rebuild the node→file map fresh on every render (mode switches re-render).
+  topoNodeFileMap = {};
+  // Build hook name→path lookup from arch data for this render.
+  const _hookPathMap = {};
+  for (const h of (data.hooks || [])) {
+    const n = h.clean_name || h.name || '';
+    if (n && h.path) _hookPathMap[n] = h.path;
+  }
+
   const nodes = [];
   const edges = [];
   const placedNames = new Set();
 
   function addNode(id, label, type, level, extra) {
     const c = NODE_COLORS[type] || NODE_COLORS.generator;
+    // Derive logical name (last ':'-segment) for file-path resolution.
+    const _logName = String(id).split(':').pop();
+    let _path = null;
+    if (type === 'skill') {
+      _path = '.claude/skills/' + _logName + '/SKILL.md';
+    } else if (type === 'generator' || type === 'critic') {
+      _path = '.claude/agents/' + _logName + '.md';
+    } else if (type === 'hook') {
+      _path = _hookPathMap[_logName] || ('.claude/hooks/' + _logName + (_logName.endsWith('.sh') ? '' : '.sh'));
+    }
+    // orchestrator / bash / adr / prd → null (no file)
+    topoNodeFileMap[id] = { name: _logName, type: type, path: _path };
     nodes.push({
       id,
       label,
@@ -1683,6 +1782,30 @@ function renderTopologyGraph(data) {
   topoNetwork.once('afterDrawing', () => {
     topoNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
   });
+
+  // Topology node-click → detail sidebar (slice #471).
+  // Resolves clicked nodeId via topoNodeFileMap; opens shared file-panel renderer.
+  topoNetwork.on('click', function(params) {
+    if (!params.nodes || params.nodes.length === 0) return;
+    const nodeId = params.nodes[0];
+    const info = topoNodeFileMap[nodeId];
+    if (!info) return;
+
+    if (info.path) {
+      viewFile(info.path, info.name, info.type);
+    } else {
+      // Graceful no-file message (orchestrator / bash / PRD / ADR nodes).
+      const titleEl = document.getElementById('file-panel-title');
+      const hintEl = document.getElementById('file-panel-hint');
+      const summaryEl = document.getElementById('file-summary');
+      const contentEl = document.getElementById('file-content');
+      titleEl.textContent = info.name;
+      hintEl.style.display = 'none';
+      summaryEl.classList.remove('visible');
+      summaryEl.innerHTML = '';
+      contentEl.innerHTML = '<p class="file-no-source">No source file for this node — it is an ' + escHtml(info.type) + ' node without a standalone .md file.</p>';
+    }
+  });
 }
 
 /**
@@ -1805,19 +1928,100 @@ function renderComponentGraph(data) {
   container.innerHTML = html || '<span style="color:var(--muted)">No components discovered.</span>';
 }
 
-async function viewFile(path, name) {
+/**
+ * Extract a short summary from markdown content.
+ * Priority: YAML frontmatter description: → first non-heading paragraph → type-label fallback.
+ * Strips frontmatter before body search. Clamps to ~3 lines (300 chars).
+ * @param {string} content - raw markdown text
+ * @param {string} typeLabel - fallback string e.g. "a critic subagent"
+ * @returns {string} non-empty summary
+ */
+function summarize(content, typeLabel) {
+  const raw = content || '';
+  // Strip YAML frontmatter (--- ... ---) and extract description: if present.
+  let body = raw;
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (fmMatch) {
+    const fm = fmMatch[1];
+    body = fmMatch[2] || '';
+    const descLine = fm.split('\n').find(function(l) { return /^description\s*:/i.test(l.trim()); });
+    if (descLine) {
+      const val = descLine.replace(/^description\s*:\s*/i, '').trim().replace(/^["']|["']$/g, '');
+      if (val) return val.slice(0, 300);
+    }
+  }
+  // First non-heading, non-empty paragraph (skip lines starting with # or ---)
+  const lines = body.split('\n');
+  let para = '';
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (!l || l.startsWith('#') || l.startsWith('---') || l.startsWith('|') || l.startsWith('!')) continue;
+    // Accumulate until blank line
+    let chunk = '';
+    while (i < lines.length && lines[i].trim()) {
+      chunk += (chunk ? ' ' : '') + lines[i].trim();
+      i++;
+    }
+    if (chunk && !chunk.startsWith('#')) {
+      para = chunk;
+      break;
+    }
+  }
+  if (para) return para.slice(0, 300);
+  return typeLabel || 'a component';
+}
+
+/**
+ * Fetch a file from /api/file, render markdown, and show the detail sidebar.
+ * Shared by component-card clicks AND topology-node clicks.
+ * @param {string} path - repo-relative path
+ * @param {string} name - display name
+ * @param {string} [type] - node type for badge color (optional)
+ */
+async function viewFile(path, name, type) {
   if (!path) return;
-  const panel = document.getElementById('file-panel');
-  const content = document.getElementById('file-content');
-  panel.querySelector('h4').textContent = name;
-  content.textContent = 'Loading...';
+  const titleEl = document.getElementById('file-panel-title');
+  const hintEl = document.getElementById('file-panel-hint');
+  const summaryEl = document.getElementById('file-summary');
+  const contentEl = document.getElementById('file-content');
+
+  titleEl.textContent = name;
+  hintEl.style.display = 'none';
+  summaryEl.classList.remove('visible');
+  summaryEl.innerHTML = '';
+  contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+
   try {
     const r = await fetch('/api/file?path=' + encodeURIComponent(path));
     const d = await r.json();
-    if (d.error) { content.textContent = 'Error: ' + d.error; return; }
-    content.textContent = d.content.slice(0, 8000) + (d.content.length > 8000 ? '\n... (truncated)' : '');
+    if (d.error) {
+      contentEl.innerHTML = '<span style="color:var(--fail);font-size:11px;">Error: ' + escHtml(d.error) + '</span>';
+      return;
+    }
+    const raw = d.content.slice(0, 12000) + (d.content.length > 12000 ? '\n\n*(truncated)*' : '');
+
+    // Render summary header
+    const nodeType = type || 'generator';
+    const badgeColor = NODE_COLORS[nodeType] || NODE_COLORS.generator;
+    const typeLabel = 'a ' + nodeType;
+    const desc = summarize(raw, typeLabel);
+    summaryEl.innerHTML =
+      '<div class="file-summary-name">' +
+        '<span class="file-summary-badge" style="background:' + badgeColor + ';">' + escHtml(nodeType) + '</span>' +
+        escHtml(name) +
+      '</div>' +
+      '<div class="file-summary-desc">' + escHtml(desc) + '</div>';
+    summaryEl.classList.add('visible');
+
+    // Render markdown body
+    if (typeof marked !== 'undefined') {
+      contentEl.innerHTML = marked.parse(raw);
+    } else {
+      // Fallback: display as plain pre if marked not loaded
+      contentEl.innerHTML = '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
+    }
   } catch(e) {
-    content.textContent = 'Error: ' + e.message;
+    contentEl.innerHTML = '<span style="color:var(--fail);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
   }
 }
 

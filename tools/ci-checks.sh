@@ -169,18 +169,6 @@ ALLOWLIST = [
     ('.claude/agents/glossary-critic.md', '0007', 9,
      'pedagogical example in rationale; illustrates a bad-citation failure mode'),
 
-    # Immutable ADR — cannot edit per ADR-0001 / decisions/README immutability.
-    # ADR-0026 line 229 references "ADR-0012 (D10 references)" in its References
-    # section, but ADR-0012 only has D1-D7. Historical dangling from original
-    # authorship; allowlisted because the ADR is immutable.
-    ('decisions/0026-knowledge-architecture-truth-docs.md', '0012', 10,
-     'immutable ADR; ADR-0012 only has D1-D7; historical dangling in References section'),
-
-    # Immutable file — decisions/README.md carries historical index annotations.
-    # ADR-0034 row says "distinct from dashboard tooling-spawn per ADR-0033 (D10)"
-    # but ADR-0033 only has D1-D6. Historical dangling in index row prose.
-    ('decisions/README.md', '0033', 10,
-     'immutable decisions/README.md; ADR-0033 only has D1-D6; historical dangling in index row'),
 ]
 
 def is_allowlisted(filepath, nnnn, did):
@@ -223,11 +211,14 @@ md_files = [
 #   ADR-0008 D6
 #   [ADR-0008](path) D6
 #   ADR-0008 D6/D7  (extracts D6 and D7 separately via findall)
-#   Avoids over-matching by requiring word boundary on D<n>
+#   Avoids over-matching: D<n> must be the IMMEDIATE next token after the ADR
+#   ref (+ optional md-link close), separated by exactly one space — no
+#   intervening parentheses, dashes, or prose words.
+#   Rejected forms (false positives): "ADR-0033 (D10)" or
+#   "[ADR-0012](path) — prose (D10 references)".
 CITE_RE = re.compile(
     r'(?:\[)?ADR-([0-9]{4})(?:\][^\)]*\))?'  # ADR-NNNN or [ADR-NNNN](...)
-    r'[^.\n]{0,30}?'                          # gap (no sentence-crossing)
-    r'\bD([0-9]+)\b'                          # D<n>
+    r' D([0-9]+)\b'                           # single space then D<n> directly
 )
 
 # Also catch slash-separated D-IDs like "D6/D7" after the initial match

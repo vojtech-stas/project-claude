@@ -289,13 +289,13 @@ Specialist agents under `.claude/agents/`:
 - **[`glossary-critic`](.claude/agents/glossary-critic.md)** — Audit a draft glossary entry for quality against ADR-0007 D5's rubric (as partially superseded by ADR-0012 D4). Use when `/glossary add` (or any generator) has produced a draft entry and needs a critic verdict before opening the PR. On APPROVE, the generator opens the trivial-lane PR. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
 - **[`prd-critic`](.claude/agents/prd-critic.md)** — Audit a draft PRD (and any macro-ADRs drafted alongside it) for quality against the 6-section template and the PRD-critic rubric. Use when the `/to-prd` skill (or `/ship`) has produced a draft PRD and needs a critic verdict before publishing. On APPROVE, the generator posts the PRD. On BLOCK, the generator revises and re-invokes, up to 3 rounds.
 - **[`reviewer`](.claude/agents/reviewer.md)** — Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash --auto` (queued merge-when-checks-pass per ADR-0042 D3). On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
-- **[`slicer-critic`](.claude/agents/slicer-critic.md)** — Score the slicer's N=3 decompositions of a PRD, pick the best with explicit rationale, then run a single revision loop on the chosen one. Use after `slicer` has produced its N=3 output and before slices are posted to GitHub. Final output is one approved decomposition ready for issue creation.
+- **[`slicer-critic`](.claude/agents/slicer-critic.md)** — Review the slicer's single decomposition of a PRD against the quality rubric. Run a standard APPROVE/BLOCK iterate loop (≤3 rounds). Use after `slicer` has produced its decomposition and before slices are posted to GitHub. Final output is one approved decomposition ready for issue creation.
 
 **Generators** (output-producing agents):
 
 - **[`implementer`](.claude/agents/implementer.md)** — Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
 - **[`qa-tester`](.claude/agents/qa-tester.md)** — Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (Playwright click-recipe), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1): Playwright MCP-driven dogfood self-test then click recipes, LLM-judges screenshots, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
-- **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce N=3 alternative vertical-slice decompositions of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs candidate decompositions for the slicer-critic to score. Output is the three decompositions side-by-side, NOT GitHub issues — posting is downstream.
+- **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce ONE well-justified vertical-slice decomposition of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs a decomposition for the slicer-critic to review. Output is the decomposition with rationale, NOT GitHub issues — posting is downstream.
 
 ### Hooks
 
@@ -317,7 +317,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 42 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 43 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -337,7 +337,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 9 hook(s), 42 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 6 critic(s) + 3 generator(s), 9 hook(s), 43 ADR(s).
 
 ## License
 

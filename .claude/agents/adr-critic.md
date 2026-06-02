@@ -38,6 +38,19 @@ If the draft references `ADR-XXXX` and `decisions/NNNN-*.md` for that number is 
 
 ---
 
+## Citation ledger (pre-rubric step)
+
+Before applying the rubric, enumerate **every** `ADR-NNNN D<n>` citation across **all sections** of the draft (not only `Supersedes:`/`Extends:` headers — include Context, Decisions, Consequences, Alternatives, References bodies). For each citation:
+
+1. Record the citation in a ledger row: `ADR-NNNN D<n> | claimed: "<draft's characterization>" | exists: ? | substance-match: ?`.
+2. Use `gh api repos/{owner}/{repo}/contents/decisions/<NNNN-slug>.md` to retrieve the file on origin/main (per the stale-worktree mitigation above — never rely on local `decisions/`). Locate the `### D<n>` heading verbatim.
+3. Mark **exists**: YES if the heading is found, NO if absent (→ feeds `AC-SUPERSEDES-BY-D-ID` sub-check).
+4. Mark **substance-match**: YES if the draft's characterization of that decision aligns with the heading text + its body paragraph; NO if mismatched (→ feeds `AC-SUPERSEDES-BY-D-ID` main check and `AC-CROSS-ADR-CONSISTENCY`).
+
+The completed ledger is then the input to `AC-SUPERSEDES-BY-D-ID` and `AC-CROSS-ADR-CONSISTENCY` — making per-cite verification **exhaustive-by-construction** rather than opportunistic. This step adds **no new criterion** and changes no rubric verdict logic; it only ensures the existing D-ID verification covers every citation in the draft.
+
+---
+
 ## Rubric
 
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts an unverified ADR into the accepted-decisions record — high friction to undo once downstream PRDs and slices cite it. A false-negative BLOCK creates a recoverable revision cycle. Conservative-default is the asymmetric correct choice per ADR-0009 D3.

@@ -11,9 +11,9 @@ This skill turns a PRD into a set of GitHub Issues, one per vertical slice. Sinc
 
 1. **Identify the PRD.** If the user passes a GitHub issue reference (`#N`, URL, or path), use that. Otherwise scan conversation context for a recently-posted PRD (`label:prd`). If still ambiguous, STOP and ask which PRD to slice — do not invent one.
 
-2. **Generate N=3 decompositions via the `slicer` subagent.** Invoke `slicer` (file: `.claude/agents/slicer.md`) with the PRD reference. It returns the "Slicer output for PRD #N" block with three alternative decompositions (INVEST tags, walking-skeleton flag, dependency ordering, LoC estimate, risk note per slice). If the subagent returns `INVALID_PRD: <reason>` → surface that and STOP.
+2. **Generate a single decomposition via the `slicer` subagent.** Invoke `slicer` (file: `.claude/agents/slicer.md`) with the PRD reference. It returns one well-justified decomposition (INVEST tags, walking-skeleton flag, dependency ordering, LoC estimate, risk note per slice, plus inline "alternatives considered" rationale). If the subagent returns `INVALID_PRD: <reason>` → surface that and STOP.
 
-3. **Score and select via the `slicer-critic` subagent.** Invoke `slicer-critic` (file: `.claude/agents/slicer-critic.md`) with both the PRD and the slicer's N=3 block. The critic applies its rubric, picks one decomposition with tiebreak rationale, and runs **at most one** revision loop (per ADR-0003 D3 — no re-sampling N=3). It returns either APPROVE with a `Final approved decomposition` block, or BLOCK with reasons. On BLOCK: surface reasons, do NOT post issues, STOP.
+3. **Iterate with the `slicer-critic` subagent.** Invoke `slicer-critic` (file: `.claude/agents/slicer-critic.md`) with both the PRD and the slicer's decomposition. The critic applies its full quality rubric (INVEST, walking-skeleton, SPIDR-splitability, dep-ordering, cascade-docs, etc.) and runs a standard **APPROVE / BLOCK + ≤3-round revision loop** (per [ADR-0044](../../../decisions/0044-slicer-simplification-single-decomposition.md) D2). It returns either APPROVE with a `Final approved decomposition` block, or BLOCK with reasons. On BLOCK: surface reasons, do NOT post issues, STOP.
 
 4. **Confirm with the user (interactive mode only).** When `/to-issues` is invoked directly by a human, display the critic's `Final approved decomposition` and ask "Post these slices to GitHub?" before any `gh issue create`. When invoked via `/ship`, skip this step — the pipeline is autonomous per ADR-0003 D4. Detect the calling context from the surrounding conversation.
 
@@ -69,6 +69,7 @@ Or "None — can start immediately" if no blockers.
 ## References
 
 - Full role synthesis (invocation contract, edges): this file.
-- [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (five-stage pipeline), D3 (N=3 at slicer + single revision loop), D6 (skills vs subagents).
+- [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (five-stage pipeline), D6 (skills vs subagents).
+- [ADR-0044](../../../decisions/0044-slicer-simplification-single-decomposition.md) — D1 (slicer produces one decomposition), D2 (slicer-critic standard APPROVE/BLOCK iterate), D4 (skills describe the single-decomposition shape).
 - Subagents this skill orchestrates: [`.claude/agents/slicer.md`](../../agents/slicer.md), [`.claude/agents/slicer-critic.md`](../../agents/slicer-critic.md).
 - Sibling skill: [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) — calls this skill as stage 3 of the pipeline.

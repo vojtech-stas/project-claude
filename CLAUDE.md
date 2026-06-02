@@ -36,6 +36,7 @@ _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) 
 
 16. **Slice-decomposition is the slicer's job — rule #16.** How many slices, where boundaries fall, and the walking-skeleton cut are owned by the `slicer` + `slicer-critic`. The grill / PRD-authoring phase settles design + acceptance criteria, then hands off — never decide slicing during grill. Per [ADR-0013](decisions/0013-slicer-n3-contract-refined.md) (decomposition contract) + [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3 (cascade-doc identification at decomposition time).
 17. **Skill-vs-subagent litmus — rule #17.** Subagent = isolated-context + handed-a-task + returns-a-result. Skill = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D1.
+18. **Never cite an ADR decision-ID from memory — rule #18.** Before citing `ADR-NNNN D<n>` in any drafted ADR/PRD/doc, open the cited ADR and read the actual `### D<n>` heading — the citation's characterization MUST match that heading. `decisions/README.md` is the decision index; consult it to find the right ADR. Per [ADR-0045](decisions/0045-adr-citation-consult-discipline.md).
 
 ---
 
@@ -104,6 +105,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of agent/bash/stop events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pre-commit hooks | `.githooks/pre-commit`, `.githooks/install.sh` | workflow enforcement |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | immutable; supersede rather than edit |
+| Decisions index | `decisions/README.md` | one row per ADR (number, title, Status); consult before citing a D-ID (rule #18) |
 | PRDs (future repo-local) | `docs/prds/NNNN-<slug>.md` | current PRDs live on GitHub Issues per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1 |
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog (forward queue) | `gh issue list --label backlog` + Backlog column on project board #2 | curated by `backlog-critic` |

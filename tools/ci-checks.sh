@@ -141,6 +141,165 @@ if [ "$CHECK5_FAIL" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 6: Dangling ADR D-ID citations (mirrors CHECK 4 / DOCS-7 mechanic)
+# ---------------------------------------------------------------------------
+echo "--- CHECK 6: dangling ADR D-ID citations in tracked .md files ---"
+# Requires python3 + git; soft-degrade if unavailable.
+if ! command -v python3 > /dev/null 2>&1 || ! command -v git > /dev/null 2>&1; then
+    echo "SKIP: CHECK 6 — python3 or git not available (soft-degrade)"
+else
+python3 - << 'PYEOF'
+import re, os, sys, glob, subprocess
+
+# ---------------------------------------------------------------------------
+# Allowlist: (file_suffix_pattern, adr_nnnn, d_id, reason)
+# Entries are matched when the source file path ENDS WITH file_suffix_pattern.
+# Add an entry here (with a reason comment) instead of editing immutable ADRs.
+# ---------------------------------------------------------------------------
+ALLOWLIST = [
+    # Pedagogical example in AC-SUPERSEDES-WITHOUT-HEADER rule body — fictional
+    # scenario contrasting "ADR-0002 D1" with a real policy. ADR-0002 has no D1
+    # (only D9-revised). Citation is illustrative, not referential.
+    ('.claude/agents/adr-critic.md', '0002', 1,
+     'pedagogical example in rule body; fictional D1 for illustration only'),
+
+    # Pedagogical example in GC-AUTHORITY-RESOLVABLE rationale — illustrates
+    # what a bad authority citation looks like ("authors citing ADR-0007 D9
+    # when the actual section is D8"). ADR-0007 has no D9 (only D1-D7).
+    ('.claude/agents/glossary-critic.md', '0007', 9,
+     'pedagogical example in rationale; illustrates a bad-citation failure mode'),
+
+    # Immutable ADR — cannot edit per ADR-0001 / decisions/README immutability.
+    # ADR-0026 line 229 references "ADR-0012 (D10 references)" in its References
+    # section, but ADR-0012 only has D1-D7. Historical dangling from original
+    # authorship; allowlisted because the ADR is immutable.
+    ('decisions/0026-knowledge-architecture-truth-docs.md', '0012', 10,
+     'immutable ADR; ADR-0012 only has D1-D7; historical dangling in References section'),
+
+    # Immutable file — decisions/README.md carries historical index annotations.
+    # ADR-0034 row says "distinct from dashboard tooling-spawn per ADR-0033 (D10)"
+    # but ADR-0033 only has D1-D6. Historical dangling in index row prose.
+    ('decisions/README.md', '0033', 10,
+     'immutable decisions/README.md; ADR-0033 only has D1-D6; historical dangling in index row'),
+]
+
+def is_allowlisted(filepath, nnnn, did):
+    """Return True if (filepath, nnnn, did) is in the allowlist."""
+    for suffix, a_nnnn, a_did, _ in ALLOWLIST:
+        if filepath.endswith(suffix) and nnnn == a_nnnn and did == a_did:
+            return True
+    return False
+
+# Step 1: Build ADR D-ID heading map from decisions/NNNN-*.md files.
+adr_d_ids = {}
+for adrfile in sorted(glob.glob('decisions/[0-9]*.md')):
+    nnnn = adrfile[10:14]
+    headings = set()
+    try:
+        with open(adrfile, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                # Accept: ### D<n>  ### D<n>.  ### D<n>:  ### D<n> (  ### D<n>-
+                m = re.match(r'^### D(\d+)([.:( \-]|$)', line.strip())
+                if m:
+                    headings.add(int(m.group(1)))
+    except OSError:
+        pass
+    adr_d_ids[nnnn] = headings
+
+# Step 2: Enumerate tracked .md files (reuse CHECK 4's exclusions).
+result = subprocess.run(
+    ['git', 'ls-files', '*.md'],
+    capture_output=True, text=True
+)
+md_files = [
+    f for f in result.stdout.strip().split('\n')
+    if f
+    and not f.startswith('.git/')
+    and not f.startswith('.claude/worktrees/')
+    and not f.startswith('tool-results/')
+]
+
+# Step 3: Citation pattern — catch common forms:
+#   ADR-0008 D6
+#   [ADR-0008](path) D6
+#   ADR-0008 D6/D7  (extracts D6 and D7 separately via findall)
+#   Avoids over-matching by requiring word boundary on D<n>
+CITE_RE = re.compile(
+    r'(?:\[)?ADR-([0-9]{4})(?:\][^\)]*\))?'  # ADR-NNNN or [ADR-NNNN](...)
+    r'[^.\n]{0,30}?'                          # gap (no sentence-crossing)
+    r'\bD([0-9]+)\b'                          # D<n>
+)
+
+# Also catch slash-separated D-IDs like "D6/D7" after the initial match
+SLASH_D_RE = re.compile(r'\bD([0-9]+)\b')
+
+# Step 4: Scan all files for citations.
+danglings = []  # (filepath, nnnn, did)
+seen_danglings = set()
+
+for mdfile in md_files:
+    if not os.path.isfile(mdfile):
+        continue
+    try:
+        with open(mdfile, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+    except OSError:
+        continue
+
+    for m in CITE_RE.finditer(content):
+        nnnn = m.group(1)
+        first_did = int(m.group(2))
+
+        # Collect all D-IDs from this match position (handles D6/D7 slash form):
+        # Look at the text immediately following the matched D<n> for /D<m> forms.
+        tail_start = m.end()
+        tail_end = min(len(content), tail_start + 20)
+        tail = content[tail_start:tail_end]
+        did_list = [first_did]
+        for slash_m in re.finditer(r'^/D([0-9]+)\b', tail):
+            did_list.append(int(slash_m.group(1)))
+
+        for did in did_list:
+            key = (mdfile, nnnn, did)
+            if key in seen_danglings:
+                continue
+
+            # Skip allowlisted entries.
+            if is_allowlisted(mdfile, nnnn, did):
+                continue
+
+            # Check ADR file exists.
+            adr_glob = glob.glob(f'decisions/{nnnn}-*.md')
+            if not adr_glob:
+                # ADR file doesn't exist — but this is also caught by CHECK 4.
+                # Skip here to avoid double-reporting (CHECK 4 owns file-level checks).
+                continue
+
+            # Check D-ID heading exists.
+            valid_dids = adr_d_ids.get(nnnn, set())
+            if did not in valid_dids:
+                seen_danglings.add(key)
+                danglings.append((mdfile, nnnn, did))
+
+# Step 5: Report results.
+if danglings:
+    for filepath, nnnn, did in sorted(danglings):
+        print(
+            f'FAIL: CHECK 6 — dangling D-ID ADR-{nnnn} D{did} in {filepath}',
+            file=sys.stderr
+        )
+    sys.exit(1)
+else:
+    print('PASS: CHECK 6 — no dangling ADR D-ID citations found')
+    sys.exit(0)
+PYEOF
+CHECK6_EXIT=$?
+if [ "$CHECK6_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3/git availability check
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

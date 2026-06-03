@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>project-claude dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css">
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
@@ -66,15 +65,6 @@
   h2 { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 12px; }
   h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
   .section { margin-bottom: 24px; }
-  .mermaid-container {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 16px;
-    overflow-x: auto;
-    margin-bottom: 16px;
-  }
-  .mermaid { text-align: center; }
   .side-panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -962,69 +952,9 @@
 
 <!-- ARCHITECTURE TAB -->
 <div id="tab-architecture" class="tab active">
-  <div class="section">
-    <h2>Pipeline diagram</h2>
-    <div class="mermaid-container">
-      <div class="mermaid">
-flowchart TD
-  subgraph S1["Stage 1: Idea capture"]
-    U1[User] --> GM["/grill-me"]
-    GM -->|settled design| SHIP["/ship"]
-  end
-  subgraph S2["Stage 2: PRD authoring"]
-    SHIP --> TOPRD["/to-prd"]
-    TOPRD --> PRDC[prd-critic]
-    TOPRD -.if ADR.-> ADRC[adr-critic]
-    PRDC -->|joint APPROVE| PRDISSUE[(PRD issue)]
-    ADRC -->|joint APPROVE| PRDISSUE
-    PRDC -.BLOCK ≤3 rounds.-> TOPRD
-    ADRC -.BLOCK ≤3 rounds.-> TOPRD
-  end
-  subgraph S3["Stage 3: Slice decomposition"]
-    PRDISSUE --> TOISSUES["/to-issues"]
-    TOISSUES --> SLICER[slicer]
-    SLICER -->|N alternatives| SLICERC[slicer-critic]
-    SLICERC -->|APPROVE| SLICEISSUES[(slice issues)]
-    SLICERC -.BLOCK ≤1 revision.-> SLICER
-  end
-  subgraph S4["Stage 4: Implementation"]
-    SLICEISSUES --> IMPL[implementer]
-    IMPL --> PR[(PR with Closes #N)]
-    PR --> REV[reviewer]
-    REV -->|APPROVE| MERGE[(merged on main)]
-    REV -.BLOCK ≤3 rounds.-> IMPL
-    REV -.round-3 BLOCK.-> NH[needs-human label]
-  end
-  subgraph S5["Stage 5: Acceptance"]
-    MERGE --> QA["/qa-plan"]
-    QA --> U2[User accepts PRD]
-  end
-  subgraph SS["Side workflows"]
-    AUTO["/audit-subagents"] -.periodic.- REV
-    GA["/glossary-add"] --> GC[glossary-critic]
-    GC -->|APPROVE| GAPR[(glossary PR)]
-    GAPR --> REV
-    CAP[captured issue] --> PTB["/promote-to-backlog"]
-    PTB --> BC[backlog-critic]
-    BC -->|APPROVE| BL[backlog label]
-    BC -->|BLOCK| CAPSTAY[stays in captured tier]
-  end
-  classDef human fill:#3b82f6,color:#fff
-  classDef skill fill:#14b8a6,color:#fff
-  classDef gen fill:#22c55e,color:#fff
-  classDef critic fill:#f97316,color:#fff
-  classDef reviewer fill:#ef4444,color:#fff
-  classDef artifact fill:#9ca3af,color:#fff
-  class U1,U2 human
-  class GM,SHIP,TOPRD,TOISSUES,QA,AUTO,GA,PTB skill
-  class SLICER,IMPL gen
-  class PRDC,ADRC,SLICERC,GC,BC critic
-  class REV reviewer
-  class PRDISSUE,SLICEISSUES,PR,MERGE,NH,GAPR,CAP,BL,CAPSTAY artifact
-      </div>
-    </div>
-  </div>
-
+  <!-- Pipeline diagram removed (slice #525): was hand-maintained mermaid with
+       stale edges and missing codebase-critic. The Orchestration topology
+       below is spec-driven (fetched from /api/pipeline — ADR-0039 D1/D2). -->
   <div class="section">
     <h2>Orchestration topology</h2>
     <div class="legend" id="topology-legend">
@@ -1168,8 +1098,6 @@ flowchart TD
 </div>
 
 <script>
-mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
-
 function switchTab(name, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -2107,7 +2035,7 @@ window.addEventListener('load', () => { loadArchitecture(); });
 
 let liveNetwork = null;        // vis.Network instance
 let liveGraphLoaded = false;   // whether initial load has run
-let liveRefreshTimer = null;   // periodic refresh handle
+let liveRefreshTimer = null;   // interval refresh handle
 let sessionRunsCache = null;   // [{session_id, first_ts, last_ts, events}, ...]
 let nodeDetailMap = {};        // nodeId → full detail object for click panel
 let renderedSessionId = null;  // session_id of the last fully-rendered network

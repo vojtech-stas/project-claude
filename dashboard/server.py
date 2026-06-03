@@ -1697,6 +1697,33 @@ def _build_counts() -> str:
     return "\n".join(lines)
 
 
+def _build_critic_list() -> str:
+    """Build a markdown bullet list of adversarial critics from the filesystem.
+
+    Discovers critics via discover_agents() (type == 'critic'), sorted by stem.
+    Each bullet: **[`name`](path)** — first sentence of frontmatter description.
+    Returns a plain bullet list (no trailing newline) suitable for
+    {{GENERATED:critic-list}}.
+    """
+    agents = discover_agents()
+    critics = sorted(
+        [a for a in agents if a.get("type") == "critic"],
+        key=lambda a: a.get("stem", a.get("name", "")),
+    )
+    lines = []
+    for c in critics:
+        name = c.get("name") or c["stem"]
+        path = c["path"]
+        desc = c.get("description", "")
+        # Use first sentence only (up to first ". " or end of string)
+        first_sentence = desc.split(". ")[0].rstrip(".")
+        if first_sentence:
+            lines.append(f"- **[`{name}`]({path})** — {first_sentence}.")
+        else:
+            lines.append(f"- **[`{name}`]({path})**")
+    return "\n".join(lines)
+
+
 def generate_readme() -> None:
     """Read README.template.md, substitute placeholders, write README.md.
 
@@ -1704,6 +1731,7 @@ def generate_readme() -> None:
       {{GENERATED:pipeline-diagram}}  — fixed Mermaid diagram block
       {{GENERATED:component-map}}     — filesystem-derived skills/agents/hooks/ADR map
       {{GENERATED:counts}}            — one-line component count summary
+      {{GENERATED:critic-list}}       — filesystem-derived adversarial-critic bullet list
 
     Idempotent: running twice produces the same README.md.
     No LLM calls — pure stdlib + pathlib.
@@ -1729,6 +1757,7 @@ def generate_readme() -> None:
         "{{GENERATED:pipeline-diagram}}": render_pipeline_mermaid(PIPELINE),
         "{{GENERATED:component-map}}": _build_component_map().rstrip("\n"),
         "{{GENERATED:counts}}": _build_counts(),
+        "{{GENERATED:critic-list}}": _build_critic_list(),
     }
 
     result = template

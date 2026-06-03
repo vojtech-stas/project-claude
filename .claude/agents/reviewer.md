@@ -260,35 +260,6 @@ After checking (whether PASS or FAIL), restore the working tree state with `git 
 
 ---
 
-## Discretionary rule — R-BOY-SCOUT (per-PR drift detection)
-
-Per ADR-0018. Additive to the 12 hard-block rules above (no renumbering — R-BOY-SCOUT is the discretionary 13th rule with its own severity discipline). Honors the ADR-0008 D7 6-critic-cap (reviewer rule extension, NOT a new critic).
-
-**Trigger:** When the PR's diff touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`, `dashboard/*`), apply the matching audit-subagents / audit-meta rubric checks INLINE.
-
-**Trigger → checks mapping:**
-
-| Trigger pattern | Audit checks to apply |
-|---|---|
-| `.claude/agents/*.md` | `/audit-subagents` rubric (all 10 checks per ADR-0011 D4) on touched files only |
-| `.claude/skills/*/SKILL.md` | `/audit-meta --structure` STRUCT-1, STRUCT-2, STRUCT-7 + frontmatter shape |
-| `decisions/*.md` | `/audit-meta --docs` DOCS-1, DOCS-2, DOCS-7, DOCS-8 |
-| `CLAUDE.md` | `/audit-meta --docs` DOCS-3, DOCS-4, DOCS-5, DOCS-9, DOCS-10 |
-| `README.md` | `/audit-meta --docs` DOCS-5, DOCS-6, DOCS-10 |
-| `dashboard/*` | verify ADR-0033 D1 criteria: no LLM imports, no `0.0.0.0` binding, no `$CLAUDE_PROJECT_DIR` absent from hook, idempotent curl-check present |
-
-**Inline-execution constraint (per ADR-0018 D3):** Apply rubric criteria INLINE using own Bash + Grep. Do NOT shell out to `/audit-subagents` or `/audit-meta` — they are session-interactive skills the reviewer cannot invoke.
-
-**Severity discretion (per ADR-0018 D4):**
-- **BLOCK** when ALL THREE hold: (a) rule has zero documented false-positive cases against current `main` (currently excludes DOCS-5, DOCS-6, DOCS-7 — emit as Recommendation per backlog #142 carve-out); (b) fix is mechanical and small (one-line, hotfix-shape); (c) drift would materially impact future readers.
-- **Recommendation** otherwise. **Default-conservative-toward-REC** (inverting ADR-0009 D3's hard-block default): cost of false-positive BLOCK exceeds cost of false-negative REC for this discretionary rule.
-
-**Verdict integration:** `[PASS] 13. R-BOY-SCOUT: no audit-relevant files touched` when no triggers fire; `[FAIL] 13. R-BOY-SCOUT: <N> BLOCK-grade findings (<M> Recommendations)` when BLOCK-grade findings exist. Recommendation-grade findings appear in the Recommendations section.
-
-**Rationale:** Audit-quality drift accumulates silently between scheduled audit runs. R-BOY-SCOUT catches drift at PR-tier — the same moment the reviewer is already inspecting the file. Additive defense-in-depth, not a replacement for scheduled audits.
-
----
-
 ## Recommend-only criteria
 
 Subjective items (style, refactoring, doc-improvement, future architectural suggestions, performance non-critical, spelling in non-user-facing text) surface as Recommendations — do NOT block. Meaningful non-blocking follow-ups MUST be captured as `captured`-labeled GitHub issues per ADR-0008 D8 + CLAUDE.md rule #11, with inline `/promote-to-backlog <N>` invocation per ADR-0008 D3.

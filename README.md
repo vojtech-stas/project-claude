@@ -107,48 +107,81 @@ The whole autonomous composition at a glance: the human enters at **`/grill-me`*
 ```mermaid
 flowchart TD
   subgraph S1["Stage 1: Idea capture"]
-    U1[User] --> grill_me["/grill-me"]
-    grill_me -->|settled design| ship["/ship"]
+    U1[User]
+    build["/build"]
+    grill_me["/grill-me"]
+    ship["/ship"]
   end
   subgraph S2["Stage 2–3: PRD + slice decomposition"]
-    ship --> to_prd["/to-prd"]
-    to_prd --> prd_critic[prd-critic]
-    to_prd -.if ADR.-> adr_critic[adr-critic]
-    prd_critic -->|joint APPROVE| prd_issue[(PRD issue)]
-    adr_critic -->|joint APPROVE| prd_issue
-    prd_critic -.BLOCK.-> to_prd
-    prd_issue --> to_issues["/to-issues"]
-    to_issues --> slicer[slicer]
-    slicer -->|N alternatives| slicer_critic[slicer-critic]
-    slicer_critic -->|APPROVE| slice_issues[(slice issues)]
-    slicer_critic -.BLOCK.-> slicer
+    to_prd["/to-prd"]
+    prd_critic{prd-critic}
+    adr_critic{adr-critic}
+    to_issues["/to-issues"]
+    slicer[slicer]
+    slicer_critic{slicer-critic}
+    prd_issue[(PRD issue)]
+    slice_issues[(slice issues)]
   end
   subgraph S3["Stage 4: Implementation"]
-    slice_issues --> implementer[implementer]
-    implementer --> pr[(PR Closes #N)]
-    pr --> reviewer{reviewer}
-    reviewer -->|APPROVE| merge[(merged on main)]
-    reviewer -.BLOCK.-> implementer
-    reviewer -.round-3 BLOCK.-> nh[needs-human]
+    implementer[implementer]
+    reviewer{reviewer}
+    pr[(PR Closes #N)]
+    merge[(merged on main)]
+    nh[needs-human]
   end
   subgraph S4["Stage 5: Acceptance"]
-    merge --> qa_plan["/qa-plan"]
-    qa_plan --> qa_tester[qa-tester]
-    qa_tester --> U2[User accepts PRD]
+    qa_plan["/qa-plan"]
+    qa_tester[qa-tester]
+    U2[User accepts PRD]
   end
   subgraph SS["Side workflows"]
-    audit_subagents["/audit-subagents"] -.periodic.- reviewer
-    audit_meta["/audit-meta"] -.periodic.- reviewer
-    glossary["/glossary"] --> glossary_critic[glossary-critic]
-    glossary_critic -->|APPROVE| glossary_pr[(glossary PR)]
-    glossary_pr --> reviewer
-    cap[captured issue] --> ptb["/promote-to-backlog"]
-    ptb --> backlog_critic[backlog-critic]
-    backlog_critic -->|APPROVE| bl[backlog label]
-    backlog_critic -->|BLOCK| capstay[stays captured]
+    glossary["/glossary"]
+    glossary_critic{glossary-critic}
+    promote_to_backlog["/promote-to-backlog"]
+    backlog_critic{backlog-critic}
+    audit_meta["/audit-meta"]
+    audit_subagents["/audit-subagents"]
+    codebase_critic{codebase-critic}
+    glossary_pr[(glossary PR)]
+    cap[captured issue]
+    bl[backlog label]
+    capstay[stays captured]
   end
-  build["/build"] --> ship
+  U1 --> grill_me
+  grill_me -->|settled design| ship
   U1 --> build
+  build --> ship
+  ship --> to_prd
+  to_prd --> prd_critic
+  to_prd -.if ADR.- adr_critic
+  prd_critic -->|joint APPROVE| prd_issue
+  adr_critic -->|joint APPROVE| prd_issue
+  prd_critic -.BLOCK.- to_prd
+  prd_issue --> to_issues
+  to_issues --> slicer
+  slicer -->|decomposition| slicer_critic
+  slicer_critic -->|APPROVE| slice_issues
+  slicer_critic -.BLOCK.- slicer
+  slice_issues --> implementer
+  implementer --> pr
+  pr --> reviewer
+  reviewer -->|APPROVE| merge
+  reviewer -.BLOCK.- implementer
+  reviewer -.round-3 BLOCK.- nh
+  merge --> qa_plan
+  qa_plan --> qa_tester
+  qa_tester --> U2
+  audit_subagents -.per-PRD.- reviewer
+  audit_meta -.per-PRD.- reviewer
+  glossary --> glossary_critic
+  glossary_critic -->|APPROVE| glossary_pr
+  glossary_pr --> reviewer
+  cap --> ptb
+  ptb --> backlog_critic
+  backlog_critic -->|APPROVE| bl
+  backlog_critic -->|BLOCK| capstay
+  codebase_critic -.per-PRD gate.- reviewer
+  merge -.next PRD.- codebase_critic
   classDef human fill:#3b82f6,color:#fff
   classDef skill fill:#14b8a6,color:#fff
   classDef gen fill:#22c55e,color:#fff
@@ -156,9 +189,9 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class U1,U2 human
-  class grill_me,ship,to_prd,to_issues,qa_plan,audit_subagents,audit_meta,glossary,ptb,build skill
-  class slicer,implementer,qa_tester gen
-  class prd_critic,adr_critic,slicer_critic,glossary_critic,backlog_critic critic
+  class audit_meta,audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,ship,to_issues,to_prd skill
+  class implementer,qa_tester,slicer gen
+  class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
   class prd_issue,slice_issues,pr,merge,nh,glossary_pr,cap,bl,capstay artifact
 ```
@@ -207,7 +240,7 @@ Per [ADR-0004](decisions/0004-bypass-prevention.md) D3, three independent failur
 
 The workflow is no longer "discipline-only convention" — these three layers enforce it mechanically.
 
-Per [ADR-0018](decisions/0018-boy-scout-reviewer-rule.md), a fourth (discretionary, defense-in-depth) layer rides on the reviewer's existing gate: the **R-BOY-SCOUT** rule fires when a PR touches audit-relevant files (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `decisions/*.md`, `CLAUDE.md`, `README.md`) and applies the relevant `/audit-subagents` + `/audit-meta` rubric checks inline against the touched files only. Default-conservative-toward-Recommendation; only zero-false-positive findings with mechanical fixes BLOCK.
+Per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md), a fourth layer is the **`codebase-critic`** — an adversarial post-PRD critic dispatched by `/ship` once per PRD at the last slice. It judges semantic reference currency, CLAUDE.md rule consistency, and structural drift that mechanical checks cannot see (supersedes the per-PR reviewer rule from ADR-0018).
 
 The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count: **12 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 4 PreToolUse + 4 PostToolUse + 1 Stop) → **13 inner hook commands** (Stop has 2 commands) → **6 scripts** (`session-start.sh`, `dashboard-autostart.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)) + **7 inline jq one-liners** (Agent agent_start, Skill skill_invoke, Edit subagent-edit nudge, Agent agent_complete, Bash bash, AskUserQuestion grill_qa, Stop session_stop loggers).
 
@@ -318,7 +351,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 45 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 46 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -338,7 +371,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 7 critic(s) + 3 generator(s), 9 hook(s), 45 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 7 critic(s) + 3 generator(s), 9 hook(s), 46 ADR(s).
 
 ## License
 

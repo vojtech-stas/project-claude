@@ -291,6 +291,158 @@ fi
 fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
+# CHECK 7: doc-vs-reality drift gate (ADR-0047 D3)
+#   (a) source ↔ reality  — PIPELINE/KNOWN_CRITICS spec vs .claude/agents/*.md
+#   (b) artifact ↔ source — README critic list entries have matching agent files
+#   (c) prose-facts ↔ reality — CLAUDE.md critic count/names vs filesystem
+# ---------------------------------------------------------------------------
+echo "--- CHECK 7: doc-vs-reality drift gate ---"
+if ! command -v python3 > /dev/null 2>&1 || ! command -v git > /dev/null 2>&1; then
+    echo "SKIP: CHECK 7 — python3 or git not available (soft-degrade)"
+else
+python3 - << 'PYEOF'
+import re, os, sys, glob
+
+REPO_ROOT = os.getcwd()
+AGENTS_DIR = os.path.join(REPO_ROOT, '.claude', 'agents')
+SERVER_PY  = os.path.join(REPO_ROOT, 'dashboard', 'server.py')
+CLAUDE_MD  = os.path.join(REPO_ROOT, 'CLAUDE.md')
+README_MD  = os.path.join(REPO_ROOT, 'README.md')
+
+fail_msgs = []
+
+def fail(msg):
+    fail_msgs.append(msg)
+
+# ------------------------------------------------------------------ helpers --
+def read_file(path):
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except OSError:
+        return ''
+
+# ------------------------------------------------ (a) source ↔ reality ------
+# Parse KNOWN_CRITICS from dashboard/server.py (set literal, one name per line).
+spec_text = read_file(SERVER_PY)
+if not spec_text:
+    fail('CHECK 7(a) — could not read dashboard/server.py')
+else:
+    # Extract the KNOWN_CRITICS set: lines like: "    \"reviewer\","
+    kc_block = re.search(
+        r'KNOWN_CRITICS\s*=\s*\{([^}]+)\}', spec_text, re.DOTALL
+    )
+    if not kc_block:
+        fail('CHECK 7(a) — KNOWN_CRITICS not found in dashboard/server.py')
+    else:
+        spec_critics = set(re.findall(r'"([^"]+)"', kc_block.group(1)))
+        # Discover agent file stems from .claude/agents/*.md
+        agent_stems = set()
+        if os.path.isdir(AGENTS_DIR):
+            for f in glob.glob(os.path.join(AGENTS_DIR, '*.md')):
+                agent_stems.add(os.path.splitext(os.path.basename(f))[0])
+
+        # Every critic in the spec must have a matching agent file
+        for critic in sorted(spec_critics):
+            if critic not in agent_stems:
+                fail(
+                    f'CHECK 7(a) — spec critic "{critic}" has no '
+                    f'.claude/agents/{critic}.md file'
+                )
+
+        # Every *-critic.md file must appear in the spec (or be reviewer.md)
+        # We check all agent files whose stem ends in "-critic"
+        for stem in sorted(agent_stems):
+            if stem.endswith('-critic') and stem not in spec_critics:
+                fail(
+                    f'CHECK 7(a) — .claude/agents/{stem}.md exists but '
+                    f'"{stem}" is not in KNOWN_CRITICS spec'
+                )
+
+# ------------------------------------------------ (b) artifact ↔ source -----
+# README "Adversarial critics" section lists critics — each must have an agent file.
+readme_text = read_file(README_MD)
+if not readme_text:
+    print('SKIP: CHECK 7(b) — README.md not found (soft-degrade)')
+else:
+    # Find the "## Adversarial critics" section and extract linked agent names.
+    # Pattern: **[`name`](.claude/agents/name.md)**
+    section_m = re.search(
+        r'##\s+Adversarial critics\s*(.*?)(?=\n## |\Z)',
+        readme_text, re.DOTALL
+    )
+    if section_m:
+        section = section_m.group(1)
+        # Extract stem from links: .claude/agents/<stem>.md
+        readme_critic_stems = set(
+            re.findall(r'\.claude/agents/([a-z0-9-]+)\.md', section)
+        )
+        for stem in sorted(readme_critic_stems):
+            agent_path = os.path.join(AGENTS_DIR, stem + '.md')
+            if not os.path.isfile(agent_path):
+                fail(
+                    f'CHECK 7(b) — README "Adversarial critics" lists '
+                    f'"{stem}" but .claude/agents/{stem}.md does not exist'
+                )
+    # If section not found, soft-skip (README structure may differ)
+
+# ------------------------------------------------ (c) prose-facts ↔ reality -
+# CLAUDE.md says "currently runs **N critics**: name, name, ..."
+claude_text = read_file(CLAUDE_MD)
+if not claude_text:
+    print('SKIP: CHECK 7(c) — CLAUDE.md not found (soft-degrade)')
+else:
+    # Re-parse KNOWN_CRITICS (already done above) for count comparison.
+    if spec_text and 'spec_critics' in dir():
+        # Extract the numeric count claim
+        count_m = re.search(
+            r'currently runs \*\*(\d+) critics\*\*', claude_text
+        )
+        if count_m:
+            claimed_count = int(count_m.group(1))
+            actual_count  = len(spec_critics) if spec_critics else 0
+            if claimed_count != actual_count:
+                fail(
+                    f'CHECK 7(c) — CLAUDE.md claims {claimed_count} critics '
+                    f'but KNOWN_CRITICS spec has {actual_count}'
+                )
+
+        # Extract names from the inline list after "currently runs **N critics**:"
+        list_m = re.search(
+            r'currently runs \*\*\d+ critics\*\*:\s*([^\n.]+)',
+            claude_text
+        )
+        if list_m:
+            raw = list_m.group(1)
+            # Names are backtick-quoted: `reviewer`, `prd-critic`, ...
+            named = set(re.findall(r'`([^`]+)`', raw))
+            agent_stems_c = set()
+            if os.path.isdir(AGENTS_DIR):
+                for f in glob.glob(os.path.join(AGENTS_DIR, '*.md')):
+                    agent_stems_c.add(os.path.splitext(os.path.basename(f))[0])
+            for name in sorted(named):
+                if name not in agent_stems_c:
+                    fail(
+                        f'CHECK 7(c) — CLAUDE.md names critic "{name}" '
+                        f'but .claude/agents/{name}.md does not exist'
+                    )
+
+# ------------------------------------------------------------------ output --
+if fail_msgs:
+    for msg in fail_msgs:
+        print(f'FAIL: {msg}', file=sys.stderr)
+    sys.exit(1)
+else:
+    print('PASS: CHECK 7 — no doc-vs-reality drift detected')
+    sys.exit(0)
+PYEOF
+CHECK7_EXIT=$?
+if [ "$CHECK7_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3/git availability check
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

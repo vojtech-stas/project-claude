@@ -95,5 +95,6 @@ Per [ADR-0003](0003-autonomous-pipeline-with-critics.md) D8:
 | [0045](0045-adr-citation-consult-discipline.md) | ADR-citation consult discipline + systematized adr-critic D-ID verification | Accepted |
 | [0046](0046-codebase-critic-and-parsimony-reframe.md) | Post-PRD codebase-critic + critic-parsimony reframe (retire R-BOY-SCOUT) | Accepted |
 | [0047](0047-deterministic-doc-generation-drift-gate.md) | Deterministic doc generation + a CI drift gate (generate the derivable, check the prose) | Accepted |
+| [0048](0048-critic-loop-r3-policy-and-complete-class-revision.md) | Critic-loop r3 policy — strict-stop affirmed + complete-class revision discipline (rule #19) | Accepted |
 
 > **Note on ADR-0021:** Drafted alongside PRD #171 (Phase 1.5 video synthesis) which was closed without merging on 2026-05-22 (strategic pivot to docs-first KB, realized as [ADR-0022](0022-docs-first-kb-pattern.md)). ADR-0021 was never committed; the numbering gap is intentional residue. Next-unused ADR after ADR-0020 is ADR-0023 (ADR-0021 remains permanently skipped per [ADR-0001](0001-foundational-design.md) D8 numbering-at-acceptance).

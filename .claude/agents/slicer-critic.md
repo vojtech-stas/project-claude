@@ -213,6 +213,8 @@ FAILED_RULES: <comma-separated SC-* criterion names, e.g. "SC-INVEST,SC-WALKING-
 FINDINGS_COUNT: <integer>
 ```
 
+A **round-1 or round-2 BLOCK** emits only the standard trailer above and returns findings for revision — it MUST NOT append `ESCALATE: needs-human` or an `@vojtech-stas` mention. Those appear **only on a round-3 BLOCK** (see Escalation below).
+
 **Escalation.** If round 3 leaves the decomposition non-viable, include a clear `@vojtech-stas` mention in the verdict body and append `ESCALATE: needs-human` to the BLOCK trailer. Matches the escalation surface used by `prd-critic`, `adr-critic`, and `reviewer`.
 
 ---

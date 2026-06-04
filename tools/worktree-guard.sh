@@ -19,15 +19,16 @@
 #     Implements ADR-0041 D3 carve-out: orchestrator MAY ff-sync root post-merge.
 #
 #   prune
-#     Resolves the root repo + the current/orchestrator worktree (skips BOTH — never
-#     removes them). Iterates `git worktree list --porcelain`; for each remaining tree,
-#     gets its branch and runs `git ls-remote --exit-code origin <branch>`. If the remote
-#     branch is GONE (squash-merged + --delete-branch'd = work landed), removes the local
-#     worktree via `git worktree unlock` + `git worktree remove --force`. Ends with
-#     `git worktree prune` to clear stale dir-gone refs. Safety invariant: NEVER removes a
-#     tree whose branch still exists on origin, the current/orchestrator session worktree,
-#     or the root tree. When uncertain (no parseable branch, detached HEAD), leaves it.
-#     Call after root-sync in /ship's post-merge step to self-clean landed worktrees.
+#     Removes landed dispatch worktrees to prevent unbounded accumulation.
+#     SAFETY: only removes worktrees whose path basename starts with "agent-"
+#     (the harness dispatch-tree prefix per ADR-0036). This is the PRIMARY safety
+#     boundary — it makes it IMPOSSIBLE to remove the root repo, an orchestrator
+#     session tree (e.g. fervent-colden-*), or any other non-dispatch tree, even
+#     if their branch is absent from origin.
+#     SECONDARY guard: branch must be gone from origin (landed/merged).
+#     DEPTH guards: skip the current worktree; skip the root worktree.
+#     All four conditions must hold: agent-* path AND landed AND not-current AND not-root.
+#     SOFT-DEGRADE: skips individual trees on any error; never aborts the whole run.
 #
 # SOFT-DEGRADE: every failure path exits 0. A broken guard must never break /ship.
 # Mirror the bare-|| true / 2>/dev/null soft-degrade idioms from log-event.sh.
@@ -82,17 +83,20 @@ case "$MODE" in
     ;;
 
   prune)
-    # Resolve root repo (same git --git-common-dir pattern as root-sync).
+    # Resolve the current worktree path (to implement skip-current guard).
+    CURRENT_TREE=$(git rev-parse --show-toplevel 2>/dev/null) || CURRENT_TREE=""
+
+    # Resolve the root repo (same pattern as root-sync above).
     ROOT="${CLAUDE_PROJECT_DIR:-.}"
     COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
     if [ -n "$COMMON" ]; then
-      ROOT_PATH=$(dirname "$COMMON")
+      ROOT_TREE=$(dirname "$COMMON")
     else
-      ROOT_PATH="$ROOT"
+      ROOT_TREE="$ROOT"
     fi
 
-    # Resolve the current/orchestrator worktree.
-    CURRENT_PATH=$(git rev-parse --show-toplevel 2>/dev/null) || CURRENT_PATH=""
+    # Fetch origin so ls-remote reflects the latest remote state.
+    git fetch origin 2>/dev/null || true
 
     # Iterate worktrees via porcelain output, parsing worktree + branch lines.
     WORKTREE_PATH=""
@@ -109,20 +113,44 @@ case "$MODE" in
         "")
           # End of stanza — evaluate this worktree.
           if [ -n "$WORKTREE_PATH" ]; then
-            # Skip root and current/orchestrator trees.
-            if [ "$WORKTREE_PATH" = "$ROOT_PATH" ] || [ "$WORKTREE_PATH" = "$CURRENT_PATH" ]; then
+            # PRIMARY SAFETY GUARD: only consider trees whose basename starts with "agent-".
+            # This makes it IMPOSSIBLE to remove the root repo, any orchestrator session
+            # tree (e.g. fervent-colden-*), or any other non-dispatch tree, regardless of
+            # whether their branch is present on origin.
+            BASENAME=$(basename "$WORKTREE_PATH")
+            case "$BASENAME" in
+              agent-*) ;;  # dispatch tree — continue to remaining checks
+              *)
+                WORKTREE_PATH=""
+                WORKTREE_BRANCH=""
+                continue
+                ;;  # not a dispatch tree — skip unconditionally
+            esac
+
+            # DEPTH GUARD 1: skip the current worktree.
+            if [ "$WORKTREE_PATH" = "$CURRENT_TREE" ]; then
               WORKTREE_PATH=""
               WORKTREE_BRANCH=""
               continue
             fi
+
+            # DEPTH GUARD 2: skip the root repo worktree.
+            if [ "$WORKTREE_PATH" = "$ROOT_TREE" ]; then
+              WORKTREE_PATH=""
+              WORKTREE_BRANCH=""
+              continue
+            fi
+
             # When uncertain (no branch / detached HEAD), leave it.
             if [ -z "$WORKTREE_BRANCH" ]; then
               WORKTREE_PATH=""
               continue
             fi
-            # Check whether the remote branch still exists.
+
+            # SECONDARY GUARD: branch must be landed (gone from origin).
             # ls-remote exits non-zero when the ref is absent → landed.
-            if ! git ls-remote --exit-code origin "$WORKTREE_BRANCH" 2>/dev/null; then
+            # All guards passed: agent-* AND landed AND not-current AND not-root.
+            if ! git ls-remote --exit-code origin "$WORKTREE_BRANCH" >/dev/null 2>&1; then
               git worktree unlock "$WORKTREE_PATH" 2>/dev/null || true
               git worktree remove --force "$WORKTREE_PATH" 2>/dev/null || true
             fi

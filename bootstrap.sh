@@ -13,7 +13,7 @@
 #   5. Apply branch protection R1+R2 on `main` (warn-and-proceed if no admin).
 #   6. yt-dlp dep check (warn-only; ADR-0019 D3).
 #   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
-#   8. Playwright MCP install — idempotent npx (ADR-0025 D7 / ADR-0030 D2).
+#   8. Playwright MCP — DEPRECATED (superseded by ADR-0049 D1; Claude_Preview is harness-provided, no install required).
 #
 # Explicit DEFERRALS (NOT done here):
 #   - Matt Pocock skills install                    — user-level concern
@@ -395,52 +395,33 @@ else
     fi
 fi
 
-# ---- step 8: Playwright MCP install (per ADR-0025 D7 / ADR-0030 D2) -------
+# ---- step 8: Playwright MCP — DEPRECATED (superseded by ADR-0049 D1) -------
 
-step 8 "Playwright MCP install (idempotent)"
+step 8 "Playwright MCP — DEPRECATED (no-op; Claude_Preview is harness-provided)"
 
-# Playwright MCP is required by the qa-tester subagent's ui-mode (per
-# ADR-0025 D1 + D7) for screenshot-judged UI acceptance testing.
-# Per ADR-0030 D2 (completing ADR-0025 D7 OQ-4): detect via `--version` probe;
-# if missing, install via `npx -y @playwright/mcp@latest install`.
-# npx caches the package locally on first download; subsequent runs are instant.
+# DEPRECATION NOTE (2026-06-05, ADR-0049 D1):
 #
-# Cross-platform notes:
-#   - Verified on Windows Git Bash 2026-05-25 (Node v22.x, npm 11.13.0) —
-#     `npx -y @playwright/mcp@latest --version` returned "Version 0.0.75".
-#   - Linux/macOS unverified at bootstrap-time; same `npx` invocation should
-#     work since npx is platform-portable.
-#   - Playwright MCP itself depends on Playwright browser binaries; the MCP
-#     package downloads them lazily on first browser launch (not at install).
-#   - Per ADR-0025 D7, we use the bundled `npx -y` mechanism rather than a
-#     global install to avoid `npm -g` permission complexity across platforms.
+# This step previously installed Playwright MCP via `npx -y @playwright/mcp@latest`
+# per ADR-0025 D7 / ADR-0030 D2. That driver has been superseded.
 #
-# This step is best-effort warn-only — qa-tester bash-mode (per ADR-0020 D3)
-# does NOT require Playwright; consumer projects without UI ACs are unaffected.
-if command -v npx >/dev/null 2>&1; then
-    if npx -y @playwright/mcp@latest --version >/dev/null 2>&1; then
-        PW_MCP_VERSION=$(npx -y @playwright/mcp@latest --version 2>/dev/null | head -1)
-        log "Playwright MCP callable: ${PW_MCP_VERSION} (skipped install)"
-        note "✓ Playwright MCP: present (${PW_MCP_VERSION})"
-    else
-        # Probe failed → attempt install per ADR-0030 D2.
-        log "Playwright MCP probe failed; attempting install via 'npx -y @playwright/mcp@latest install'"
-        if npx -y @playwright/mcp@latest install >/dev/null 2>&1; then
-            log "Playwright MCP install attempted; verify with 'npx -y @playwright/mcp@latest --version'."
-            note "✓ Playwright MCP: install attempted"
-        else
-            warn "Playwright MCP install failed. Try running manually:"
-            warn "    npx -y @playwright/mcp@latest install"
-            warn "  Network access required (downloads package to npx cache)."
-            note "⚠ Playwright MCP: install failed (qa-tester ui-mode degraded)"
-        fi
-    fi
-else
-    warn "npx not on PATH. Required by qa-tester ui-mode (ADR-0025 D1)."
-    warn "  Install Node.js + npm (npx ships with npm) to enable ui-mode."
-    warn "  Without it, qa-tester bash-mode (ADR-0020 D3) still works."
-    note "⚠ npx missing — Playwright MCP install skipped (ui-mode unavailable)"
-fi
+# ADR-0049 D1 pivots the qa-tester browser driver to Claude_Preview MCP
+# (`mcp__Claude_Preview__*`). Claude_Preview is harness-provided — no install
+# is required. Playwright MCP is absent in this environment and cannot be
+# assumed installable; ADR-0025 D2's "Playwright preferred" rationale is
+# overtaken by empirical evidence (verified 2026-06-05: tool enumeration
+# returns no `mcp__playwright__*`; Claude_Preview drove the full 2026-06-05
+# dashboard QA end-to-end).
+#
+# This step is intentionally left as a no-op (idempotent, non-fatal) so that:
+#   - Existing bootstrap runs are not broken (best-effort warn-and-continue).
+#   - Consumer forks that have Playwright available are not hard-failed.
+#   - The audit trail of this step's number is preserved (do not renumber).
+#
+# Future direction: if a consumer fork re-adds Playwright as an optional driver
+# (capability-check style), this step can be restored. That is a future-PRD
+# concern, not this slice's scope.
+log "step 8 is a no-op — Playwright MCP install superseded by ADR-0049 D1 (Claude_Preview is harness-provided; no install required)."
+note "— Playwright MCP: step deprecated (ADR-0049 D1); Claude_Preview is harness-provided"
 
 # ---- end-of-run summary ---------------------------------------------------
 

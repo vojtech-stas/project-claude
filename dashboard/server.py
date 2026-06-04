@@ -590,7 +590,7 @@ def check_docs1_adr_index_forward() -> dict:
     if not readme.exists():
         return {"id": "DOCS-1", "result": "FAIL", "detail": "decisions/README.md missing"}
     text = _read_file(readme)
-    refs = re.findall(r'\(?((?:0|[1-9]\d{3})-[a-z0-9-]+\.md)\)?', text)
+    refs = re.findall(r'\(?([0-9]{4}-[a-z0-9-]+\.md)\)?', text)
     missing = []
     for ref in set(refs):
         if not (REPO_ROOT / "decisions" / ref).exists():

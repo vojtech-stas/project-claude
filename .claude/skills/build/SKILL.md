@@ -91,6 +91,25 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
 **PASS** (`PRODUCTION_VERIFY: PASS` in qa-tester's trailer):
 - Surface the proof to the user: print `PROOF:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
 - Log a confirmation line: `"Production gate PASS (round <N>): feature verified in production."`
+- **Proof-posting (per ADR-0049 D3 — orchestrator owns commit + comment; qa-tester stays read-only):**
+  If qa-tester's `ARTIFACTS` trailer contains a proof image path (a `.png` or `.jpg` file), commit it to the PR branch and post a PR comment so the reviewer and user see the rendered proof inline:
+  ```bash
+  # <prd-num>  = PRD issue number (from step 3's PRD_URL)
+  # <proof>    = the local path returned in qa-tester's ARTIFACTS field
+  # <branch>   = the PR branch name (from implementer's BRANCH_NAME trailer)
+  # <pr-num>   = PR number (from implementer's PR_URL trailer)
+  # <slug>     = basename of the proof file (e.g. "architecture-live.png")
+
+  git add qa-proof/<prd-num>/<slug>
+  git commit -m "chore(qa): add visual proof for PRD #<prd-num>"
+  git push
+
+  # Post an inline PR comment with the rendered image.
+  # raw.githubusercontent.com renders images directly in PR comments (unlike the
+  # blob/?raw=true form which serves the file but does not render inline).
+  gh pr comment <pr-num> --body "![qa-proof](https://raw.githubusercontent.com/vojtech-stas/project-claude/<branch>/qa-proof/<prd-num>/<slug>)"
+  ```
+  If no proof image path is present (command-run or static-check route), skip the commit/comment and continue.
 - Mark the feature done; proceed to output.
 
 **FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:

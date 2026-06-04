@@ -262,7 +262,7 @@ After checking (whether PASS or FAIL), restore the working tree state with `git 
 
 ## Recommend-only criteria
 
-Subjective items (style, refactoring, doc-improvement, future architectural suggestions, performance non-critical, spelling in non-user-facing text) surface as Recommendations — do NOT block. Meaningful non-blocking follow-ups MUST be captured as `captured`-labeled GitHub issues per ADR-0008 D8 + CLAUDE.md rule #11, with inline `/promote-to-backlog <N>` invocation per ADR-0008 D3.
+Subjective items (style, refactoring, doc-improvement, future architectural suggestions, performance non-critical, spelling in non-user-facing text) surface as Recommendations — do NOT block. Meaningful non-blocking follow-ups MUST be captured as `captured`-labeled GitHub issues per ADR-0008 D8 + CLAUDE.md rule #11, with inline `/promote-to-backlog <N>` invocation per ADR-0008 D3. **Destructive shared-git tooling:** for a slice whose deliverable operates destructively on shared git state (worktree/branch removal, ref rewriting), verify the implementer used a synthetic-fixture test (not a live-tree self-test); a live self-test of such tooling is a finding — it can silently damage the orchestrator's session worktree or sibling trees (PR #543/#545 incident).
 
 ---
 

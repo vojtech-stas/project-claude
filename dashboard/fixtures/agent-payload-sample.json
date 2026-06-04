@@ -1,0 +1,10 @@
+{
+  "_note": "Regenerate from a real PostToolUse·Agent payload if Claude Code's hook schema changes.",
+  "session_id": "sample-session-id",
+  "tool_name": "Agent",
+  "tool_input": {
+    "subagent_type": "reviewer",
+    "description": "Review PR #999 and merge on APPROVE"
+  },
+  "tool_response": "VERDICT: APPROVE\nREASON: All checks pass\nROUND: 1"
+}

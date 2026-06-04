@@ -443,6 +443,41 @@ fi
 fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
+# CHECK 8: Agent-payload hook-path fixture test (ADR-0042 D1 extension)
+#   Asserts that the Agent-hook jq path in settings.json (.tool_input.subagent_type)
+#   resolves non-empty against the canonical fixture. If a hook were reverted to
+#   .agent_type, the grep check fails. Soft-degrades if jq is unavailable.
+#   Agent-payload jq changes are fixture-validated here; run this check + refresh
+#   dashboard/fixtures/agent-payload-sample.json if Claude Code's hook schema changes.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 8: Agent-payload hook-path fixture test ---"
+FIXTURE="dashboard/fixtures/agent-payload-sample.json"
+SETTINGS=".claude/settings.json"
+if ! command -v jq > /dev/null 2>&1; then
+    echo "SKIP: CHECK 8 — jq not available (soft-degrade)"
+elif [ ! -f "$FIXTURE" ]; then
+    fail "CHECK 8 — fixture not found: $FIXTURE"
+elif [ ! -f "$SETTINGS" ]; then
+    fail "CHECK 8 — settings.json not found: $SETTINGS"
+else
+    CHECK8_FAIL=0
+    # Assert settings.json Agent-matcher hooks reference .tool_input.subagent_type
+    if ! grep -q '\.tool_input\.subagent_type' "$SETTINGS"; then
+        fail "CHECK 8 — settings.json Agent hooks do not reference .tool_input.subagent_type (wrong jq path?)"
+        CHECK8_FAIL=1
+    fi
+    # Assert the path resolves non-empty in the fixture
+    SUBAGENT_VAL=$(jq -r '.tool_input.subagent_type // ""' "$FIXTURE" 2>/dev/null)
+    if [ -z "$SUBAGENT_VAL" ]; then
+        fail "CHECK 8 — .tool_input.subagent_type resolved empty in $FIXTURE (fixture stale or wrong path)"
+        CHECK8_FAIL=1
+    fi
+    if [ "$CHECK8_FAIL" -eq 0 ]; then
+        pass "CHECK 8 — Agent hook path .tool_input.subagent_type resolves non-empty in fixture (value: $SUBAGENT_VAL)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

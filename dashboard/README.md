@@ -48,6 +48,10 @@ DASH_PORT=9876 python dashboard/server.py
 
 Solo developer (you). Observation tool; advisory only. Does not replace `/audit-meta`, `/audit-subagents`, or `tools/cascade-finder.py` — it displays their output.
 
+## Fixtures
+
+`dashboard/fixtures/` contains sample payloads used by `tools/ci-checks.sh` CHECK 8 to mechanically validate Agent-hook jq paths. Regenerate from a real `PostToolUse·Agent` payload if Claude Code's hook schema changes.
+
 ## Roadmap
 
 - **Slice 2 of PRD #345** — Live event stream (SSE from `.claude/logs/workflow-events.jsonl`) + SessionStart auto-start hook + ADR-0033.

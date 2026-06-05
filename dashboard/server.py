@@ -895,11 +895,7 @@ def _check_as_gen_1(path: Path) -> dict:
 
 
 def _is_critic(stem: str, path: Path) -> bool:
-    if stem in KNOWN_CRITICS or stem == "reviewer":
-        return True
-    fm = _parse_frontmatter(path)
-    desc = fm.get("description", "")
-    return "critic" in desc.lower()
+    return stem in KNOWN_CRITICS or stem == "reviewer" or stem.endswith("-critic")
 
 
 def audit_subagents() -> dict:

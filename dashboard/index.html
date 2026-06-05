@@ -2649,12 +2649,16 @@ function populateSessionSelector() {
     if (idx === 0) opt.textContent = '[latest] ' + opt.textContent;
     sel.appendChild(opt);
   });
-  // Restore selection if still valid, else default to 0
+  // Restore selection if still valid, else default to newest session with events
   const restoredIdx = parseInt(prevValue, 10);
   if (!isNaN(restoredIdx) && restoredIdx < sessionRunsCache.length && prevValue !== '') {
     sel.value = String(restoredIdx);
   } else {
-    sel.value = '0';
+    // Find the first (newest) session that has at least one event; fall back to 0
+    const firstWithEvents = sessionRunsCache.findIndex(
+      run => run.event_count != null && run.event_count >= 1
+    );
+    sel.value = String(firstWithEvents >= 0 ? firstWithEvents : 0);
   }
 }
 

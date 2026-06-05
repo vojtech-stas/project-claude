@@ -15,6 +15,61 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 - For trivial one-line fixes — use the `hotfix/<thing>` lane (I3).
 - When there is no conversation context to synthesize — `/ship` consumes context, it does not interview.
 
+## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
+
+Before the implementation pipeline begins, fire a once-per-session whole-repo audit via the existing `codebase-critic` in whole-repo mode. This runs **concurrently** and **never gates** any `/ship` stage — it is a background reflection tool only (ADR-0051 D3).
+
+### 0a. Once-per-session guard
+
+**Session ID source:** `$CLAUDE_CODE_SESSION_ID` env var (available in every Claude Code session; the simplest reliable mechanism per ADR-0051 D4). If the env var is absent or empty, fall back to the date string `$(date +%Y-%m-%d)` as a coarser once-per-day guard.
+
+1. Derive the marker path: `MARKER="$CLAUDE_PROJECT_DIR/.claude/logs/.macro-audit-${CLAUDE_CODE_SESSION_ID:-$(date +%Y-%m-%d)}"`.
+2. Check: `if [ -f "$MARKER" ]; then` → log "whole-repo audit skipped: already ran this session" and skip to step 0b. **Do NOT dispatch again.**
+3. If absent: write the marker (`touch "$MARKER"` or equivalent) then proceed to step 0b.
+
+Note: `.claude/logs/` is already directory-level gitignored (per ADR-0015 D4 / ADR-0016 D4) — do NOT add a redundant `.gitignore` pattern for the marker file.
+
+### 0b. Background spawn
+
+If the guard passed (marker was absent and is now written):
+
+Dispatch `codebase-critic` via the `Agent` tool with **`run_in_background: true`**. Pass exactly:
+```
+WHOLE_REPO: true
+```
+No `BASE_REF`, `HEAD_REF`, or PRD number — whole-repo mode requires none (per `.claude/agents/codebase-critic.md` WHOLE-REPO MODE contract).
+
+The dispatch returns immediately to the main agent. **Continue to step 1 without waiting for the background run to complete.** The `/ship` pipeline stages (1–7) proceed normally in parallel.
+
+### 0c. Harvest-on-completion
+
+When the background `codebase-critic` run completes, the main agent receives a completion notification. At that point — which may arrive mid-pipeline or after step 7:
+
+1. **Parse the GENERATOR trailer** from the codebase-critic output. Extract `FINDINGS_COUNT` and the `ARTIFACTS` field (comma-separated finding titles).
+2. **If `FINDINGS_COUNT` is 0:** log "whole-repo audit: 0 findings — no issues to capture" and proceed.
+3. **If `FINDINGS_COUNT` ≥ 1:** for each finding (a `[WR-<CLASS>] <title>` block from the output):
+   - File a `captured`-labeled GitHub issue:
+     - **Title:** `"[whole-repo audit] <short title from finding>"` — ≤70 chars.
+     - **Body (rule #11/#13 shape):**
+       ```
+       ## Symptom
+       <one sentence: what the cross-subsystem drift or duplication looks like>
+
+       ## Root cause
+       <one sentence: why it exists — typically "cross-PRD drift not caught by single-PRD diff review">
+
+       ## Proposed
+       <the finding's Description field — the concrete proposed fix or refactoring>
+
+       Affected: <comma-separated file paths from the finding>
+       Source: whole-repo audit (codebase-critic WHOLE_REPO mode, ADR-0051 D3)
+       ```
+   - Run `/promote-to-backlog <N>` (per ADR-0008 D3 / rule #11) to triage the issue into the backlog autopilot.
+4. **Surface a one-line summary** in the `/ship` final report (step 7): `"whole-repo audit: <N> findings captured (#<issue-numbers, comma-separated>)"`. If the background run had not yet completed by step 7, note `"whole-repo audit: in-flight (harvest pending)"` — the harvest runs when the notification arrives, even post-report.
+5. **If the background run errors or times out:** log the failure as a `captured`-labeled GitHub issue (title: `"whole-repo audit background run failed"`, body: symptom + error excerpt) and continue — the `/ship` pipeline is unaffected (ADR-0051 D3).
+
+---
+
 ## Step-by-step procedure
 
 1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If the design is thin or open, STOP and ask the user to grill further. Do NOT invent a PRD.

@@ -18,8 +18,9 @@
 #   skill_invoke   PreToolUse·Skill — fires at skill invocation; also detected on
 #                                     UserPromptSubmit for typed /commands. Pre is
 #                                     correct (the invocation event, not the result).
-#                                     NOTE: Skill tool matcher is empirically unverified
-#                                     (#430) but harmless — soft-degrades if never fires.
+#                                     NOTE: Skill tool matcher empirically VERIFIED
+#                                     2026-06-05 (#430) — skill_invoke events logged for
+#                                     ship/build/grill-me/to-prd/to-issues/qa-plan/qa-review.
 #   grill_qa       PostToolUse·AskUserQuestion — fires AFTER user answers; captures Q+A.
 #                                     NOTE: AskUserQuestion matcher unverified (#402)
 #                                     but harmless.

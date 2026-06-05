@@ -42,6 +42,18 @@
 LINE=$(cat)
 [ -z "$LINE" ] && exit 0
 
+# Extract session_id from the incoming JSON payload (soft-degrade: empty if jq
+# missing or field absent).  Mirrors user-prompt-submit.sh's SID extraction.
+SID=$(echo "$LINE" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+
+# Stamp session_id into the event object if jq is available and the field is
+# absent or empty — purely additive, existing callers that already include it
+# are unaffected (jq merges the value, keeping the caller's value if non-empty).
+if command -v jq >/dev/null 2>&1 && [ -n "$SID" ]; then
+  STAMPED=$(echo "$LINE" | jq -c --arg sid "$SID" '. + {session_id: $sid}' 2>/dev/null)
+  [ -n "$STAMPED" ] && LINE="$STAMPED"
+fi
+
 ROOT="${CLAUDE_PROJECT_DIR:-.}"
 COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 if [ -n "$COMMON" ]; then

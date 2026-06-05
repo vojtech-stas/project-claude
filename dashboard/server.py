@@ -867,18 +867,24 @@ def _check_as_crit_3(path: Path) -> dict:
 
 
 def _check_as_crit_4(path: Path) -> dict:
-    """AS-CRIT-4: 5-section verdict template."""
+    """AS-CRIT-4: documentation-contract check.
+
+    Verifies the critic documents its verdict-body output contract by delegation:
+    (a) an Output-format section heading is present AND
+    (b) an ADR-0005 citation is present.
+    Both required; any absent → FAIL.
+    """
     text = _read_file(path)
-    checks = [
-        "Subject of review" in text,
-        bool(re.search(r'^#+\s*Rubric', text, re.MULTILINE)),
-        bool(re.search(r'^#+\s*Findings', text, re.MULTILINE)),
-        bool(re.search(r'^#+\s*Summary', text, re.MULTILINE)),
-        bool(re.search(r'verdict:', text, re.IGNORECASE)),
-    ]
-    ok = all(checks)
+    has_output_format = bool(re.search(r'^#+\s*Output format', text, re.MULTILINE))
+    has_adr0005 = "ADR-0005" in text
+    ok = has_output_format and has_adr0005
+    missing = []
+    if not has_output_format:
+        missing.append("Output format heading")
+    if not has_adr0005:
+        missing.append("ADR-0005 citation")
     return {"id": "AS-CRIT-4", "result": "PASS" if ok else "FAIL",
-            "detail": "" if ok else f"missing sections"}
+            "detail": "" if ok else f"missing: {', '.join(missing)}"}
 
 
 def _check_as_gen_1(path: Path) -> dict:

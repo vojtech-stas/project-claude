@@ -136,21 +136,20 @@ The check verifies the trailer is *documented in the critic body*, not that it i
 
 ---
 
-### AS-CRIT-4 — 5-section verdict template (scope: critic)
+### AS-CRIT-4 — verdict-body documentation contract (scope: critic)
 
-**Mechanic:** Run five greps and require ALL five:
+**Mechanic:** Run two greps and require BOTH:
 
-- `grep -cF "Subject of review" <file>` ≥ 1 AND
-- `grep -cE "^#+\s*Rubric" <file>` ≥ 1 AND
-- `grep -cE "^#+\s*Findings" <file>` ≥ 1 AND
-- `grep -cE "^#+\s*Summary" <file>` ≥ 1 AND
-- `grep -cE "verdict:" <file>` ≥ 1.
+- `grep -cE "^#+\s*Output format" <file>` ≥ 1 AND
+- `grep -cF "ADR-0005" <file>` ≥ 1.
 
-All five counts ≥ 1 → **PASS**; any count = 0 → **FAIL** (report the missing section(s)). Generators render `—`.
+Both counts ≥ 1 → **PASS**; any count = 0 → **FAIL** (report which condition failed). Generators render `—`.
 
-The canonical 5-section shape: (1) Header — `## <critic-name> verdict: [APPROVE | BLOCK] (round N/3)`; (2) Subject of review — restated spec contract; (3) Rubric — per-criterion PASS/FAIL; (4) Findings — itemized list on BLOCK, `None.` on APPROVE; (5) Summary — one-paragraph synthesis.
+The check verifies that the critic **documents its verdict-body output contract by delegation**: an `## Output format` section is present (the conventional section heading used to describe output shape) AND it cites `ADR-0005` (the canonical 5-section template authority per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a). Both conditions together confirm the critic has documented what its verdict body looks like, pointing readers to the canonical specification rather than reproducing it inline.
 
-**Rationale:** The 5-section verdict template is the converged shape across the 4 ≤3-round critics (`reviewer`, `prd-critic`, `adr-critic`, `slicer-critic`) per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1a. A critic that omits a section produces a verdict the user (and downstream consumers) cannot parse consistently — Summary is what humans read first; Findings are what implementers act on. Checking all five together catches partial migrations: critics that added the CRIT-3 trailer but never updated their body template, or critics copy-pasted from an older 3-section shape pre-dating ADR-0005.
+**Why the old five-grep mechanic was a false-positive proxy:** The previous check grepped for literal headings (`^#+\s*Findings`, `^#+\s*Summary`, etc.) directly inside each critic's prompt file. But the project's convention — per DRY rule #9 and [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1 — is for critics to *delegate* their verdict-body template to ADR-0005 rather than reproduce its literal headings in every file. A critic that writes an `## Output format` section saying "verdicts follow the 5-section template in ADR-0005 D1a" is fully compliant, yet every such DRY-compliant critic FAILED the old literal-heading grep. The old mechanic penalized critics for being DRY — the exact inverse of the intended signal.
+
+**Rationale:** The documentation-contract mechanic stays within the `/audit-subagents` mechanical/grep-only scope per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) D2. Its honest scope is "the verdict-body contract is *documented*" — the same epistemic posture AS-CRIT-3 takes for the CRITIC trailer ("the trailer is documented, not emitted"). The two checks cover complementary halves of the full output contract: CRIT-3 = machine-parsable trailer; CRIT-4 = human-readable verdict body. Per [ADR-0052](../../../decisions/0052-as-crit-4-documentation-contract.md) D1–D2.
 
 ---
 

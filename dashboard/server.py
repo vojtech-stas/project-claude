@@ -668,13 +668,10 @@ def check_docs5_n3_literal() -> dict:
 
 
 def check_docs6_glossary_md_refs() -> dict:
-    """DOCS-6: no GLOSSARY.md refs outside the 5-file allowlist + decisions/."""
+    """DOCS-6: no GLOSSARY.md refs outside the 2-file allowlist + decisions/."""
     allowlist = {
         ".claude/skills/audit-meta/SKILL.md",
         ".claude/skills/grill-me/SKILL.md",
-        "docs/current/concepts/rules/am-docs-literal-drift.md",
-        "docs/current/entities/skills/audit-meta.md",
-        "docs/current/topics/knowledge-architecture.md",
     }
     offenders = []
     for md_file in REPO_ROOT.rglob("*.md"):
@@ -719,20 +716,41 @@ def check_docs7_adr_citations() -> dict:
 
 
 def check_docs8_supersession_notes() -> dict:
-    """DOCS-8 (WARN): decisions/README.md Status column has superseded-by annotations."""
+    """DOCS-8 (WARN): decisions/README.md Status column has superseded-by annotations (per-pair)."""
     readme = REPO_ROOT / "decisions" / "README.md"
     if not readme.exists():
         return {"id": "DOCS-8", "result": "WARN", "detail": "decisions/README.md missing"}
-    readme_text = _read_file(readme)
+    readme_lines = _read_file(readme).splitlines()
     missing_annotations = []
     decisions_dir = REPO_ROOT / "decisions"
+    # Per-pair mechanic: enumerate each `- **Supersedes:**` declaration across decisions/*.md,
+    # extract the superseded ADR number, and check that the superseded ADR's row in
+    # decisions/README.md carries a "superseded by" annotation.
     for adr_file in sorted(decisions_dir.glob("[0-9]*.md")):
         try:
             adr_text = _read_file(adr_file)
             for match in re.finditer(r'^- \*\*Supersedes:\*\*\s*(.+)$', adr_text, re.MULTILINE):
                 superseded_ref = match.group(1).strip()
-                if "superseded by" not in readme_text.lower():
-                    missing_annotations.append(f"{adr_file.name}: {superseded_ref}")
+                # Extract superseded ADR numbers (e.g. "ADR-0001" or bare "D9 in ADR-0001")
+                superseded_ids = re.findall(r'ADR-(\d{4})', superseded_ref)
+                if not superseded_ids:
+                    # Also match bare "0001"-style references
+                    superseded_ids = re.findall(r'\b(\d{4})\b', superseded_ref)
+                for sid in superseded_ids:
+                    # Find the table row in decisions/README.md for the superseded ADR.
+                    # Table rows start with '|' and contain the ADR slug pattern.
+                    row_found = False
+                    row_has_annotation = False
+                    for line in readme_lines:
+                        if line.startswith("|") and f"({sid}-" in line:
+                            row_found = True
+                            if "superseded by" in line.lower():
+                                row_has_annotation = True
+                            break
+                    if row_found and not row_has_annotation:
+                        missing_annotations.append(
+                            f"{adr_file.name} supersedes ADR-{sid}: missing 'superseded by' in README row"
+                        )
         except Exception:
             pass
     if missing_annotations:

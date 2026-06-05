@@ -21,7 +21,7 @@ Before the implementation pipeline begins, fire a once-per-session whole-repo au
 
 ### 0a. Once-per-session guard
 
-**Session ID source:** `$CLAUDE_CODE_SESSION_ID` env var (available in every Claude Code session; the simplest reliable mechanism per ADR-0051 D4). If the env var is absent or empty, fall back to the date string `$(date +%Y-%m-%d)` as a coarser once-per-day guard.
+**Session ID source:** `$CLAUDE_CODE_SESSION_ID` env var (available in every Claude Code session — the simplest reliable mechanism). Note: ADR-0051 D4 originally sketched keying the marker on the workflow-event-log session ID (per [ADR-0016](../../../decisions/0016-workflow-event-log-jsonl.md)); the env var is the implemented simplification (both are valid; PR #572 added `session_id` to the event log). If the env var is absent or empty, fall back to the date string `$(date +%Y-%m-%d)` as a coarser once-per-day guard.
 
 1. Derive the marker path: `MARKER="$CLAUDE_PROJECT_DIR/.claude/logs/.macro-audit-${CLAUDE_CODE_SESSION_ID:-$(date +%Y-%m-%d)}"`.
 2. Check: `if [ -f "$MARKER" ]; then` → log "whole-repo audit skipped: already ran this session" and skip to step 0b. **Do NOT dispatch again.**

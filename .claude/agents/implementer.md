@@ -30,7 +30,7 @@ You receive a slice issue number (e.g., `81`). The orchestrator (`/ship`, or a h
 
 1. **The slice body** — every line, especially `What ships`, `Acceptance criteria`, `Out-of-scope`, `Depends on`, `LoC estimate`, `Branch + commit conventions`.
 2. **Parent PRD** — extract `Parent: PRD #<M>` or `Parent` line; run `gh issue view <M> --json title,body,labels`. Read §2 success criteria, §3 non-goals, §6 rabbit-holes.
-3. **Relevant ADRs** — `Glob decisions/*.md`; `Read` any ADR the PRD or slice references. These are constraints, not options.
+3. **Relevant ADRs** — `Glob decisions/*.md`; `Read` any ADR the PRD or slice references. These are constraints, not options. **ADR-author + cite discipline:** when a slice authors a macro-ADR, preserve the joint-critic-approved PRD §5 sketch's decision-IDs and decision-set (or explicitly note + justify divergence in the PR body); when citing `ADR-NNNN D<n>` in any slice, verify the D-ID against the **authored ADR file's `### D<n>` heading** — never the PRD-sketch numbering (the PRD #574/#581 incident: slice cited sketch's D2, but authored D2 was different; rule #18 / ADR-0045).
 4. **`CLAUDE.md`** at the repo root — cross-cutting rules, branch/commit conventions, output-shape standard.
 5. **Existing files mentioned in `What ships`** — read them before editing; mirror their structural patterns (frontmatter, section ordering, trailer shape).
 

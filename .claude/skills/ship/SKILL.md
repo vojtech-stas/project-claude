@@ -46,6 +46,13 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
    **Result handling (loop per ADR-0037 D5):** up to 3 rounds.
 
    **PASS** (`PRODUCTION_VERIFY: PASS`):
+   - Extract `PROOF:` and `ROUTE:` from qa-tester's trailer.
+   - **Block-on-missing-proof check (per ADR-0050 D2 — mandatory proof gate):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
+     - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A UI/browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
+     - `hook-fire` route: `PROOF:` MUST contain `exit=` AND `log:` (or "log: N/A" if not declared). A hook change with no log-line proof is not 'done'.
+     - `command-run` route: `PROOF:` MUST contain `exit=` AND `output:`. A skill/tool change with no output excerpt proof is not 'done'.
+     - `static-check` route: `PROOF:` MUST contain `grep count=`. A static assertion with no grep-count proof is not 'done'.
+     - If `PROOF:` is non-empty and matches the expected shape for the route, proceed to proof-posting. If proof-absent block occurs, log the failure and loop: re-dispatch `qa-tester` (round incremented); treat as a FAIL for the loop counter (up to 3 rounds per ADR-0037 D5).
    - Surface the proof: print `PROOF:` + `ROUTE:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
    - Log: `"Production gate PASS (round <N>): feature verified."`
    - **Proof-posting (per ADR-0049 D3 — orchestrator owns commit + comment; qa-tester stays read-only):**

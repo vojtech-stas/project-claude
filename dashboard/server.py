@@ -764,7 +764,7 @@ def check_docs9_glossary_cap() -> dict:
 
 def check_docs10_backlog_surfacing() -> dict:
     """DOCS-10: no backlog-label surfacing idiom in agents/skills (except allowlist)."""
-    allowlist = {"backlog-critic.md", "promote-to-backlog"}
+    allowlist = {"backlog-critic.md", "promote-to-backlog", "audit-meta/SKILL.md", "audit-subagents/SKILL.md"}
     pattern = re.compile(r'(`backlog`-labeled|--label backlog)')
     offenders = []
     for search_dir in [REPO_ROOT / ".claude" / "agents", REPO_ROOT / ".claude" / "skills"]:

@@ -182,6 +182,7 @@ flowchart TD
   backlog_critic -->|BLOCK| capstay
   codebase_critic -.per-PRD gate.- reviewer
   merge -.next PRD.- codebase_critic
+  ship -.whole-repo bg.- codebase_critic
   classDef human fill:#3b82f6,color:#fff
   classDef skill fill:#14b8a6,color:#fff
   classDef gen fill:#22c55e,color:#fff

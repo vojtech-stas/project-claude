@@ -57,8 +57,10 @@ DASHBOARD_DIR = REPO_ROOT / "dashboard"
 #   label: edge label string (renders as |label| in solid, or edge text in dashed)
 #
 # Hierarchy grounded in ADR-0034 D1 (/build conductor) + ADR-0003 (pipeline)
-# + ADR-0038 D3 (glossary merged) + ADR-0046 D1 (7 critics, parsimony principle).
-# ADR-0047 D2: codebase-critic added; R-BOY-SCOUT retired.
+# + ADR-0038 D3 (glossary merged) + ADR-0046 D1 (parsimony principle).
+# ADR-0046 D2: codebase-critic added (per-PRD quality gate); R-BOY-SCOUT retired.
+# ADR-0051 D2: codebase-critic whole-repo background mode (non-blocking, /ship start).
+# ADR-0047 D2: __edges__ schema extension (explicit edge specs for mermaid).
 # ---------------------------------------------------------------------------
 PIPELINE: dict = {
     # ---- orchestrator (cross-cutting; not in a subgraph) -------------------
@@ -141,9 +143,10 @@ PIPELINE: dict = {
     # utility skills — orchestrator siblings, render in SS
     "audit-meta":        {"type": "skill", "stage": "SS", "children": []},
     "audit-subagents":   {"type": "skill", "stage": "SS", "children": []},
-    # codebase-critic: post-PRD per-PRD quality gate (ADR-0046 D1; added ADR-0047 D2)
+    # codebase-critic: post-PRD per-PRD quality gate (ADR-0046 D1; added ADR-0046 D2)
     # fires at the last slice before reviewer within the /ship pipeline; not a
     # new critic category — it IS the 7th critic replacing the retired R-BOY-SCOUT.
+    # Also dispatched in whole-repo background mode at /ship start (ADR-0051 D2).
     "codebase-critic": {"type": "critic", "stage": "SS", "children": []},
 
     # ---- Explicit edge specs (ADR-0047 D2 schema extension) ----------------
@@ -189,9 +192,11 @@ PIPELINE: dict = {
         {"from": "ptb",            "to": "backlog_critic","style": "solid"},
         {"from": "backlog_critic", "to": "bl",         "label": "APPROVE","style": "solid"},
         {"from": "backlog_critic", "to": "capstay",    "label": "BLOCK", "style": "solid"},
-        # codebase-critic fires per-PRD at last slice before reviewer (ADR-0046 D1)
+        # codebase-critic per-PRD mode: fires at last slice before reviewer (ADR-0046 D2)
         {"from": "codebase_critic","to": "reviewer",  "label": "per-PRD gate","style": "dashed"},
         {"from": "merge",          "to": "codebase_critic","label": "next PRD","style": "dashed"},
+        # codebase-critic whole-repo mode: background dispatch at /ship start (ADR-0051 D2)
+        {"from": "ship",           "to": "codebase_critic","label": "whole-repo bg","style": "dashed"},
     ],
 }
 
@@ -232,7 +237,7 @@ def _resolve_invoking_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 # Known critics (explicit allow-list per implementer note 1).
-# 7 critics per ADR-0046 D1 (parsimony principle; codebase-critic added ADR-0047 D2).
+# 7 critics per ADR-0046 D1 (parsimony principle; codebase-critic added ADR-0046 D2).
 KNOWN_CRITICS = {
     "reviewer",
     "prd-critic",

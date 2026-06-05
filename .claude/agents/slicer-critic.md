@@ -122,6 +122,18 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **Rationale:** Per-slice budgets are the autonomous pipeline's parallelism guarantee. Per ADR-0010, `/ship` dispatches slices in parallel; if a single slice exceeds the cap, the implementer must mid-PR pivot while other parallel slices may continue. The slice-count constraint exists because PRD appetite is a real budget — a 12-slice decomposition for a "4-6 slices" PRD silently expands appetite without re-grilling.
 
+### SC-DUAL-CAP-MATH — Thinning slices satisfy both wc-target cap and R-LOC absolute-diff cap simultaneously
+
+**Mechanic:** When a candidate slice's ACs include BOTH (a) a file-size cap (`wc -l <path> ≤ X`) AND (b) the implicit R-LOC ≤300 absolute-diff cap, compute `(current_LoC_of_target_file − X) + estimated_additions`. If this sum exceeds 300, BLOCK the decomposition. (Incident: PR #267 / slice #258 — a 380→120 LoC thinning produced a ~260-line deletion floor; with additions the absolute diff was 317–321, blowing the 300 cap mid-implementation.)
+
+**BLOCK message must suggest:** (i) raise the file-size cap so the deletion floor fits under 300 minus additions; (ii) split the thinning across N sub-slices each satisfying both caps independently; or (iii) request an explicit R-LOC override via ADR amendment.
+
+**Check:** (1) Identify slices whose ACs contain a `wc -l` target; (2) read the current LoC of the target file (`wc -l <path>` on `origin/main`) to establish the deletion floor `current_LoC − X`; (3) add the slice's estimated new-content additions; (4) if `(current_LoC − X) + estimated_additions > 300` → FAIL with the computed value, the deletion floor, and the three remedies above.
+
+**Examples:** File is 200 lines; thinning target is ≤150 (50 deletions); additions estimated at 80 lines → total 130 → PASS. File is 380 lines; thinning target is ≤120 (260 deletions); additions estimated at 60 lines → total 320 → FAIL (absolute diff 320 > 300; cite remedies). File has a wc-l target but `current_LoC ≤ X` already (no deletions needed) → criterion not applicable; PASS.
+
+**Rationale:** A file-size cap and R-LOC are both binding caps on the same slice, but they interact non-obviously: shrinking a file drives up deletion count, which drives up absolute diff, independent of how many lines are added. A slicer who checks only "estimate ≤ 300 additions" misses the deletion contribution entirely — the gap that caused the PR #267 / slice #258 incident. This criterion forces the math to be done at slicing time, when splitting is cheap, not at reviewer time, when the implementer must mid-PR pivot.
+
 ### SC-RISK-FRONT-LOADING — Biggest risk lands in slice 1 or 2
 
 **Mechanic:** Read each slice's risk indicators; qualitatively rank slices by risk; check whether the top-risk slice is at position 1 or 2. If the riskiest mechanic is at position 3+ → WARN (not FAIL — defensible in some PRDs, but flagged for explicit acknowledgment).

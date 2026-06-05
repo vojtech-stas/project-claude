@@ -87,6 +87,18 @@ Print the following structure literally. The downstream critic parses by header 
 |---|---|---|
 | <doc name or "none — <reason>"> | <slice refs or "n/a"> | <…> |
 
+**Optional: conditional cascade targets** — enumerate any target whose update obligation is conditional (only needed if the slice's deliverable touches that file). Format one row per target:
+
+| Conditional target | Condition | Covered by slice(s) |
+|---|---|---|
+| <doc, e.g. `.claude/agents/implementer.md`> | IF <condition, e.g. "a slice deliverable lands a one-line implementer pointer there"> | <slice ref or "n/a — condition not met"> |
+
+**Optional: mechanically-gated docs** — enumerate any doc whose update is automatically ensured by a CI or tooling check (no manual cascade action needed). Format one row per doc:
+
+| Mechanically-gated doc | Gating check | Notes |
+|---|---|---|
+| <doc, e.g. `README.md`> | gated by `ci-checks.sh` CHECK 2; no manual action needed | <…> |
+
 ### Alternatives considered
 
 | Perspective | Trade-off considered | Why rejected |

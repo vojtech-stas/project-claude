@@ -47,7 +47,7 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 
    **PASS** (`PRODUCTION_VERIFY: PASS`):
    - Extract `PROOF:` and `ROUTE:` from qa-tester's trailer.
-   - **Block-on-missing-proof check (per ADR-0050 D2 — mandatory proof gate):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
+   - **Block-on-missing-proof check (per ADR-0037 D3 — orchestrator-enforced blocking):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
      - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A UI/browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
      - `hook-fire` route: `PROOF:` MUST contain `exit=` AND `log:` (or "log: N/A" if not declared). A hook change with no log-line proof is not 'done'.
      - `command-run` route: `PROOF:` MUST contain `exit=` AND `output:`. A skill/tool change with no output excerpt proof is not 'done'.
@@ -74,6 +74,9 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
      gh pr comment <pr-num> --body "![qa-proof](https://raw.githubusercontent.com/vojtech-stas/project-claude/<branch>/qa-proof/<prd-num>/<slug>)"
      ```
      If no proof image path is present (command-run or static-check route), skip the commit/comment and continue.
+   - **SendUserFile at wrap-up (per CLAUDE.md rule #20 + ADR-0037 D3):** After proof-posting, send each committed proof artifact to the user in chat alongside the verified claim (step 7 narrative). This runs in main-agent context, so `SendUserFile` is available. At step 7, for each feature's proof:
+     - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
+     - **hook-fire / command-run / static-check routes:** no file to send; print the `PROOF:` string inline beside the verified claim in the step 7 narrative.
    - Proceed to step 7.
 
    **FAIL** (and `round < 3`):

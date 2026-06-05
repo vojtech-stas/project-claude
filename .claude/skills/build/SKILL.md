@@ -90,7 +90,7 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
 
 **PASS** (`PRODUCTION_VERIFY: PASS` in qa-tester's trailer):
 - Extract `PROOF:` and `ROUTE:` from qa-tester's trailer.
-- **Block-on-missing-proof check (per ADR-0050 D2 — mandatory proof gate):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
+- **Block-on-missing-proof check (per ADR-0037 D3 — orchestrator-enforced blocking):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
   - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
   - `hook-fire` route: `PROOF:` MUST contain `exit=` AND `log:` (or "log: N/A" if not declared). A hook change with no log-line proof is not 'done'.
   - `command-run` route: `PROOF:` MUST contain `exit=` AND `output:`. A skill/tool change with no output excerpt proof is not 'done'.
@@ -117,6 +117,9 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   gh pr comment <pr-num> --body "![qa-proof](https://raw.githubusercontent.com/vojtech-stas/project-claude/<branch>/qa-proof/<prd-num>/<slug>)"
   ```
   If no proof image path is present (command-run or static-check route), skip the commit/comment and continue.
+- **SendUserFile at wrap-up (per CLAUDE.md rule #20 + ADR-0037 D3):** After proof-posting, send each committed proof artifact to the user in chat — one `SendUserFile` call per artifact, with a caption tying it to the verified feature claim. This runs in main-agent context (the wrap-up is always main-agent), so `SendUserFile` is available. For each proof artifact in `qa-proof/<prd-num>/`:
+  - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
+  - **hook-fire / command-run / static-check routes:** no file to send (no image); instead print the `PROOF:` string inline in the summary beside the verified claim.
 - Mark the feature done; proceed to output.
 
 **FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:

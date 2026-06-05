@@ -38,6 +38,12 @@ _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) 
 17. **Skill-vs-subagent litmus — rule #17.** Subagent = isolated-context + handed-a-task + returns-a-result. Skill = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D1.
 18. **Never cite an ADR decision-ID from memory — rule #18.** Before citing `ADR-NNNN D<n>` in any drafted ADR/PRD/doc, open the cited ADR and read the actual `### D<n>` heading — the citation's characterization MUST match that heading. `decisions/README.md` is the decision index; consult it to find the right ADR. Per [ADR-0045](decisions/0045-adr-citation-consult-discipline.md).
 19. **Revise the whole flagged class — rule #19.** When revising in response to a critic BLOCK, fix the ENTIRE flagged defect class (sweep every instance of the cited pattern — e.g. every `ADR-NNNN D<n>` cite, every over-cap commit), not just the single instance the critic named. A round-3 BLOCK is strict-stop (escalate via `needs-human`) — there is no fix-and-ship exception. Per [ADR-0048](decisions/0048-critic-loop-r3-policy-and-complete-class-revision.md).
+20. **Proof-per-claim in wrap-up summaries — rule #20.** Every "done/verified" claim in a final wrap-up or build summary MUST be accompanied by its route-appropriate proof artifact (the concrete evidence produced by `qa-tester`). A claim without a checkable artifact is NOT a valid "done". Route scope — use the type that fits the change; do NOT apply a heavier proof type to a lighter change:
+   - **browser** change (dashboard, UI): a screenshot path (`.png`/`.jpg`) + an `inner_text:` excerpt.
+   - **hook-fire** change (`.claude/hooks/*`, `.claude/settings.json`): a log line with `exit=` result.
+   - **command-run** change (skill, `tools/*`): the command output excerpt with `exit=` code.
+   - **static** change (docs, ADRs, `decisions/*`, one-line edits): the grep/assertion result (`grep count=`).
+   The orchestrator surfaces each proof artifact alongside its claim via `SendUserFile` at the wrap-up step (see `/build` step 5 + `/ship` step 7). Per [ADR-0037](decisions/0037-production-verification-gate.md) D3 (orchestrator-enforced) + PRD #574.
 
 ---
 

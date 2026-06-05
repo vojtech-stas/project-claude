@@ -395,33 +395,41 @@ else
     fi
 fi
 
-# ---- step 8: Playwright MCP — DEPRECATED (superseded by ADR-0049 D1) -------
+# ---- step 8: Playwright Python library install (per ADR-0050 D1) ------------
 
-step 8 "Playwright MCP — DEPRECATED (no-op; Claude_Preview is harness-provided)"
+step 8 "Playwright Python library install (pip install playwright — idempotent)"
 
-# DEPRECATION NOTE (2026-06-05, ADR-0049 D1):
+# ADR-0050 D1 reinstates Playwright as the qa-tester browser driver, replacing
+# Claude_Preview MCP. The driver is now the Playwright Python LIBRARY driving
+# the already-installed Chrome via channel="chrome", headless=True.
 #
-# This step previously installed Playwright MCP via `npx -y @playwright/mcp@latest`
-# per ADR-0025 D7 / ADR-0030 D2. That driver has been superseded.
+# This step installs only the Playwright Python library — NOT a chromium binary
+# download. Chrome is assumed installed on the host (no `playwright install
+# chromium` is run). Per ADR-0050 D1: no ~150 MB binary download.
 #
-# ADR-0049 D1 pivots the qa-tester browser driver to Claude_Preview MCP
-# (`mcp__Claude_Preview__*`). Claude_Preview is harness-provided — no install
-# is required. Playwright MCP is absent in this environment and cannot be
-# assumed installable; ADR-0025 D2's "Playwright preferred" rationale is
-# overtaken by empirical evidence (verified 2026-06-05: tool enumeration
-# returns no `mcp__playwright__*`; Claude_Preview drove the full 2026-06-05
-# dashboard QA end-to-end).
+# Idempotent: `pip install playwright` is a no-op if the library is already
+# present. Non-fatal: warns and continues if pip is not available.
 #
-# This step is intentionally left as a no-op (idempotent, non-fatal) so that:
-#   - Existing bootstrap runs are not broken (best-effort warn-and-continue).
-#   - Consumer forks that have Playwright available are not hard-failed.
-#   - The audit trail of this step's number is preserved (do not renumber).
-#
-# Future direction: if a consumer fork re-adds Playwright as an optional driver
-# (capability-check style), this step can be restored. That is a future-PRD
-# concern, not this slice's scope.
-log "step 8 is a no-op — Playwright MCP install superseded by ADR-0049 D1 (Claude_Preview is harness-provided; no install required)."
-note "— Playwright MCP: step deprecated (ADR-0049 D1); Claude_Preview is harness-provided"
+# Supersedes: the prior ADR-0049 D1 note (Claude_Preview was harness-provided;
+# no pip install was needed). ADR-0049 D1/D2 are now superseded by ADR-0050.
+# The step number (8) is preserved for audit-trail continuity (do not renumber).
+if command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
+    PIP_CMD="pip"
+    command -v pip >/dev/null 2>&1 || PIP_CMD="pip3"
+    log "installing Playwright Python library via $PIP_CMD (library only; no chromium download)..."
+    if $PIP_CMD install playwright >/dev/null 2>&1; then
+        log "Playwright library install succeeded (or already present)."
+        note "✓ Playwright library: installed via $PIP_CMD (ADR-0050 D1)"
+    else
+        warn "Playwright library install failed; qa-tester browser route may not work."
+        warn "  Manual: pip install playwright"
+        note "⚠ Playwright library: install failed — run 'pip install playwright' manually"
+    fi
+else
+    warn "pip not found on PATH; cannot install Playwright library."
+    warn "  Install pip, then run: pip install playwright"
+    note "⚠ Playwright library: pip missing — install pip then run 'pip install playwright'"
+fi
 
 # ---- end-of-run summary ---------------------------------------------------
 

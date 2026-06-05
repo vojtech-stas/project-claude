@@ -98,7 +98,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | autonomous PRD-to-merge chain |
 | Subagents | `.claude/agents/<name>.md` | `ls .claude/agents/` for the full list |
 | implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4 |
-| qa-tester subagent | `.claude/agents/qa-tester.md` | three-mode executor: bash-mode (QA-plan row walk), ui-mode (Claude_Preview MCP click-recipe driver), production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0049) |
+| qa-tester subagent | `.claude/agents/qa-tester.md` | three-mode executor: bash-mode (QA-plan row walk), ui-mode (headless Playwright/Chrome Bash-driven click-recipe driver), production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0049 D3, ADR-0050 D1-D5) |
 | codebase-critic subagent | `.claude/agents/codebase-critic.md` | per-PRD macro critic — reference/doc currency + architectural drift + refactoring proposals; fires at the last slice before the reviewer; per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) |
 | `/audit-subagents` skill | `.claude/skills/audit-subagents/SKILL.md` | mechanical 10-check rubric audit of subagent prompts |
 | `/audit-meta` skill | `.claude/skills/audit-meta/SKILL.md` | structure + docs-currency periodic audit |

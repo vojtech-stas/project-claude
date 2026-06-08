@@ -218,6 +218,7 @@
   .dot-orchestrator { background: var(--blue); }
   .dot-bash { background: var(--gray); }
   .dot-prd { background: var(--amber); }
+  .dot-artifact { background: var(--amber); }
   .node-name { color: var(--text); cursor: pointer; }
   .node-name:hover { text-decoration: underline; }
   .node-desc { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -962,9 +963,7 @@
       <div class="legend-item"><span class="node-dot dot-skill"></span> Skills (purple)</div>
       <div class="legend-item"><span class="node-dot dot-generator"></span> Generators (green)</div>
       <div class="legend-item"><span class="node-dot dot-critic"></span> Critics (orange)</div>
-      <div class="legend-item"><span class="node-dot dot-hook"></span> Hooks (red)</div>
-      <div class="legend-item"><span class="node-dot dot-bash"></span> Bash (gray)</div>
-      <div class="legend-item"><span class="node-dot dot-adr"></span> ADR (cyan)</div>
+      <div class="legend-item"><span class="node-dot dot-artifact"></span> Pipeline artifacts (amber)</div>
     </div>
     <!-- Measured-overlay mode selector (slice #464) -->
     <div class="topo-mode-bar">
@@ -1124,6 +1123,7 @@ const NODE_COLORS = {
   bash:         '#9ca3af',  // gray
   adr:          '#06b6d4',  // cyan
   prd:          '#eab308',  // amber
+  artifact:     '#eab308',  // amber — pipeline state nodes (prd_issue, pr, merge, …)
 };
 
 // Topology spec is fetched from GET /api/pipeline (ADR-0039 D1/D2).
@@ -1343,12 +1343,22 @@ async function loadArchitecture() {
 
 /**
  * Render the orchestration topology as a vis-network hierarchical graph.
- * Layout: physics OFF, hierarchical (LR). Root = orchestrator.
- * Levels 1+ = recursive tree: orchestrator → build → ship → to-prd → critics (ADR-0034 D1 / ADR-0003).
- * Every skill/agent from the API is placed — none silently dropped.
+ * Layout: physics OFF, hierarchical (LR). Nodes positioned by declared stage field.
+ *
+ * Declared mode (slice #627 rewrite):
+ *   Renders the spec's __edges__ sequential pipeline flow left→right by stage:
+ *     S1 (idea-capture) → S2 (prd+slice) → S3 (implementation) → S4 (acceptance)
+ *     SS (side-workflows) in a secondary lane below the main spine.
+ *   Pipeline flows from __edges__: grill→ship→to-prd→critics→prd_issue→to-issues→
+ *     slicer→slice_issues→implementer→pr→reviewer→merge→qa-plan→qa-tester
+ *   Stage-level map: S1=0, S2=1, S3=2, S4=3, SS=4, virtual nodes estimated from
+ *   their position in the flow.
+ *   ID-form canonicalization: __edges__ uses underscores (to_prd, grill_me) while
+ *   PIPELINE dict keys use hyphens (to-prd, grill-me). Lookup always converts
+ *   underscore→hyphen. Node IDs in vis use the underscore form from __edges__.
  *
  * Mode (slice #464): controlled by module-level _topoMode ('declared'|'measured'|'both').
- *   declared: spec topology only (unchanged from #463).
+ *   declared: __edges__-based sequential flow layout (slice #627).
  *   measured: observed edges from skill_invoke/agent_complete events only.
  *   both:     declared graph with measured edges overlaid; drift flagged by color.
  */
@@ -1372,29 +1382,111 @@ function renderTopologyGraph(data) {
 
   const nodes = [];
   const edges = [];
-  const placedNames = new Set();
 
-  function addNode(id, label, type, level, extra) {
-    const c = NODE_COLORS[type] || NODE_COLORS.generator;
-    // Derive logical name (last ':'-segment) for file-path resolution.
-    const _logName = String(id).split(':').pop();
+  // ---- ID-form canonicalization (slice #627 — §6 trap 2) ----
+  // __edges__ uses underscore IDs (to_prd, grill_me, prd_critic).
+  // PIPELINE dict keys use hyphens (to-prd, grill-me, prd-critic).
+  // Convert underscore → hyphen to look up in PIPELINE spec.
+  function toHyphen(id) { return String(id || '').replace(/_/g, '-'); }
+
+  // Look up a node in _pipelineSpec, canonicalizing ID form.
+  function specNode(id) {
+    if (!_pipelineSpec) return null;
+    return _pipelineSpec[id] || _pipelineSpec[toHyphen(id)] || null;
+  }
+
+  // Resolve the type for an underscore-form or hyphen-form node ID.
+  // Returns 'skill' | 'generator' | 'critic' | 'orchestrator' | 'artifact'.
+  // 'artifact' = virtual pipeline state node (prd_issue, slice_issues, pr, merge, …).
+  const VIRTUAL_ARTIFACT_IDS = new Set([
+    'U1', 'U2', 'prd_issue', 'slice_issues', 'pr', 'merge',
+    'nh', 'glossary_pr', 'cap', 'ptb', 'bl', 'capstay',
+  ]);
+  function resolveType(id) {
+    if (id === 'orchestrator') return 'orchestrator';
+    if (VIRTUAL_ARTIFACT_IDS.has(id)) return 'artifact';
+    const sn = specNode(id);
+    if (sn) return sn.type || 'generator';
+    // Heuristic fallback
+    const h = toHyphen(id);
+    if (h.endsWith('-critic')) return 'critic';
+    return 'generator';
+  }
+
+  // Determine vis level from node's stage field.
+  // S1=0, S2=1, S3=2, S4=3, SS=10 (side lane rendered below main spine).
+  // Virtual artifact nodes get a level estimated from their position in the main flow.
+  const STAGE_LEVEL = { 'S1': 0, 'S2': 1, 'S3': 2, 'S4': 3 };
+  const SS_LEVEL = 10; // side-workflows in their own lane
+
+  // Virtual artifact level assignments (by their pipeline position):
+  const ARTIFACT_LEVEL = {
+    'U1':          0,   // user entry (idea stage)
+    'prd_issue':   1,   // after S2 PRD authoring
+    'slice_issues':2,   // after S2 slicing (just before S3)
+    'pr':          2,   // S3 implementation output
+    'merge':       3,   // after reviewer → into S4 territory
+    'U2':          3,   // user exit (acceptance done)
+    'nh':          2,   // needs-human (round-3 escalation — S3 side)
+    'glossary_pr': 10,  // side workflow
+    'cap':         10,  // side workflow
+    'ptb':         10,  // side workflow
+    'bl':          10,  // side workflow
+    'capstay':     10,  // side workflow
+  };
+
+  function nodeLevel(id) {
+    if (ARTIFACT_LEVEL[id] !== undefined) return ARTIFACT_LEVEL[id];
+    const sn = specNode(id);
+    if (sn && sn.stage) {
+      if (sn.stage === 'SS') return SS_LEVEL;
+      return STAGE_LEVEL[sn.stage] !== undefined ? STAGE_LEVEL[sn.stage] : 2;
+    }
+    return 2; // default to S3 for unknowns
+  }
+
+  // NODE_COLORS entry for 'artifact' type: amber (pipeline state node)
+  const ARTIFACT_COLOR = '#eab308';
+
+  function resolveColor(type) {
+    if (type === 'artifact') return ARTIFACT_COLOR;
+    return NODE_COLORS[type] || NODE_COLORS.generator;
+  }
+
+  // Resolve display label for a node ID.
+  function nodeLabel(id) {
+    const type = resolveType(id);
+    if (type === 'skill') {
+      // Use hyphen form for label
+      return '/' + toHyphen(id);
+    }
+    // Use the underscore form (as-is from __edges__) for display
+    return id;
+  }
+
+  // addNode: register in vis DataSet and in topoNodeFileMap.
+  // nodeId = underscore-form (the ID used in __edges__).
+  function addNode(nodeId, label, type, level, extra) {
+    const c = resolveColor(type);
+    // Canonical hyphen-form name for file path resolution.
+    const hyphenName = toHyphen(nodeId);
     let _path = null;
     if (type === 'skill') {
-      _path = '.claude/skills/' + _logName + '/SKILL.md';
+      _path = '.claude/skills/' + hyphenName + '/SKILL.md';
     } else if (type === 'generator' || type === 'critic') {
-      _path = '.claude/agents/' + _logName + '.md';
+      _path = '.claude/agents/' + hyphenName + '.md';
     } else if (type === 'hook') {
-      _path = _hookPathMap[_logName] || ('.claude/hooks/' + _logName + (_logName.endsWith('.sh') ? '' : '.sh'));
+      _path = _hookPathMap[hyphenName] || ('.claude/hooks/' + hyphenName + (hyphenName.endsWith('.sh') ? '' : '.sh'));
     }
-    // orchestrator / bash / adr / prd → null (no file)
-    topoNodeFileMap[id] = { name: _logName, type: type, path: _path };
+    // artifact / orchestrator / bash / adr / prd → null (no file)
+    topoNodeFileMap[nodeId] = { name: hyphenName, type: type, path: _path };
     nodes.push({
-      id,
+      id: nodeId,
       label,
       level,
       color: {
         background: c,
-        border: type === 'orchestrator' ? '#93c5fd' : c,
+        border: type === 'orchestrator' ? '#93c5fd' : (type === 'artifact' ? '#ca8a04' : c),
         highlight: { background: c, border: '#fff' },
         hover: { background: c, border: '#fff' },
       },
@@ -1403,46 +1495,44 @@ function renderTopologyGraph(data) {
         size: type === 'orchestrator' ? 14 : 12,
         face: 'IBM Plex Mono, monospace',
       },
-      shape: type === 'orchestrator' ? 'ellipse' : (type === 'critic' ? 'diamond' : 'box'),
+      shape: type === 'orchestrator' ? 'ellipse'
+           : type === 'critic'       ? 'diamond'
+           : type === 'artifact'     ? 'ellipse'
+           : 'box',
       borderWidth: type === 'orchestrator' ? 3 : 1.5,
       shadow: { enabled: true, color: 'rgba(0,0,0,0.4)', size: 6, x: 1, y: 2 },
       ...extra,
     });
   }
 
-  function addEdge(from, to, color, dashes, width) {
-    edges.push({
+  function addEdge(from, to, color, dashes, width, label) {
+    const e = {
       from, to,
       arrows: 'to',
       color: { color: color || '#4b5563', highlight: '#9ca3af' },
       smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
       width: width || 1.5,
       dashes: dashes || false,
-    });
+    };
+    if (label) { e.label = label; e.font = { color: '#9ca3af', size: 9, face: 'IBM Plex Mono, monospace' }; }
+    edges.push(e);
   }
 
-  // ---- Derive DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched pipeline spec ----
-  // (ADR-0039 D2 — no hardcoded copy; single source is /api/pipeline).
-  const DISPATCH_MAP = _pipelineSpec ? _dispatchMapFromSpec(_pipelineSpec) : {};
-  const ORCHESTRATOR_CHILDREN = _pipelineSpec ? _orchestratorChildrenFromSpec(_pipelineSpec) : [];
-
-  // ---- Build declared edge set for drift comparison ----
-  // Each entry: "fromNodeId::toNodeId" using the encoded path-node IDs
-  // We also track logical name pairs: "fromName::toName"
-  const declaredNamePairs = new Set(); // "parentName::childName"
-  function collectDeclaredEdges(name, parentName) {
-    declaredNamePairs.add((parentName || 'orchestrator') + '::' + name);
-    const children = DISPATCH_MAP[name] || [];
-    for (const c of children) {
-      collectDeclaredEdges(c, name);
+  // ---- Build declared edge set for drift comparison (used in 'both' mode) ----
+  // Derived from __edges__ for accurate sequential-flow coverage (not children[]).
+  const declaredNamePairs = new Set();
+  if (_pipelineSpec && _pipelineSpec['__edges__']) {
+    for (const e of _pipelineSpec['__edges__']) {
+      if (e.from && e.to) {
+        // Normalise both forms: store as underscore (the form in __edges__)
+        declaredNamePairs.add((e.from || '') + '::' + (e.to || ''));
+        // Also store hyphen form for measured-edge lookup (measured events use hyphen names)
+        declaredNamePairs.add(toHyphen(e.from) + '::' + toHyphen(e.to));
+      }
     }
-  }
-  for (const childName of ORCHESTRATOR_CHILDREN) {
-    collectDeclaredEdges(childName, 'orchestrator');
   }
 
   // ---- Build measured edge set for drift comparison ----
-  // logical name pairs: "fromName::toName"
   const measuredNamePairs = new Set();
   for (const me of _measuredEdges) {
     measuredNamePairs.add((me.from || '') + '::' + (me.to || ''));
@@ -1451,55 +1541,77 @@ function renderTopologyGraph(data) {
   const mode = _topoMode;
 
   // =========================================================================
-  // MODE: 'declared' (default — unchanged from #463 behavior)
+  // MODE: 'declared' — __edges__ sequential flow layout (slice #627 rewrite)
+  // Layout: nodes positioned left→right by BFS depth over solid __edges__ flow.
+  // The BFS traversal naturally respects the stage ordering (S1→S2→S3→S4) while
+  // giving sub-stage resolution: slice_issues(9)→implementer(10)→pr(11)→reviewer(12)→merge(13).
+  // SS side-workflow nodes (not reachable from U1 via solid edges) get level=10.
   // =========================================================================
   if (mode === 'declared') {
-    // Level 0: orchestrator root
-    addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
-    placedNames.add('orchestrator');
+    const specEdges = (_pipelineSpec && _pipelineSpec['__edges__']) ? _pipelineSpec['__edges__'] : [];
 
-    const skillItems = data.skills || [];
-    const skillsRendered = new Set();
+    // Collect all node IDs referenced in __edges__ (deduplicated).
+    const allNodeIds = new Set();
+    for (const e of specEdges) {
+      if (e.from) allNodeIds.add(e.from);
+      if (e.to)   allNodeIds.add(e.to);
+    }
 
-    function renderNode(name, parentNodeId, level) {
-      const nodeType = nodeTypeForName(name);
-      const nodeId = parentNodeId + ':' + name;
-      const label = nodeType === 'skill' ? '/' + name : name;
-      addNode(nodeId, label, nodeType, level, {});
-      if (parentNodeId === 'orchestrator') {
-        addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
-      } else {
-        addEdge(parentNodeId, nodeId, NODE_COLORS[nodeType] + '99');
-      }
-      placedNames.add(name);
-      skillsRendered.add(name);
-      const dispatched = DISPATCH_MAP[name] || [];
-      for (const childName of dispatched) {
-        renderNode(childName, nodeId, level + 1);
+    // ---- BFS level assignment from U1 via solid/APPROVE edges ----
+    // This gives sequential left-to-right positioning that matches the actual
+    // pipeline flow rather than coarse stage groups.
+    // Dashed BLOCK edges are excluded from BFS to avoid level regression.
+    const bfsLevels = {};
+    const bfsQueue = [];
+    function bfsEnqueue(id, lv) {
+      const cur = bfsLevels[id];
+      if (cur === undefined || lv > cur) {
+        bfsLevels[id] = lv;
+        bfsQueue.push([id, lv]);
       }
     }
+    // Build adjacency from solid + APPROVE-labeled edges only
+    const bfsAdj = {};
+    for (const e of specEdges) {
+      if (!e.from || !e.to) continue;
+      const isDashed = e.style === 'dashed';
+      const isBlockEdge = isDashed && e.label && e.label.toUpperCase().includes('BLOCK');
+      if (isBlockEdge) continue; // skip BLOCK back-edges to avoid level regression
+      if (!bfsAdj[e.from]) bfsAdj[e.from] = [];
+      bfsAdj[e.from].push(e.to);
+    }
+    // Start BFS from U1 (the user entry node)
+    bfsEnqueue('U1', 0);
+    let qi = 0;
+    while (qi < bfsQueue.length) {
+      const [node, lv] = bfsQueue[qi++];
+      for (const nxt of (bfsAdj[node] || [])) {
+        bfsEnqueue(nxt, lv + 1);
+      }
+    }
+    // For SS side-workflow nodes not reachable from U1, assign level 10
+    // (places them below/after the main spine)
+    for (const nodeId of allNodeIds) {
+      if (bfsLevels[nodeId] === undefined) {
+        bfsLevels[nodeId] = 10;
+      }
+    }
 
-    for (const childName of ORCHESTRATOR_CHILDREN) {
-      renderNode(childName, 'orchestrator', 1);
+    // Render each unique node once using BFS level.
+    for (const nodeId of allNodeIds) {
+      const type = resolveType(nodeId);
+      const level = bfsLevels[nodeId];
+      const label = nodeLabel(nodeId);
+      addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
     }
-    for (const sk of skillItems) {
-      const name = sk.name || sk.stem || '';
-      if (!name || skillsRendered.has(name)) continue;
-      const nodeId = 'orchestrator:' + name;
-      addNode(nodeId, '/' + name, 'skill', 1, {});
-      addEdge('orchestrator', nodeId, NODE_COLORS.skill + '88');
-      placedNames.add(name);
-      skillsRendered.add(name);
-    }
-    const agentItems = data.agents || [];
-    for (const ag of agentItems) {
-      const name = ag.name || ag.stem || '';
-      if (!name || placedNames.has(name)) continue;
-      const childType = nodeTypeForName(name);
-      const nodeId = 'agent:unattached:' + name;
-      addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
-      addEdge('orchestrator', nodeId, '#374151');
-      placedNames.add(name);
+
+    // Render edges from __edges__ spec.
+    for (const e of specEdges) {
+      if (!e.from || !e.to) continue;
+      const isDashed = e.style === 'dashed';
+      const edgeColor = isDashed ? '#6b7280' : '#4b5563';
+      const edgeLabel = e.label || undefined;
+      addEdge(e.from, e.to, edgeColor, isDashed, isDashed ? 1 : 1.5, edgeLabel);
     }
   }
 
@@ -1511,7 +1623,6 @@ function renderTopologyGraph(data) {
       // Graceful-empty: show declared topology only (fallback) so graph is never blank
       // The measured-notice already explains why
       addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
-      placedNames.add('orchestrator');
     } else {
       // Build nodes from measured edges
       const measuredNodeNames = new Set(['orchestrator']);
@@ -1538,7 +1649,6 @@ function renderTopologyGraph(data) {
         const level = measuredLevels[name] !== undefined ? measuredLevels[name] : 2;
         const label = nodeType === 'skill' ? '/' + name : name;
         addNode('m:' + name, label, nodeType, level, name === 'orchestrator' ? { size: 30 } : {});
-        placedNames.add(name);
       }
 
       // Add measured edges (green — observed)
@@ -1549,127 +1659,100 @@ function renderTopologyGraph(data) {
   }
 
   // =========================================================================
-  // MODE: 'both' — declared graph + measured overlay; drift flagged
+  // MODE: 'both' — declared __edges__ flow + measured overlay; drift flagged
   // =========================================================================
   else if (mode === 'both') {
-    // Render declared topology as the base (same as declared mode)
-    addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
-    placedNames.add('orchestrator');
+    // Render declared __edges__ topology as the base (same as declared mode)
+    const specEdges2 = (_pipelineSpec && _pipelineSpec['__edges__']) ? _pipelineSpec['__edges__'] : [];
+    const placedNodeIds = new Set();
 
-    const skillItems2 = data.skills || [];
-    const skillsRendered2 = new Set();
+    const allNodeIds2 = new Set();
+    for (const e of specEdges2) {
+      if (e.from) allNodeIds2.add(e.from);
+      if (e.to)   allNodeIds2.add(e.to);
+    }
 
-    function renderNodeBoth(name, parentNodeId, level) {
-      const nodeType = nodeTypeForName(name);
-      const nodeId = parentNodeId + ':' + name;
-      const label = nodeType === 'skill' ? '/' + name : name;
-      addNode(nodeId, label, nodeType, level, {});
+    // BFS level assignment (same as declared mode)
+    const bfsLevels2 = {};
+    const bfsQueue2 = [];
+    function bfsEnqueue2(id, lv) {
+      const cur = bfsLevels2[id];
+      if (cur === undefined || lv > cur) {
+        bfsLevels2[id] = lv;
+        bfsQueue2.push([id, lv]);
+      }
+    }
+    const bfsAdj2 = {};
+    for (const e of specEdges2) {
+      if (!e.from || !e.to) continue;
+      const isDashed = e.style === 'dashed';
+      const isBlockEdge = isDashed && e.label && e.label.toUpperCase().includes('BLOCK');
+      if (isBlockEdge) continue;
+      if (!bfsAdj2[e.from]) bfsAdj2[e.from] = [];
+      bfsAdj2[e.from].push(e.to);
+    }
+    bfsEnqueue2('U1', 0);
+    let qi2 = 0;
+    while (qi2 < bfsQueue2.length) {
+      const [node, lv] = bfsQueue2[qi2++];
+      for (const nxt of (bfsAdj2[node] || [])) {
+        bfsEnqueue2(nxt, lv + 1);
+      }
+    }
+    for (const nodeId of allNodeIds2) {
+      if (bfsLevels2[nodeId] === undefined) bfsLevels2[nodeId] = 10;
+    }
 
-      // Determine parent logical name for drift check
-      // parentNodeId format: "orchestrator:skillA:childB..." → last segment is parent name
-      const parentParts = parentNodeId.split(':');
-      const parentLogicalName = parentParts[parentParts.length - 1]; // 'orchestrator' for root
-      const pairKey = parentLogicalName + '::' + name;
-      const isObserved = measuredNamePairs.has(pairKey);
+    for (const nodeId of allNodeIds2) {
+      const type = resolveType(nodeId);
+      const level = bfsLevels2[nodeId];
+      const label = nodeLabel(nodeId);
+      addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
+      placedNodeIds.add(nodeId);
+    }
 
-      // Edge color based on drift:
-      //   observed (in both declared+measured): green
-      //   not-seen (declared but never observed): gray dashed
+    for (const e of specEdges2) {
+      if (!e.from || !e.to) continue;
+      const isDashed = e.style === 'dashed';
+      const pairKey = (e.from || '') + '::' + (e.to || '');
+      // Check if this declared edge was also measured (using hyphen form for measured lookup)
+      const hyphenKey = toHyphen(e.from) + '::' + toHyphen(e.to);
+      const isObserved = measuredNamePairs.has(pairKey) || measuredNamePairs.has(hyphenKey);
       let edgeColor, dashed;
       if (isObserved) {
         edgeColor = '#22c55e';  // green — declared & measured match
         dashed = false;
       } else {
-        edgeColor = '#6b7280';  // gray — declared but never observed
-        dashed = true;
+        edgeColor = isDashed ? '#6b7280' : '#4b5563'; // gray — declared but never observed
+        dashed = isDashed;
       }
-      if (parentNodeId === 'orchestrator') {
-        addEdge('orchestrator', nodeId, edgeColor, dashed, 2);
-      } else {
-        addEdge(parentNodeId, nodeId, edgeColor, dashed, 2);
-      }
-      placedNames.add(name);
-      skillsRendered2.add(name);
-      const dispatched = DISPATCH_MAP[name] || [];
-      for (const childName of dispatched) {
-        renderNodeBoth(childName, nodeId, level + 1);
-      }
-    }
-
-    for (const childName of ORCHESTRATOR_CHILDREN) {
-      renderNodeBoth(childName, 'orchestrator', 1);
-    }
-    for (const sk of skillItems2) {
-      const name = sk.name || sk.stem || '';
-      if (!name || skillsRendered2.has(name)) continue;
-      const nodeId = 'orchestrator:' + name;
-      addNode(nodeId, '/' + name, 'skill', 1, {});
-      const isObs = measuredNamePairs.has('orchestrator::' + name);
-      addEdge('orchestrator', nodeId, isObs ? '#22c55e' : '#6b7280', !isObs, 2);
-      placedNames.add(name);
-      skillsRendered2.add(name);
-    }
-    const agentItems2 = data.agents || [];
-    for (const ag of agentItems2) {
-      const name = ag.name || ag.stem || '';
-      if (!name || placedNames.has(name)) continue;
-      const childType = nodeTypeForName(name);
-      const nodeId = 'agent:unattached:' + name;
-      addNode(nodeId, name, childType, 2, { borderDashes: [4, 3] });
-      addEdge('orchestrator', nodeId, '#374151');
-      placedNames.add(name);
+      const edgeLabel = e.label || undefined;
+      addEdge(e.from, e.to, edgeColor, dashed, dashed ? 1 : 1.5, edgeLabel);
     }
 
     // Overlay: add UNEXPECTED measured edges (observed but NOT in declared spec)
-    // These are edges from the measured data that have no matching declared pair.
-    // We add them as extra edges; the endpoints may already be in the graph (if they
-    // are known nodes) or we add them as new "unexpected" nodes.
     for (const me of _measuredEdges) {
       const pairKey = (me.from || '') + '::' + (me.to || '');
-      if (declaredNamePairs.has(pairKey)) continue;  // already a declared edge — skip
+      const underscoreKey = (me.from || '').replace(/-/g,'_') + '::' + (me.to || '').replace(/-/g,'_');
+      if (declaredNamePairs.has(pairKey) || declaredNamePairs.has(underscoreKey)) continue;
 
       // Unexpected edge: find or create node IDs
-      let fromId = (me.from === 'orchestrator') ? 'orchestrator' : null;
-      if (!fromId) {
-        // Check if this node was placed in declared rendering (any nodeId ending in ':name')
-        // We use the canonical declared nodeId if available, else create a measured-only node
-        fromId = 'orchestrator:' + me.from; // most likely placement in declared tree
-        if (!placedNames.has(me.from)) {
-          // Add unexpected source node
-          const srcType = nodeTypeForName(me.from || '');
-          addNode('m:' + me.from, me.from, srcType, 1, {
-            borderWidth: 2.5,
-            borderDashes: [4, 3],
-          });
-          placedNames.add(me.from);
-          fromId = 'm:' + me.from;
-        }
-      }
+      const fromId = me.from || '';
+      const toId = me.to || '';
 
-      let toId = null;
-      if (placedNames.has(me.to || '')) {
-        // Find the declared node ID — use canonical path (may be nested)
-        // Simplified: look for the first occurrence in nodes array
-        const existingNode = nodes.find(function(n) {
-          const parts = String(n.id).split(':');
-          return parts[parts.length - 1] === me.to;
-        });
-        toId = existingNode ? existingNode.id : null;
+      if (fromId && !placedNodeIds.has(fromId)) {
+        const srcType = resolveType(fromId);
+        addNode(fromId, fromId, srcType, 1, { borderWidth: 2.5, borderDashes: [4, 3] });
+        placedNodeIds.add(fromId);
       }
-      if (!toId) {
-        // Add unexpected target node
-        const tgtType = nodeTypeForName(me.to || '');
-        const tgtLabel = tgtType === 'skill' ? '/' + me.to : (me.to || '?');
-        addNode('m:' + me.to, tgtLabel, tgtType, 2, {
-          borderWidth: 2.5,
-          borderDashes: [4, 3],
-        });
-        placedNames.add(me.to || '');
-        toId = 'm:' + me.to;
+      if (toId && !placedNodeIds.has(toId)) {
+        const tgtType = resolveType(toId);
+        addNode(toId, toId, tgtType, 2, { borderWidth: 2.5, borderDashes: [4, 3] });
+        placedNodeIds.add(toId);
       }
-
-      // Draw unexpected edge in red
-      addEdge(fromId, toId, '#ef4444', false, 2.5);
+      if (fromId && toId) {
+        addEdge(fromId, toId, '#ef4444', false, 2.5);
+      }
     }
   }
 
@@ -1683,9 +1766,9 @@ function renderTopologyGraph(data) {
         enabled: true,
         direction: 'LR',
         sortMethod: 'directed',
-        levelSeparation: 220,
-        nodeSpacing: 70,
-        treeSpacing: 140,
+        levelSeparation: 180,
+        nodeSpacing: 60,
+        treeSpacing: 100,
         blockShifting: true,
         edgeMinimization: true,
         parentCentralization: true,
@@ -1695,8 +1778,8 @@ function renderTopologyGraph(data) {
     interaction: {
       hover: true,
       tooltipDelay: 100,
-      zoomView: false,
-      dragView: false,
+      zoomView: true,
+      dragView: true,
       dragNodes: false,
       selectConnectedEdges: true,
     },
@@ -1707,7 +1790,7 @@ function renderTopologyGraph(data) {
 
   if (topoNetwork) topoNetwork.destroy();
   topoNetwork = new vis.Network(containerEl, { nodes: nodesDataSet, edges: edgesDataSet }, options);
-  topoNetwork.once('afterDrawing', () => {
+  topoNetwork.once('afterDrawing', function() {
     topoNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
   });
 
@@ -1716,13 +1799,15 @@ function renderTopologyGraph(data) {
   topoNetwork.on('click', function(params) {
     if (!params.nodes || params.nodes.length === 0) return;
     const nodeId = params.nodes[0];
-    const info = topoNodeFileMap[nodeId];
+    // Strip 'm:' prefix used in measured mode
+    const lookupId = String(nodeId).startsWith('m:') ? nodeId : nodeId;
+    const info = topoNodeFileMap[lookupId];
     if (!info) return;
 
     if (info.path) {
       viewFile(info.path, info.name, info.type);
     } else {
-      // Graceful no-file message (orchestrator / bash / PRD / ADR nodes).
+      // Graceful no-file message (orchestrator / artifact / bash / PRD / ADR nodes).
       const titleEl = document.getElementById('file-panel-title');
       const hintEl = document.getElementById('file-panel-hint');
       const summaryEl = document.getElementById('file-summary');

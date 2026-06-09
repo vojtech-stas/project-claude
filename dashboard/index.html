@@ -369,82 +369,36 @@
   }
   .hook-fire-badge-never { background: #3d1f00; color: var(--orange); border: 1px solid var(--orange); }
   .hook-fire-badge-stale { background: #2a2000; color: var(--amber); border: 1px solid var(--amber); }
-  /* Hook layout: list + detail panel side-by-side (slice #628) */
-  .hooks-layout {
-    display: flex;
-    gap: 16px;
-    align-items: flex-start;
-  }
-  .hooks-list-col {
-    flex: 0 0 auto;
-    min-width: 280px;
-  }
-  .hook-detail-panel {
-    flex: 1 1 auto;
-    background: var(--surface);
+  /* Extra-fields block rendered inside the shared file viewer for hook entries (slice #643) */
+  .viewer-extra-fields {
+    background: #0d1117;
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px;
-    min-height: 180px;
-    max-height: 440px;
-    overflow-y: auto;
-    display: none;
-  }
-  .hook-detail-panel.open { display: block; }
-  .hook-detail-close {
-    float: right;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: 16px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0 2px;
-  }
-  .hook-detail-close:hover { color: var(--text); }
-  .hook-detail-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text);
+    border-radius: 4px;
+    padding: 8px 10px;
     margin-bottom: 10px;
+    font-size: 11px;
   }
-  .hook-detail-section {
-    margin-bottom: 10px;
+  .viewer-extra-field {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 4px;
+    line-height: 1.4;
   }
-  .hook-detail-label {
+  .viewer-extra-field:last-child { margin-bottom: 0; }
+  .viewer-extra-field-label {
     font-size: 10px;
     font-weight: 600;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-bottom: 3px;
+    min-width: 72px;
+    flex-shrink: 0;
+    padding-top: 1px;
   }
-  .hook-detail-value {
-    font-size: 11px;
+  .viewer-extra-field-value {
     color: var(--text);
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  .hook-detail-purpose {
-    font-size: 11px;
-    color: var(--muted);
-    white-space: pre-wrap;
-    word-break: break-word;
-    border-left: 2px solid var(--border);
-    padding-left: 8px;
-  }
-  .hook-detail-body-pre {
-    font-size: 10px;
-    color: var(--muted);
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 200px;
-    overflow-y: auto;
-    background: #0d1117;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 6px 8px;
-    margin-top: 3px;
   }
   /* Health tab: check list + detail panel side-by-side (slice #629) */
   .health-layout {
@@ -1170,19 +1124,10 @@
         <div class="md-body" id="file-content"></div>
       </div>
     </div>
-    <!-- Hooks section: grouped by lifecycle event (slice #628: clickable + detail panel) -->
+    <!-- Hooks section: grouped by lifecycle event (slice #643: click opens shared file viewer) -->
     <div class="hooks-section" id="hooks-section" style="display:none;">
       <h3 style="margin-bottom:10px;">Hooks — by lifecycle event</h3>
-      <div class="hooks-layout">
-        <div class="hooks-list-col">
-          <div id="hooks-by-event"><div class="loading">Loading hooks...</div></div>
-        </div>
-        <div class="hook-detail-panel" id="hook-detail-panel">
-          <button class="hook-detail-close" onclick="closeHookDetail()" title="Close">&times;</button>
-          <div class="hook-detail-title" id="hook-detail-title">Hook detail</div>
-          <div id="hook-detail-body"></div>
-        </div>
-      </div>
+      <div id="hooks-by-event"><div class="loading">Loading hooks...</div></div>
     </div>
   </div>
 
@@ -2036,7 +1981,7 @@ function renderTopologyGraph(data) {
  * Render hooks grouped by lifecycle event.
  * Rich display: event · matcher — name — description (slice #421).
  * Hooks without a matcher render: event — name — description.
- * Slice #628: entries are clickable → opens hook detail panel.
+ * Slice #643: entries are clickable → opens shared file viewer.
  */
 
 /**
@@ -2060,7 +2005,7 @@ function relativeTime(iso) {
   return diffD + ' d ago';
 }
 
-// Store hook data indexed by a stable key for detail-panel lookup (slice #628).
+// Store hook data indexed by a stable key for shared-viewer lookup (slice #643).
 const hookDetailStore = {};
 
 function renderHooksSection(data) {
@@ -2104,8 +2049,8 @@ function renderHooksSection(data) {
       const key = 'h' + hookIdx;
       hookDetailStore[key] = h;
       hookIdx++;
-      // data-hkey used to identify which hook was clicked (slice #628)
-      html += `<div class="hook-entry" data-hkey="${escHtml(key)}" onclick="openHookDetail('${key}', this)">`;
+      // data-hkey used to identify which hook was clicked (slice #643: shared viewer)
+      html += `<div class="hook-entry" data-hkey="${escHtml(key)}" onclick="openHookInViewer('${key}', this)">`;
       html += `<span class="hook-event-tag">${when}</span>`;
       if (name) {
         html += ` &mdash; <span class="hook-name">${escHtml(name)}</span>`;
@@ -2135,77 +2080,44 @@ function renderHooksSection(data) {
 }
 
 /**
- * Open the hook detail panel for the clicked hook entry (slice #628).
- * Shows: purpose (header comment), event + matcher, script body via /api/file.
+ * Open the shared file viewer for the clicked hook entry (slice #643).
+ * Builds a {title, type, extraFields} descriptor and calls viewFile() with raw-mode
+ * so the .sh source is displayed verbatim (not rendered as markdown).
+ * Scrolls #file-panel into view because hooks live below the topology area.
  */
-async function openHookDetail(key, clickedEl) {
+async function openHookInViewer(key, clickedEl) {
   const h = hookDetailStore[key];
   if (!h) return;
 
-  // Update active state
+  // Update active state on hook list
   document.querySelectorAll('.hook-entry').forEach(el => el.classList.remove('active'));
   if (clickedEl) clickedEl.classList.add('active');
 
-  const panel = document.getElementById('hook-detail-panel');
-  const titleEl = document.getElementById('hook-detail-title');
-  const bodyEl = document.getElementById('hook-detail-body');
-
   const name = h.clean_name || h.name || '(unnamed)';
-  titleEl.textContent = 'hook: ' + name;
 
-  // Purpose from header comment; fall back to "purpose unavailable" message
+  // Build extraFields: purpose, event+matcher, telemetry
   const purpose = (h.purpose && h.purpose.trim())
     ? h.purpose
     : 'purpose unavailable — see hook script header';
-
-  // Event + matcher line
   const eventMatcher = h.matcher
     ? `${h.event} · ${h.matcher}`
     : h.event || '(unknown)';
+  const fireCount = (typeof h.fire_count === 'number') ? h.fire_count : 0;
+  const lastFired = h.last_fired || null;
+  const telemetry = `fired ${fireCount}× · last ${relativeTime(lastFired)}`;
 
-  let html = '';
-  html += `<div class="hook-detail-section">`;
-  html += `<div class="hook-detail-label">Purpose</div>`;
-  html += `<div class="hook-detail-purpose">${escHtml(purpose)}</div>`;
-  html += `</div>`;
+  const extraFields = [
+    { label: 'Purpose',       value: purpose },
+    { label: 'Event',         value: eventMatcher },
+    { label: 'Telemetry',     value: telemetry },
+  ];
 
-  html += `<div class="hook-detail-section">`;
-  html += `<div class="hook-detail-label">Event · Matcher</div>`;
-  html += `<div class="hook-detail-value">${escHtml(eventMatcher)}</div>`;
-  html += `</div>`;
+  // Delegate to shared viewer with raw-mode (shell scripts, not markdown)
+  await viewFile(h.path || '', name, 'hook', { extraFields, rawMode: true });
 
-  html += `<div class="hook-detail-section">`;
-  html += `<div class="hook-detail-label">Script body</div>`;
-  html += `<div class="hook-detail-body-pre" id="hook-detail-script">Loading…</div>`;
-  html += `</div>`;
-
-  bodyEl.innerHTML = html;
-  panel.classList.add('open');
-
-  // Fetch script body via /api/file (same mechanism as file-viewer)
-  const scriptEl = document.getElementById('hook-detail-script');
-  if (h.path) {
-    try {
-      const r = await fetch('/api/file?path=' + encodeURIComponent(h.path));
-      const d = await r.json();
-      if (d.error) {
-        scriptEl.textContent = 'Error: ' + d.error;
-      } else {
-        const body = d.content.slice(0, 8000) + (d.content.length > 8000 ? '\n… (truncated)' : '');
-        scriptEl.textContent = body;
-      }
-    } catch(e) {
-      scriptEl.textContent = 'Error fetching script: ' + e.message;
-    }
-  } else {
-    scriptEl.textContent = '(no script path available)';
-  }
-}
-
-function closeHookDetail() {
-  const panel = document.getElementById('hook-detail-panel');
-  if (panel) panel.classList.remove('open');
-  document.querySelectorAll('.hook-entry').forEach(el => el.classList.remove('active'));
+  // Scroll the shared file panel into view (it lives above the hooks section)
+  const filePanel = document.getElementById('file-panel');
+  if (filePanel) filePanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function toggleFlatList(btn) {
@@ -2316,14 +2228,19 @@ function summarize(content, typeLabel) {
 }
 
 /**
- * Fetch a file from /api/file, render markdown, and show the detail sidebar.
- * Shared by component-card clicks AND topology-node clicks.
+ * Fetch a file from /api/file, render its content, and show the detail sidebar.
+ * Shared by component-card clicks, topology-node clicks, AND hook-entry clicks (slice #643).
  * @param {string} path - repo-relative path
  * @param {string} name - display name
  * @param {string} [type] - node type for badge color (optional)
+ * @param {Object} [opts] - optional extensions (slice #643):
+ *   opts.extraFields  {Array<{label,value}>} — metadata rows shown before file content
+ *   opts.rawMode      {boolean}              — display content as raw <pre> (skip markdown)
  */
-async function viewFile(path, name, type) {
-  if (!path) return;
+async function viewFile(path, name, type, opts) {
+  const extraFields = (opts && opts.extraFields) || [];
+  const rawMode     = !!(opts && opts.rawMode);
+
   const titleEl = document.getElementById('file-panel-title');
   const hintEl = document.getElementById('file-panel-hint');
   const summaryEl = document.getElementById('file-summary');
@@ -2333,37 +2250,98 @@ async function viewFile(path, name, type) {
   hintEl.style.display = 'none';
   summaryEl.classList.remove('visible');
   summaryEl.innerHTML = '';
-  contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+
+  // Render extra-fields block (hook metadata) before fetching the file
+  if (extraFields.length > 0) {
+    let efHtml = '<div class="viewer-extra-fields">';
+    for (const f of extraFields) {
+      efHtml += '<div class="viewer-extra-field">';
+      efHtml += '<span class="viewer-extra-field-label">' + escHtml(f.label) + '</span>';
+      efHtml += '<span class="viewer-extra-field-value">' + escHtml(f.value) + '</span>';
+      efHtml += '</div>';
+    }
+    efHtml += '</div>';
+    contentEl.innerHTML = efHtml + '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+  } else {
+    contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+  }
+
+  if (!path) {
+    // No file path — show extra fields only (graceful no-file nodes)
+    if (extraFields.length > 0) {
+      let efHtml = '<div class="viewer-extra-fields">';
+      for (const f of extraFields) {
+        efHtml += '<div class="viewer-extra-field">';
+        efHtml += '<span class="viewer-extra-field-label">' + escHtml(f.label) + '</span>';
+        efHtml += '<span class="viewer-extra-field-value">' + escHtml(f.value) + '</span>';
+        efHtml += '</div>';
+      }
+      efHtml += '</div>';
+      contentEl.innerHTML = efHtml;
+    } else {
+      contentEl.innerHTML = '<p class="file-no-source">No source file for this node.</p>';
+    }
+    return;
+  }
 
   try {
     const r = await fetch('/api/file?path=' + encodeURIComponent(path));
     const d = await r.json();
     if (d.error) {
-      contentEl.innerHTML = '<span style="color:var(--fail);font-size:11px;">Error: ' + escHtml(d.error) + '</span>';
+      const errHtml = '<span style="color:var(--fail);font-size:11px;">Error: ' + escHtml(d.error) + '</span>';
+      if (extraFields.length > 0) {
+        let efHtml = '<div class="viewer-extra-fields">';
+        for (const f of extraFields) {
+          efHtml += '<div class="viewer-extra-field">';
+          efHtml += '<span class="viewer-extra-field-label">' + escHtml(f.label) + '</span>';
+          efHtml += '<span class="viewer-extra-field-value">' + escHtml(f.value) + '</span>';
+          efHtml += '</div>';
+        }
+        efHtml += '</div>';
+        contentEl.innerHTML = efHtml + errHtml;
+      } else {
+        contentEl.innerHTML = errHtml;
+      }
       return;
     }
     const raw = d.content.slice(0, 12000) + (d.content.length > 12000 ? '\n\n*(truncated)*' : '');
 
-    // Render summary header
+    // Render summary header (type badge + auto-summarized description)
     const nodeType = type || 'generator';
     const badgeColor = NODE_COLORS[nodeType] || NODE_COLORS.generator;
     const typeLabel = 'a ' + nodeType;
-    const desc = summarize(raw, typeLabel);
+    const desc = rawMode ? '' : summarize(raw, typeLabel);
     summaryEl.innerHTML =
       '<div class="file-summary-name">' +
         '<span class="file-summary-badge" style="background:' + badgeColor + ';">' + escHtml(nodeType) + '</span>' +
         escHtml(name) +
       '</div>' +
-      '<div class="file-summary-desc">' + escHtml(desc) + '</div>';
+      (desc ? '<div class="file-summary-desc">' + escHtml(desc) + '</div>' : '');
     summaryEl.classList.add('visible');
 
-    // Render markdown body
-    if (typeof marked !== 'undefined') {
-      contentEl.innerHTML = marked.parse(raw);
+    // Build content: extra-fields block (if any) + file body
+    let bodyHtml = '';
+    if (extraFields.length > 0) {
+      bodyHtml += '<div class="viewer-extra-fields">';
+      for (const f of extraFields) {
+        bodyHtml += '<div class="viewer-extra-field">';
+        bodyHtml += '<span class="viewer-extra-field-label">' + escHtml(f.label) + '</span>';
+        bodyHtml += '<span class="viewer-extra-field-value">' + escHtml(f.value) + '</span>';
+        bodyHtml += '</div>';
+      }
+      bodyHtml += '</div>';
+    }
+
+    if (rawMode) {
+      // Raw mode: shell scripts and other non-markdown files display as plain pre
+      bodyHtml += '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
+    } else if (typeof marked !== 'undefined') {
+      bodyHtml += marked.parse(raw);
     } else {
       // Fallback: display as plain pre if marked not loaded
-      contentEl.innerHTML = '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
+      bodyHtml += '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
     }
+    contentEl.innerHTML = bodyHtml;
   } catch(e) {
     contentEl.innerHTML = '<span style="color:var(--fail);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
   }

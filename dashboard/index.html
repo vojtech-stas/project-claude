@@ -1756,7 +1756,11 @@ function renderTopologyGraph(data) {
     const bfsQueue = [];
     function bfsEnqueue(id, lv) {
       const cur = bfsLevels[id];
-      if (cur === undefined || lv > cur) {
+      // Cap lv at node count: a real longest path can't exceed N-1 levels; any
+      // attempt past that means a (non-BLOCK) cycle exists -- stop re-enqueueing
+      // rather than looping forever (the unbounded relaxation on the
+      // reviewer->merge->codebase_critic->reviewer cycle OOM-crashed the renderer).
+      if ((cur === undefined || lv > cur) && lv < allNodeIds.size) {
         bfsLevels[id] = lv;
         bfsQueue.push([id, lv]);
       }

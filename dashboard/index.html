@@ -1533,8 +1533,9 @@ async function loadArchitecture() {
 }
 
 /**
- * Render the orchestration topology as a vis-network hierarchical graph.
- * Layout: physics OFF, hierarchical (LR). Nodes positioned by declared stage field.
+ * Render the orchestration topology as a vis-network graph.
+ * Layout: physics OFF, fixed x/y positions computed from BFS level (no hierarchical
+ * solver, no sortMethod — avoids stack overflow on cyclic graphs with BLOCK back-edges).
  *
  * Declared mode (slice #627 rewrite):
  *   Renders the spec's __edges__ sequential pipeline flow left→right by stage:
@@ -1947,24 +1948,46 @@ function renderTopologyGraph(data) {
     }
   }
 
-  // Create the vis-network
+  // Assign fixed x/y positions based on BFS level — eliminates vis's recursive
+  // directed-sort layout which stack-overflows on cyclic graphs (BLOCK back-edges).
+  // Each level becomes a vertical column (left→right); nodes within a level are
+  // centred vertically. level=10 (SS side-workflow) is placed in its own column
+  // after the main spine with a small gap for legibility.
+  (function assignFixedPositions() {
+    // Group node indices by their level value.
+    const byLevel = {};
+    for (let i = 0; i < nodes.length; i++) {
+      const lv = nodes[i].level !== undefined ? nodes[i].level : 0;
+      if (!byLevel[lv]) byLevel[lv] = [];
+      byLevel[lv].push(i);
+    }
+    // Sort levels numerically so we can map them to columns left→right.
+    const sortedLevels = Object.keys(byLevel).map(Number).sort((a, b) => a - b);
+    // Build column index: main spine levels get columns 0,1,2,…; level 10 gets
+    // its own column but may share the x-range — just use position in sortedLevels.
+    const colX = {};
+    sortedLevels.forEach((lv, col) => { colX[lv] = col * 220; });
+    // Assign x/y for each node.
+    for (const lv of sortedLevels) {
+      const idxs = byLevel[lv];
+      const count = idxs.length;
+      idxs.forEach((i, rank) => {
+        nodes[i].x = colX[lv];
+        nodes[i].y = (rank - (count - 1) / 2) * 90;
+        nodes[i].fixed = { x: true, y: true };
+      });
+    }
+  })();
+
+  // Create the vis-network — no hierarchical layout solver, physics off,
+  // positions are pre-computed above so no recursive sortMethod runs.
   const nodesDataSet = new vis.DataSet(nodes);
   const edgesDataSet = new vis.DataSet(edges);
 
   const options = {
     layout: {
-      hierarchical: {
-        enabled: true,
-        direction: 'LR',
-        sortMethod: 'directed',
-        levelSeparation: 180,
-        nodeSpacing: 60,
-        treeSpacing: 100,
-        improvedLayout: false,
-        blockShifting: false,
-        edgeMinimization: false,
-        parentCentralization: true,
-      },
+      hierarchical: { enabled: false },
+      improvedLayout: false,
     },
     physics: { enabled: false },
     interaction: {

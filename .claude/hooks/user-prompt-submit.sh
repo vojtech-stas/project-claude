@@ -6,6 +6,7 @@
 # Soft-degrades if `jq` missing → exit 0 (no nudge; not a blocker).
 # CRITICAL: stdin is captured ONCE at the top; never re-read below.
 set -uo pipefail
+printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
 
 NUDGE='User prompt matches feature-request pattern. If the design isn'\''t settled yet, consider /grill-me before /ship.'
 

@@ -9,6 +9,7 @@
 #   4. Idempotent (curl-check before spawn — exits 0 if already up)
 
 set -euo pipefail
+printf '{"hook":"dashboard-autostart","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
 
 # --- Soft-degrade helpers ---
 warn() { echo "[dashboard-autostart] WARNING: $*" >&2; }

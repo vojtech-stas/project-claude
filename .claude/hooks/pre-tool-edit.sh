@@ -22,6 +22,7 @@
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+printf '{"hook":"pre-tool-edit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-.}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
 
 REASON='Main-agent write to tracked file — CLAUDE.md rule #10 says flow through PR pipeline. Confirm if this is an I3 trivial-lane edit (≤10 LoC, `trivial` label, branch `hotfix/<issue#>-…`); cancel and use /to-prd or /ship otherwise.'
 

@@ -66,6 +66,7 @@ fi
 
 LOG_DIR="$MAIN/.claude/logs"
 mkdir -p "$LOG_DIR" 2>/dev/null
+printf '{"hook":"log-event","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 TARGET_FILE="${LOGFILE:-workflow-events.jsonl}"
 printf '%s\n' "$LINE" >> "$LOG_DIR/$TARGET_FILE" 2>/dev/null || true

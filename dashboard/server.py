@@ -454,11 +454,48 @@ def _read_hook_purpose(cmd: str) -> str:
         return ""
 
 
+def _read_hook_fire_telemetry() -> dict:
+    """Read hook-fires.jsonl and aggregate per-hook fire_count + last_fired.
+
+    Reads only the last ~5000 lines to avoid unbounded growth becoming slow.
+    Fail-soft: returns empty dict on any error (every hook will show 0/null).
+    """
+    beacon_path = REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    telemetry: dict = {}
+    if not beacon_path.exists():
+        return telemetry
+    try:
+        # Read last ~5000 lines only
+        text = beacon_path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+        lines = lines[-5000:] if len(lines) > 5000 else lines
+        for raw in lines:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                continue
+            hook_name = obj.get("hook", "")
+            ts = obj.get("ts", "")
+            if not hook_name:
+                continue
+            entry = telemetry.setdefault(hook_name, {"fire_count": 0, "last_fired": None})
+            entry["fire_count"] += 1
+            if ts and (entry["last_fired"] is None or ts > entry["last_fired"]):
+                entry["last_fired"] = ts
+    except Exception:
+        pass
+    return telemetry
+
+
 def discover_hooks() -> list:
     settings_path = REPO_ROOT / ".claude" / "settings.json"
     hooks = []
     if not settings_path.exists():
         return hooks
+    telemetry = _read_hook_fire_telemetry()
     try:
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         for event, entries in data.get("hooks", {}).items():
@@ -481,6 +518,7 @@ def discover_hooks() -> list:
                         name = cmd[:60]
                         hook_path = ".claude/settings.json"
                     clean_name = _read_hook_name(cmd)
+                    fire_data = telemetry.get(clean_name, {"fire_count": 0, "last_fired": None})
                     hooks.append({
                         "name": clean_name,   # use clean_name for display; backward-compat alias
                         "clean_name": clean_name,
@@ -490,6 +528,8 @@ def discover_hooks() -> list:
                         "description": _read_hook_description(cmd),  # Fix C
                         "path": hook_path,  # Fix C: resolved .sh path
                         "purpose": _read_hook_purpose(cmd),  # slice #628
+                        "fire_count": fire_data["fire_count"],
+                        "last_fired": fire_data["last_fired"],
                     })
     except Exception:
         pass

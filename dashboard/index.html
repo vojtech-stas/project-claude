@@ -2077,6 +2077,12 @@ function renderHooksSection(data) {
         html += ` &mdash; <span class="hook-name">${escHtml(name)}</span>`;
       }
       html += ` &mdash; <span class="hook-desc">${escHtml(desc.slice(0, 120))}</span>`;
+      const fireCount = (typeof h.fire_count === 'number') ? h.fire_count : 0;
+      const lastFired = h.last_fired || null;
+      const fireText = lastFired
+        ? `fired ${fireCount}× · last ${lastFired}`
+        : `fired ${fireCount}×`;
+      html += ` &mdash; <span class="hook-fire-telemetry">${escHtml(fireText)}</span>`;
       html += `</div>`;
     }
     html += `</div>`;

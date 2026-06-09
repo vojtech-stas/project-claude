@@ -6,6 +6,7 @@
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+printf '{"hook":"session-start","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-.}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
 
 BR=$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")
 DIV="(fetch failed)"

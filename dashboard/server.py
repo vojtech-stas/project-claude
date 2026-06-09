@@ -520,7 +520,15 @@ def discover_adrs() -> list:
 
 
 def discover_edges() -> list:
-    """Infer edges from canonical file bodies (body-grep, no cascade-finder).
+    """Infer component-reference edges from canonical file bodies (body-grep).
+
+    NOTE (slice #629, ADR-0039 D2): this is a COMPONENT-REFERENCE graph, NOT
+    the canonical workflow topology. The authoritative sequential pipeline flow
+    lives in the PIPELINE spec's ``__edges__`` field and is exposed via
+    ``/api/pipeline`` (rendered by the Architecture topology graph since slice #627).
+    This function's output (``/api/architecture`` ``edges``) is consumed only by
+    the flat component list section's "Inferred edges" summary — a supplementary
+    cross-reference view, not the primary topology.
 
     Edge types:
       skill -> agent  : skill SKILL.md body mentions a known agent stem name
@@ -528,7 +536,7 @@ def discover_edges() -> list:
       hook  -> event  : each hook fires on its declared event
 
     Conservative: match agent stem names only (not path fragments).
-    Deduplicate. Cap at 50 edges with a stderr warning if exceeded.
+    Deduplicate. Cap at 200 edges with a stderr warning if exceeded.
     """
     edges: list = []
     seen: set = set()
@@ -613,6 +621,73 @@ def discover_edges() -> list:
 # ---------------------------------------------------------------------------
 # Health check helpers (re-implementing DOCS-* and AS-* in Python)
 # ---------------------------------------------------------------------------
+
+# SKILL.md paths for parsing check rationale + mechanic text (slice #629).
+_AUDIT_META_SKILL = REPO_ROOT / ".claude" / "skills" / "audit-meta" / "SKILL.md"
+_AUDIT_SUBAGENTS_SKILL = REPO_ROOT / ".claude" / "skills" / "audit-subagents" / "SKILL.md"
+
+# Mapping: check-id prefix → SKILL.md path.
+# DOCS-* and STRUCT-* are defined in audit-meta; AS-* in audit-subagents.
+def _skill_md_for_check(check_id: str) -> Path:
+    """Return the SKILL.md path that defines the given check ID."""
+    if check_id.startswith("AS-") or check_id.startswith("as-"):
+        return _AUDIT_SUBAGENTS_SKILL
+    # DOCS-* and STRUCT-* both live in audit-meta SKILL.md
+    return _AUDIT_META_SKILL
+
+
+def _parse_skill_rationale(check_id: str) -> tuple:
+    """Parse purpose (Rationale) and command (Mechanic) for a check from its SKILL.md.
+
+    Pins the parse to the ``### <check_id> —`` heading (§6 trap) to avoid
+    picking up prose mentions of the same ID elsewhere in the file.
+
+    Returns:
+        (purpose: str, command: str)
+        On no match: purpose = "rationale unavailable — see SKILL.md", command = "".
+    """
+    skill_path = _skill_md_for_check(check_id)
+    try:
+        text = skill_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ("rationale unavailable — see SKILL.md", "")
+
+    # Find the heading line: "### <check_id> — ..."
+    # Use re.escape so hyphens in IDs (AS-ALL-1) are treated literally.
+    heading_pattern = re.compile(
+        r'^###\s+' + re.escape(check_id) + r'\s+—',
+        re.MULTILINE,
+    )
+    m = heading_pattern.search(text)
+    if not m:
+        return ("rationale unavailable — see SKILL.md", "")
+
+    # Slice from the heading to the next "### " heading (or end of file).
+    section_start = m.start()
+    next_heading = re.search(r'^###\s+', text[m.end():], re.MULTILINE)
+    section_end = m.end() + next_heading.start() if next_heading else len(text)
+    section = text[section_start:section_end]
+
+    # Extract **Rationale:** block — everything from the marker to the next
+    # blank line, "**", or "---" separator.
+    rationale_m = re.search(r'\*\*Rationale:\*\*\s*(.+?)(?=\n\n|\n\*\*|\n---|\Z)',
+                             section, re.DOTALL)
+    purpose = rationale_m.group(1).strip() if rationale_m else "rationale unavailable — see SKILL.md"
+    # Collapse any internal newlines to a single space for display brevity.
+    purpose = re.sub(r'\s*\n\s*', ' ', purpose).strip()
+
+    # Extract **Mechanic:** block — the literal text / command after the marker.
+    # The mechanic may be a single-line inline or a fenced code block.
+    mechanic_m = re.search(r'\*\*Mechanic:\*\*\s*(.*?)(?=\n\n\*\*|\n\n###|\n---|\Z)',
+                            section, re.DOTALL)
+    command = mechanic_m.group(1).strip() if mechanic_m else ""
+    # Strip fenced code block markers if present (```...```)
+    command = re.sub(r'^```[a-z]*\n?', '', command)
+    command = re.sub(r'\n?```$', '', command)
+    command = command.strip()
+
+    return (purpose, command)
+
 
 def _read_file(path: Path) -> str:
     try:
@@ -945,6 +1020,24 @@ def _is_critic(stem: str, path: Path) -> bool:
     return stem in KNOWN_CRITICS or stem == "reviewer" or stem.endswith("-critic")
 
 
+def _enrich_checks(checks: list) -> list:
+    """Add purpose + command fields to each check dict from the SKILL.md (slice #629).
+
+    Mutates each dict in-place and returns the list for convenience.
+    purpose / command are sourced from the SKILL.md rationale/mechanic blocks
+    so CHECK 9 stays green (no hand-authored copies in dashboard source).
+    """
+    for c in checks:
+        check_id = c.get("id", "")
+        if check_id:
+            purpose, command = _parse_skill_rationale(check_id)
+        else:
+            purpose, command = ("rationale unavailable — see SKILL.md", "")
+        c["purpose"] = purpose
+        c["command"] = command
+    return checks
+
+
 def audit_subagents() -> dict:
     agents_dir = REPO_ROOT / ".claude" / "agents"
     results = {}
@@ -971,7 +1064,7 @@ def audit_subagents() -> dict:
             checks.append(_check_as_gen_1(agent_md))
         results[stem] = {
             "type": "critic" if is_critic else "generator",
-            "checks": checks,
+            "checks": _enrich_checks(checks),
         }
     return results
 
@@ -989,7 +1082,7 @@ def audit_meta() -> dict:
         check_docs9_glossary_cap(),
         check_docs10_backlog_surfacing(),
     ]
-    return {"checks": checks}
+    return {"checks": _enrich_checks(checks)}
 
 
 def cascade_finder_summary() -> dict:

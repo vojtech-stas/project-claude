@@ -433,6 +433,88 @@
     padding: 6px 8px;
     margin-top: 3px;
   }
+  /* Health tab: check list + detail panel side-by-side (slice #629) */
+  .health-layout {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .health-checks-col {
+    flex: 0 0 auto;
+    min-width: 300px;
+    max-width: 480px;
+  }
+  .health-detail-panel {
+    flex: 1 1 auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 180px;
+    max-height: 480px;
+    overflow-y: auto;
+    display: none;
+  }
+  .health-detail-panel.open { display: block; }
+  .health-detail-close {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .health-detail-close:hover { color: var(--text); }
+  .health-detail-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .health-detail-section { margin-bottom: 10px; }
+  .health-detail-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+  .health-detail-value {
+    font-size: 11px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .health-detail-purpose {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-left: 2px solid var(--border);
+    padding-left: 8px;
+  }
+  .health-detail-command {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow-y: auto;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 3px;
+  }
+  /* Clickable check rows */
+  .check-row-clickable {
+    cursor: pointer;
+  }
+  .check-row-clickable:hover td { background: rgba(255,255,255,0.04); }
+  .check-row-clickable.active td { background: rgba(59,130,246,0.12); }
   .flat-list-toggle {
     background: none;
     border: 1px dashed var(--border);
@@ -1171,19 +1253,37 @@
     <h2 style="margin:0;">Health checks</h2>
     <button class="refresh" onclick="loadHealth()">Refresh</button>
   </div>
-  <div class="cards">
-    <div class="card">
-      <div class="card-title">audit-meta (DOCS-1..DOCS-10)</div>
-      <div id="docs-grid"><div class="loading">Loading...</div></div>
+  <!-- audit-meta: check list + detail panel side-by-side (slice #629) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">audit-meta (DOCS-1..DOCS-10)</div>
+    <div class="health-layout">
+      <div class="health-checks-col">
+        <div id="docs-grid"><div class="loading">Loading...</div></div>
+      </div>
+      <div class="health-detail-panel" id="docs-detail-panel">
+        <button class="health-detail-close" onclick="closeHealthDetail('docs')" title="Close">&times;</button>
+        <div class="health-detail-title" id="docs-detail-title">Check detail</div>
+        <div id="docs-detail-body"></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-title">audit-subagents (AS-*)</div>
-      <div id="as-grid"><div class="loading">Loading...</div></div>
+  </div>
+  <!-- audit-subagents: check list + detail panel side-by-side (slice #629) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">audit-subagents (AS-*)</div>
+    <div class="health-layout">
+      <div class="health-checks-col">
+        <div id="as-grid"><div class="loading">Loading...</div></div>
+      </div>
+      <div class="health-detail-panel" id="as-detail-panel">
+        <button class="health-detail-close" onclick="closeHealthDetail('as')" title="Close">&times;</button>
+        <div class="health-detail-title" id="as-detail-title">Check detail</div>
+        <div id="as-detail-body"></div>
+      </div>
     </div>
-    <div class="card" style="grid-column: 1 / -1;">
-      <div class="card-title">cascade-finder</div>
-      <div id="cascade-summary"><div class="loading">Loading...</div></div>
-    </div>
+  </div>
+  <div class="card" style="grid-column: 1 / -1;">
+    <div class="card-title">cascade-finder</div>
+    <div id="cascade-summary"><div class="loading">Loading...</div></div>
   </div>
 </div>
 
@@ -2217,7 +2317,12 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// --- Health ---
+// --- Health (slice #629: clickable checks + detail panel) ---
+
+// Store for health check data, keyed by check ID, for detail panel lookup.
+let docsCheckStore = {};   // check_id → check object (DOCS-*)
+let asCheckStore = {};     // "stem:check_id" → check object (AS-*)
+
 async function loadHealth() {
   try {
     const r = await fetch('/api/health');
@@ -2230,50 +2335,130 @@ async function loadHealth() {
   }
 }
 
+/**
+ * Render DOCS-* check grid (audit-meta). Rows are clickable → opens docs detail panel.
+ * Slice #629: adds purpose + command from server-parsed SKILL.md rationale.
+ */
 function renderDocsGrid(auditMeta) {
   const grid = document.getElementById('docs-grid');
   if (!auditMeta || !auditMeta.checks) { grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return; }
+  docsCheckStore = {};
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
-  let rowId = 0;
   for (const c of auditMeta.checks) {
-    const hasDet = c.detail && c.detail.length > 0;
-    const rid = 'dr-' + (rowId++);
-    if (hasDet && c.result !== 'PASS') {
-      html += `<tr class="expandable" onclick="toggleDetail('${rid}')"><td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td><td style="color:var(--muted);font-size:10px;">${escHtml(c.detail.slice(0,60))}${c.detail.length>60?'…':''}</td></tr>`;
-      html += `<tr class="detail-row" id="${rid}"><td colspan="3">${escHtml(c.detail)}</td></tr>`;
-    } else {
-      html += `<tr><td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td><td style="color:var(--muted);font-size:10px;">${escHtml(c.detail||'')}</td></tr>`;
-    }
+    docsCheckStore[c.id] = c;
+    const detSnippet = c.detail && c.detail.length > 0
+      ? escHtml(c.detail.slice(0, 60)) + (c.detail.length > 60 ? '…' : '')
+      : '';
+    html += `<tr class="check-row-clickable" data-checkid="${escHtml(c.id)}" onclick="openHealthCheckDetail('docs', '${escHtml(c.id)}', this)">`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
   }
   html += '</table>';
   grid.innerHTML = html;
 }
 
+/**
+ * Render AS-* check grid (audit-subagents). Per-check rows are clickable → opens as detail panel.
+ * Slice #629: expands agent rows to show individual checks with purpose + command.
+ */
 function renderAsGrid(auditSubagents) {
   const grid = document.getElementById('as-grid');
   if (!auditSubagents || Object.keys(auditSubagents).length === 0) {
     grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return;
   }
-  // Summary table: agent | type | PASS | FAIL
-  let html = '<table><tr><th>Agent</th><th>Type</th><th>Pass</th><th>Fail</th></tr>';
-  let rowId = 100;
+  asCheckStore = {};
+  let html = '';
   for (const [stem, info] of Object.entries(auditSubagents)) {
     const checks = info.checks || [];
-    const pass = checks.filter(c => c.result === 'PASS').length;
+    const pass = checks.filter(c => c.result === 'PASS' || c.result === 'N/A').length;
     const fail = checks.filter(c => c.result === 'FAIL').length;
-    const rid = 'asr-' + (rowId++);
-    html += `<tr class="expandable" onclick="toggleDetail('${rid}')">`;
-    html += `<td>${escHtml(stem)}</td>`;
-    html += `<td><span style="color:${info.type==='critic'?'var(--orange)':'var(--green)'};font-size:10px;">${info.type}</span></td>`;
-    html += `<td>${pass > 0 ? badgeHtml('PASS') : ''} ${pass}</td>`;
-    html += `<td>${fail > 0 ? badgeHtml('FAIL') : ''} ${fail}</td>`;
-    html += `</tr>`;
-    // Expanded check rows
-    let det = checks.map(c => `${c.id}: ${c.result}${c.detail?' ('+c.detail+')':''}`).join('\n');
-    html += `<tr class="detail-row" id="${rid}"><td colspan="4">${escHtml(det)}</td></tr>`;
+    const typeColor = info.type === 'critic' ? 'var(--orange)' : 'var(--green)';
+    html += `<details style="margin-bottom:8px;">`;
+    html += `<summary style="cursor:pointer;font-size:11px;color:var(--text);padding:4px 0;">`;
+    html += `<strong>${escHtml(stem)}</strong> <span style="color:${typeColor};font-size:10px;">${escHtml(info.type)}</span>`;
+    html += ` &nbsp;${badgeHtml('PASS')} ${pass} ${fail > 0 ? badgeHtml('FAIL') + ' ' + fail : ''}`;
+    html += `</summary>`;
+    html += `<table style="margin-top:4px;"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>`;
+    for (const c of checks) {
+      const storeKey = stem + ':' + c.id;
+      asCheckStore[storeKey] = c;
+      const detSnippet = c.detail && c.detail.length > 0
+        ? escHtml(c.detail.slice(0, 50)) + (c.detail.length > 50 ? '…' : '')
+        : '';
+      html += `<tr class="check-row-clickable" data-checkkey="${escHtml(storeKey)}" onclick="openHealthCheckDetail('as', '${escHtml(storeKey)}', this)">`;
+      html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+      html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+      html += `</tr>`;
+    }
+    html += `</table></details>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  grid.innerHTML = html || '<span style="color:var(--muted)">No data</span>';
+}
+
+/**
+ * Open the health check detail panel for the clicked row (slice #629).
+ * panel: 'docs' | 'as'; key: check ID (docs) or "stem:check_id" (as).
+ * Shows: purpose (from SKILL.md rationale) + command (mechanic) + live verdict/detail.
+ */
+function openHealthCheckDetail(panel, key, clickedRow) {
+  const store = panel === 'docs' ? docsCheckStore : asCheckStore;
+  const c = store[key];
+  if (!c) return;
+
+  // Active-row highlight: clear all within the same panel's table, set new one.
+  const gridId = panel === 'docs' ? 'docs-grid' : 'as-grid';
+  document.querySelectorAll('#' + gridId + ' .check-row-clickable').forEach(r => r.classList.remove('active'));
+  if (clickedRow) clickedRow.classList.add('active');
+
+  const panelEl = document.getElementById(panel + '-detail-panel');
+  const titleEl = document.getElementById(panel + '-detail-title');
+  const bodyEl  = document.getElementById(panel + '-detail-body');
+
+  // Title: show check ID (and agent stem for AS checks)
+  const label = panel === 'as' ? key.replace(':', ' › ') : key;
+  titleEl.textContent = label;
+
+  const purpose = (c.purpose && c.purpose.trim())
+    ? c.purpose
+    : 'rationale unavailable — see SKILL.md';
+  const command = c.command || '';
+  const detail  = c.detail  || '';
+
+  let html = '';
+
+  html += `<div class="health-detail-section">`;
+  html += `<div class="health-detail-label">Purpose</div>`;
+  html += `<div class="health-detail-purpose">${escHtml(purpose)}</div>`;
+  html += `</div>`;
+
+  if (command) {
+    html += `<div class="health-detail-section">`;
+    html += `<div class="health-detail-label">Mechanic / Command</div>`;
+    html += `<div class="health-detail-command">${escHtml(command)}</div>`;
+    html += `</div>`;
+  }
+
+  html += `<div class="health-detail-section">`;
+  html += `<div class="health-detail-label">Verdict</div>`;
+  html += `<div class="health-detail-value">${badgeHtml(c.result)}`;
+  if (detail) html += ` <span style="color:var(--muted);font-size:10px;margin-left:6px;">${escHtml(detail)}</span>`;
+  html += `</div>`;
+  html += `</div>`;
+
+  bodyEl.innerHTML = html;
+  panelEl.classList.add('open');
+}
+
+/**
+ * Close the health check detail panel (slice #629).
+ * panel: 'docs' | 'as'
+ */
+function closeHealthDetail(panel) {
+  const panelEl = document.getElementById(panel + '-detail-panel');
+  if (panelEl) panelEl.classList.remove('open');
+  const gridId = panel === 'docs' ? 'docs-grid' : 'as-grid';
+  document.querySelectorAll('#' + gridId + ' .check-row-clickable').forEach(r => r.classList.remove('active'));
 }
 
 function renderCascade(cf) {

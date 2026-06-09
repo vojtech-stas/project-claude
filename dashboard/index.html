@@ -1872,7 +1872,9 @@ function renderTopologyGraph(data) {
     const bfsQueue2 = [];
     function bfsEnqueue2(id, lv) {
       const cur = bfsLevels2[id];
-      if (cur === undefined || lv > cur) {
+      // Cap lv at node count (same cycle-guard as declared-mode bfsEnqueue, PR #637):
+      // bounds the longest-path relaxation so a non-BLOCK cycle can't loop forever.
+      if ((cur === undefined || lv > cur) && lv < allNodeIds2.size) {
         bfsLevels2[id] = lv;
         bfsQueue2.push([id, lv]);
       }

@@ -342,15 +342,97 @@
   .hook-entry {
     font-size: 11px;
     color: var(--muted);
-    padding: 2px 0;
+    padding: 4px 8px;
     padding-left: 10px;
     border-left: 2px solid var(--border);
     margin-bottom: 2px;
+    cursor: pointer;
+    border-radius: 0 3px 3px 0;
+    transition: background 0.12s;
   }
+  .hook-entry:hover { background: var(--surface); border-left-color: var(--red); }
+  .hook-entry.active { background: var(--surface); border-left-color: var(--red); }
   .hook-entry .hook-event-tag { color: var(--red); }
   .hook-entry .hook-matcher { color: var(--orange); font-weight: 600; }
   .hook-entry .hook-name { color: var(--text); font-weight: 600; }
   .hook-entry .hook-desc { color: var(--text); }
+  /* Hook layout: list + detail panel side-by-side (slice #628) */
+  .hooks-layout {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .hooks-list-col {
+    flex: 0 0 auto;
+    min-width: 280px;
+  }
+  .hook-detail-panel {
+    flex: 1 1 auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    min-height: 180px;
+    max-height: 440px;
+    overflow-y: auto;
+    display: none;
+  }
+  .hook-detail-panel.open { display: block; }
+  .hook-detail-close {
+    float: right;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 2px;
+  }
+  .hook-detail-close:hover { color: var(--text); }
+  .hook-detail-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .hook-detail-section {
+    margin-bottom: 10px;
+  }
+  .hook-detail-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+  .hook-detail-value {
+    font-size: 11px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .hook-detail-purpose {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-left: 2px solid var(--border);
+    padding-left: 8px;
+  }
+  .hook-detail-body-pre {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-top: 3px;
+  }
   .flat-list-toggle {
     background: none;
     border: 1px dashed var(--border);
@@ -993,10 +1075,19 @@
         <div class="md-body" id="file-content"></div>
       </div>
     </div>
-    <!-- Hooks section: grouped by lifecycle event -->
+    <!-- Hooks section: grouped by lifecycle event (slice #628: clickable + detail panel) -->
     <div class="hooks-section" id="hooks-section" style="display:none;">
       <h3 style="margin-bottom:10px;">Hooks — by lifecycle event</h3>
-      <div id="hooks-by-event"><div class="loading">Loading hooks...</div></div>
+      <div class="hooks-layout">
+        <div class="hooks-list-col">
+          <div id="hooks-by-event"><div class="loading">Loading hooks...</div></div>
+        </div>
+        <div class="hook-detail-panel" id="hook-detail-panel">
+          <button class="hook-detail-close" onclick="closeHookDetail()" title="Close">&times;</button>
+          <div class="hook-detail-title" id="hook-detail-title">Hook detail</div>
+          <div id="hook-detail-body"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1825,7 +1916,12 @@ function renderTopologyGraph(data) {
  * Render hooks grouped by lifecycle event.
  * Rich display: event · matcher — name — description (slice #421).
  * Hooks without a matcher render: event — name — description.
+ * Slice #628: entries are clickable → opens hook detail panel.
  */
+
+// Store hook data indexed by a stable key for detail-panel lookup (slice #628).
+const hookDetailStore = {};
+
 function renderHooksSection(data) {
   const hooks = data.hooks || [];
   const sectionEl = document.getElementById('hooks-section');
@@ -1850,6 +1946,7 @@ function renderHooksSection(data) {
   ];
 
   let html = '';
+  let hookIdx = 0;
   for (const ev of orderedEvents) {
     const group = byEvent[ev];
     html += `<div class="hooks-event-group">`;
@@ -1863,7 +1960,11 @@ function renderHooksSection(data) {
       const when = matcher
         ? `${escHtml(ev)} &middot; <span class="hook-matcher">${escHtml(matcher)}</span>`
         : escHtml(ev);
-      html += `<div class="hook-entry">`;
+      const key = 'h' + hookIdx;
+      hookDetailStore[key] = h;
+      hookIdx++;
+      // data-hkey used to identify which hook was clicked (slice #628)
+      html += `<div class="hook-entry" data-hkey="${escHtml(key)}" onclick="openHookDetail('${key}', this)">`;
       html += `<span class="hook-event-tag">${when}</span>`;
       if (name) {
         html += ` &mdash; <span class="hook-name">${escHtml(name)}</span>`;
@@ -1875,6 +1976,80 @@ function renderHooksSection(data) {
   }
 
   containerEl.innerHTML = html || '<span style="color:var(--muted)">No hooks discovered.</span>';
+}
+
+/**
+ * Open the hook detail panel for the clicked hook entry (slice #628).
+ * Shows: purpose (header comment), event + matcher, script body via /api/file.
+ */
+async function openHookDetail(key, clickedEl) {
+  const h = hookDetailStore[key];
+  if (!h) return;
+
+  // Update active state
+  document.querySelectorAll('.hook-entry').forEach(el => el.classList.remove('active'));
+  if (clickedEl) clickedEl.classList.add('active');
+
+  const panel = document.getElementById('hook-detail-panel');
+  const titleEl = document.getElementById('hook-detail-title');
+  const bodyEl = document.getElementById('hook-detail-body');
+
+  const name = h.clean_name || h.name || '(unnamed)';
+  titleEl.textContent = 'hook: ' + name;
+
+  // Purpose from header comment; fall back to "purpose unavailable" message
+  const purpose = (h.purpose && h.purpose.trim())
+    ? h.purpose
+    : 'purpose unavailable — see hook script header';
+
+  // Event + matcher line
+  const eventMatcher = h.matcher
+    ? `${h.event} · ${h.matcher}`
+    : h.event || '(unknown)';
+
+  let html = '';
+  html += `<div class="hook-detail-section">`;
+  html += `<div class="hook-detail-label">Purpose</div>`;
+  html += `<div class="hook-detail-purpose">${escHtml(purpose)}</div>`;
+  html += `</div>`;
+
+  html += `<div class="hook-detail-section">`;
+  html += `<div class="hook-detail-label">Event · Matcher</div>`;
+  html += `<div class="hook-detail-value">${escHtml(eventMatcher)}</div>`;
+  html += `</div>`;
+
+  html += `<div class="hook-detail-section">`;
+  html += `<div class="hook-detail-label">Script body</div>`;
+  html += `<div class="hook-detail-body-pre" id="hook-detail-script">Loading…</div>`;
+  html += `</div>`;
+
+  bodyEl.innerHTML = html;
+  panel.classList.add('open');
+
+  // Fetch script body via /api/file (same mechanism as file-viewer)
+  const scriptEl = document.getElementById('hook-detail-script');
+  if (h.path) {
+    try {
+      const r = await fetch('/api/file?path=' + encodeURIComponent(h.path));
+      const d = await r.json();
+      if (d.error) {
+        scriptEl.textContent = 'Error: ' + d.error;
+      } else {
+        const body = d.content.slice(0, 8000) + (d.content.length > 8000 ? '\n… (truncated)' : '');
+        scriptEl.textContent = body;
+      }
+    } catch(e) {
+      scriptEl.textContent = 'Error fetching script: ' + e.message;
+    }
+  } else {
+    scriptEl.textContent = '(no script path available)';
+  }
+}
+
+function closeHookDetail() {
+  const panel = document.getElementById('hook-detail-panel');
+  if (panel) panel.classList.remove('open');
+  document.querySelectorAll('.hook-entry').forEach(el => el.classList.remove('active'));
 }
 
 function toggleFlatList(btn) {

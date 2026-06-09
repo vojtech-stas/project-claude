@@ -413,6 +413,47 @@ def _read_hook_name(cmd: str) -> str:
     return cmd[:30].strip()
 
 
+def _read_hook_purpose(cmd: str) -> str:
+    """Return the header-comment block of a hook script (slice #628).
+
+    Reads all contiguous '#'-prefixed lines after the shebang line, before
+    the first non-comment non-blank line.  Strips leading '# ' / '#' from
+    each line, joins with newlines, truncates to 800 chars.
+    Fail-soft: returns "" if the script has no header comment or cannot be read.
+    """
+    m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
+    if not m:
+        return ""
+    script_path = REPO_ROOT / ".claude" / "hooks" / m.group(1)
+    if not script_path.exists():
+        return ""
+    try:
+        lines = script_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        comment_lines: list[str] = []
+        past_shebang = False
+        for line in lines:
+            stripped = line.strip()
+            if not past_shebang and stripped.startswith("#!"):
+                past_shebang = True
+                continue
+            if stripped.startswith("#"):
+                text = stripped[1:].lstrip(" ")
+                comment_lines.append(text)
+            elif stripped == "":
+                # blank lines inside header are included; stop on non-blank non-comment
+                if comment_lines:
+                    comment_lines.append("")
+            else:
+                break  # first non-comment non-blank line — header block ends
+        # Strip trailing blank lines accumulated at the end
+        while comment_lines and comment_lines[-1] == "":
+            comment_lines.pop()
+        purpose = "\n".join(comment_lines)
+        return purpose[:800]
+    except Exception:
+        return ""
+
+
 def discover_hooks() -> list:
     settings_path = REPO_ROOT / ".claude" / "settings.json"
     hooks = []
@@ -448,6 +489,7 @@ def discover_hooks() -> list:
                         "command": cmd[:120],
                         "description": _read_hook_description(cmd),  # Fix C
                         "path": hook_path,  # Fix C: resolved .sh path
+                        "purpose": _read_hook_purpose(cmd),  # slice #628
                     })
     except Exception:
         pass

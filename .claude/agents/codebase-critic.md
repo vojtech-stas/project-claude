@@ -261,6 +261,14 @@ Five body sections in order: **Header** (round N/3, PRD number, HEAD ref) → **
 
 Per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1.
 
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `RECOMMENDATIONS`, `ESCALATE`) are allowed only after the core three.
+
+**Mandatory output-contract posting — per-PRD mode only (per ADR-0054 D1):** After rendering your verdict — EVERY round, BLOCK and APPROVE alike — post the full verdict body including the fenced CRITIC trailer as a comment on the PRD issue under review:
+```bash
+gh issue comment <PRD-issue-number> --body-file <tempfile>
+```
+This is your output channel, not an optional courtesy — round counts are recovered from these comments. **Whole-repo mode does NOT post** — it has no single artifact under review; its findings flow via captured issues per ADR-0051 D3.
+
 ---
 
 ## After posting the verdict — CRITIC trailer
@@ -297,6 +305,7 @@ Authorized commands:
 - `git diff <base>..<head>`, `git diff --stat`, `git log` — cumulative diff inspection
 - `gh issue view`, `gh issue list` — read-only
 - `gh issue create --label captured` + `/promote-to-backlog <N>` — mandatory RECOMMEND → captured-issue autopilot (rule #11)
+- `gh issue comment <PRD-issue-number> --body-file <tempfile>` — post per-PRD verdict on the PRD issue (mandatory output channel per ADR-0054 D1; per-PRD mode only)
 - `gh api repos/{owner}/{repo}/contents/<path>` — verify file existence on origin/main
 
 If you find yourself wanting any mutating capability beyond captured-issue creation, STOP and explain in your verdict.

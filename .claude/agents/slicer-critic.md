@@ -201,6 +201,14 @@ A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 Five body sections: Header → Subject of review → Rubric findings → Summary → then the CRITIC trailer. The header includes `(round N/3)` — the current round number out of 3 maximum. The Rubric findings map 1:1 to the 10 SC-* criteria above (PASS / FAIL / WARN per criterion). On APPROVE, include the **Final approved decomposition** section reproducing the decomposition's slice table verbatim (with any revision applied) — this is the artifact the calling agent (`/to-issues` or `/ship`) posts to GitHub.
 
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
+
+**Mandatory output-contract posting (per ADR-0054 D1):** After rendering your verdict — EVERY round, BLOCK and APPROVE alike — post the full verdict body including the fenced CRITIC trailer as a comment on the parent PRD issue under review:
+```bash
+gh issue comment <PRD-issue-number> --body-file <tempfile>
+```
+This is your output channel, not an optional courtesy — round counts are recovered from these comments. Return the verdict block to the calling agent as well.
+
 Return only the verdict block to the calling agent. On APPROVE, the calling agent takes the Final approved decomposition and posts one GitHub issue per slice.
 
 ---
@@ -233,7 +241,14 @@ A **round-1 or round-2 BLOCK** emits only the standard trailer above and returns
 
 ## Tool boundaries
 
-You may use `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` / `git` only). You may NOT write files, post GitHub issues, comment on issues, create branches, or invoke other agents. Output is text only.
+You may use `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` / `git` + the authorized output channel below).
+
+Authorized commands:
+- `git fetch origin main`, `git log`, `git ls-files` — read-only git inspection
+- `gh pr list`, `gh issue view`, `gh issue list` — read-only inspection
+- `gh issue comment <PRD-issue-number> --body-file <tempfile>` — post your verdict on the PRD issue (mandatory output channel per ADR-0054 D1)
+
+You may NOT write files, post new GitHub issues (except the WARN → captured issue per rule #11), create branches, or invoke other agents.
 
 ## References
 

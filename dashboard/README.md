@@ -14,7 +14,7 @@ Then open `http://localhost:8765` in any modern browser.
 
 ## Tabs
 
-- **Architecture** — pipeline mermaid diagram + auto-discovered component graph (skills, agents, hooks, ADRs). Click any node to view its file.
+- **Architecture** — pipeline mermaid diagram with evidence-tier styling (github/runtime/unmeasurable edges) + auto-discovered component graph (skills, agents, hooks, ADRs). Includes a per-run Trail comparison panel: run picker, per-edge states (confirmed/missing/not-reached/not-exercised/unexpected), violation detectors (unreviewed-merge, no-closes-slice, slice-no-pr), and repo rollup (PASS/FAIL per run PASS definition in ADR-0053 D3). Click any node to view its file.
 - **Live** — placeholder; real-time event stream ships in slice 2 of PRD #345.
 - **Health** — DOCS-1..DOCS-10 audit-meta grid, AS-* audit-subagents grid, cascade-finder status. Click any FAIL row to expand details.
 

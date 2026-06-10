@@ -107,50 +107,52 @@ The whole autonomous composition at a glance: the human enters at **`/grill-me`*
 ```mermaid
 flowchart TD
   subgraph S1["Stage 1: Idea capture"]
-    U1[User]
+    user["User"]
     build["/build"]
     grill_me["/grill-me"]
     ship["/ship"]
   end
-  subgraph S2["Stage 2–3: PRD + slice decomposition"]
+  subgraph S2["Stage 2-3: PRD + slice decomposition"]
     to_prd["/to-prd"]
-    prd_critic{prd-critic}
-    adr_critic{adr-critic}
     to_issues["/to-issues"]
+    prd_critic{{prd-critic}}
+    adr_critic{{adr-critic}}
     slicer[slicer]
-    slicer_critic{slicer-critic}
+    slicer_critic{{slicer-critic}}
     prd_issue[(PRD issue)]
-    slice_issues[(slice issues)]
+    slice_issue[(Slice issue)]
   end
   subgraph S3["Stage 4: Implementation"]
     implementer[implementer]
-    reviewer{reviewer}
-    pr[(PR Closes #N)]
-    merge[(merged on main)]
-    nh[needs-human]
+    reviewer{{reviewer}}
+    pr[(Pull Request)]
+    merge[(Merge)]
+    closed_prd[(Closed PRD)]
+    needs_human[(needs-human)]
   end
   subgraph S4["Stage 5: Acceptance"]
     qa_plan["/qa-plan"]
+    qa_review["/qa-review"]
     qa_tester[qa-tester]
-    U2[User accepts PRD]
+    verify_verdict[(verify verdict)]
   end
   subgraph SS["Side workflows"]
     glossary["/glossary"]
-    glossary_critic{glossary-critic}
     promote_to_backlog["/promote-to-backlog"]
-    backlog_critic{backlog-critic}
     audit_meta["/audit-meta"]
     audit_subagents["/audit-subagents"]
-    codebase_critic{codebase-critic}
+    glossary_critic{{glossary-critic}}
+    backlog_critic{{backlog-critic}}
+    codebase_critic{{codebase-critic}}
+    captured_issue[(captured issue)]
+    backlog_issue[(backlog issue)]
     glossary_pr[(glossary PR)]
-    cap[captured issue]
-    bl[backlog label]
-    capstay[stays captured]
   end
-  U1 --> grill_me
-  grill_me -->|settled design| ship
-  U1 --> build
+  user -->|/build| build
+  user -->|/ship| ship
+  user -./grill-me.- grill_me
   build --> ship
+  grill_me -.settled design.- ship
   ship --> to_prd
   to_prd --> prd_critic
   to_prd -.if ADR.- adr_critic
@@ -160,41 +162,49 @@ flowchart TD
   prd_issue --> to_issues
   to_issues --> slicer
   slicer -->|decomposition| slicer_critic
-  slicer_critic -->|APPROVE| slice_issues
+  prd_issue -->|sub-issue| slice_issue
   slicer_critic -.BLOCK.- slicer
-  slice_issues --> implementer
-  implementer --> pr
+  slice_issue --> implementer
+  slice_issue --> pr
   pr --> reviewer
   reviewer -->|APPROVE| merge
+  merge --> closed_prd
   reviewer -.BLOCK.- implementer
-  reviewer -.round-3 BLOCK.- nh
+  reviewer -.round-3 BLOCK.- needs_human
+  pr -.trivial.- merge
   merge --> qa_plan
   qa_plan --> qa_tester
-  qa_tester --> U2
-  audit_subagents -.per-PRD.- reviewer
-  audit_meta -.per-PRD.- reviewer
+  qa_tester -->|PASS/FAIL| verify_verdict
+  merge -.residual.- qa_review
+  merge -.per-PRD gate.- codebase_critic
+  codebase_critic -.per-PRD.- reviewer
+  ship -.whole-repo bg.- codebase_critic
+  user -./glossary.- glossary
   glossary --> glossary_critic
   glossary_critic -->|APPROVE| glossary_pr
   glossary_pr --> reviewer
-  cap --> ptb
-  ptb --> backlog_critic
-  backlog_critic -->|APPROVE| bl
-  backlog_critic -->|BLOCK| capstay
-  codebase_critic -.per-PRD gate.- reviewer
-  merge -.next PRD.- codebase_critic
-  ship -.whole-repo bg.- codebase_critic
+  user -.- audit_subagents
+  audit_subagents -.per-PRD.- reviewer
+  user -.- audit_meta
+  audit_meta -.per-PRD.- reviewer
+  orchestrator -.capture.- captured_issue
+  user -.- promote_to_backlog
+  captured_issue --> promote_to_backlog
+  promote_to_backlog --> backlog_critic
+  backlog_critic -->|APPROVE| backlog_issue
+  backlog_critic -.BLOCK.- captured_issue
   classDef human fill:#3b82f6,color:#fff
   classDef skill fill:#14b8a6,color:#fff
   classDef gen fill:#22c55e,color:#fff
   classDef critic fill:#f97316,color:#fff
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
-  class U1,U2 human
-  class audit_meta,audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,ship,to_issues,to_prd skill
+  class user human
+  class audit_meta,audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
-  class prd_issue,slice_issues,pr,merge,nh,glossary_pr,cap,bl,capstay artifact
+  class backlog_issue,captured_issue,closed_prd,glossary_pr,merge,needs_human,pr,prd_issue,slice_issue,verify_verdict artifact
 ```
 
 ### Legend

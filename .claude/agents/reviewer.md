@@ -274,6 +274,8 @@ Reviewer-specific instance: 5 body sections (Header → Subject of review → Ru
 
 The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in each agent's system prompt per CLAUDE.md rule #9 (DRY).
 
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`) are allowed only after the core three.
+
 ---
 
 ## Post-verdict action

@@ -153,9 +153,13 @@ When auditing a draft ADR that cites or extends prior ADRs, flag *"this ADR affe
 
 The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
 
-Post your verdict either:
-- as a comment on the ADR-tracking issue (if one exists) via `gh issue comment <N> --body-file <tempfile>`, OR
-- back to the calling agent inline if the ADR is still a draft.
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
+
+**Mandatory output-contract posting (per ADR-0054 D1):** After rendering your verdict — EVERY round, BLOCK and APPROVE alike — post the full verdict body including the fenced CRITIC trailer as a comment on the parent PRD issue (the PRD issue that triggered this ADR review):
+```bash
+gh issue comment <PRD-issue-number> --body-file <tempfile>
+```
+This is your output channel, not an optional courtesy — round counts are recovered from these comments. If no PRD issue exists (pure draft review), return the verdict inline to the calling agent instead.
 
 The Rubric line items map 1:1 to the 6 criteria above. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and include a clear `@vojtech-stas` mention in the verdict body. The calling agent applies the `needs-human` label to the draft-tracking issue (or to the posted ADR-tracking issue if already posted) and posts a summary comment on the parent grill-session / PRD context.
 

@@ -82,7 +82,7 @@ invoke hooks; per PRD #668 §2 orchestrator-level honesty):
 
 ```bash
 python3 - <<'PY'
-import json, os
+import os
 log = os.environ.get("CLAUDE_PROJECT_DIR","") + "/.claude/logs/workflow-events.jsonl"
 sid = os.environ.get("CLAUDE_CODE_SESSION_ID","")
 try:

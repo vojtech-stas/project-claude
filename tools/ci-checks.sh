@@ -60,7 +60,7 @@ CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci)(\(.+\))?: .+'
 RANGE_COMMITS=$(git log --no-merges --format='%s' origin/main..HEAD 2>/dev/null || true)
 
 if [ -z "$RANGE_COMMITS" ]; then
-    pass "no commits ahead of origin/main — nothing to check"
+    echo "CHECK 3 VACUOUS — no commits in range; subject-format not verified"
 else
     CHECK3_FAIL=0
     while IFS= read -r subject; do
@@ -542,6 +542,36 @@ if [ "$CHECK9_EXIT" -ne 0 ]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 fi  # end python3/dashboard/server.py availability check
+
+# ---------------------------------------------------------------------------
+# CHECK 10: Critic + reviewer trailer-schema completeness (ADR-0054 D2)
+#   Every .claude/agents/*-critic.md and reviewer.md must document all three
+#   mandatory CRITIC trailer keys: VERDICT, REASON, ROUND.
+#   Whole-file fixed-string grep; SPIDR-I fallback (fenced-block scoping later
+#   if false-positive issues arise).  Deterministic, local, network-free.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 10: critic + reviewer trailer-schema completeness ---"
+CHECK10_FAIL=0
+CRITIC_FILES=()
+# Collect all *-critic.md files
+for f in .claude/agents/*-critic.md; do
+    [ -f "$f" ] && CRITIC_FILES+=("$f")
+done
+# Add reviewer.md
+[ -f ".claude/agents/reviewer.md" ] && CRITIC_FILES+=(".claude/agents/reviewer.md")
+
+for agent_file in "${CRITIC_FILES[@]}"; do
+    for key in VERDICT REASON ROUND; do
+        if ! grep -qF "$key" "$agent_file" 2>/dev/null; then
+            fail "CHECK 10 — $agent_file missing trailer key: $key"
+            CHECK10_FAIL=1
+        fi
+    done
+done
+
+if [ "$CHECK10_FAIL" -eq 0 ]; then
+    pass "CHECK 10 — all critic + reviewer files document VERDICT/REASON/ROUND"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

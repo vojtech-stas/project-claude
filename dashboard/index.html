@@ -1245,7 +1245,7 @@
     <div class="trail-toolbar">
       <div class="trail-picker-group">
         <span class="trail-label">PRD:</span>
-        <select id="trail-prd-select" onchange="onTrailPickerChange()" style="display:none;">
+        <select id="trail-prd-select" style="display:none;" onchange="onTrailPickerChange()">
           <option value="">Loading runs…</option>
         </select>
         <input id="trail-prd-input" type="number" value="640"
@@ -3938,6 +3938,16 @@ async function loadTrailRuns() {
       sel.value = String(_trailRuns[0].number);
       input.value = _trailRuns[0].number;
     }
+    // Attach change listener via addEventListener so programmatic dispatchEvent
+    // (e.g. repro scripts, test drivers) also triggers the handler reliably.
+    sel.addEventListener('change', onTrailPickerChange);
+    // Auto-load the default (newest) run so the panel is never blank on arrival.
+    if (_trailRuns.length > 0) {
+      loadTrailComparison().catch(e => {
+        const statusEl = document.getElementById('trail-status');
+        if (statusEl) statusEl.textContent = 'error: ' + e.message;
+      });
+    }
   } catch (e) {
     // silently degrade — manual input still works
   }
@@ -3946,9 +3956,14 @@ async function loadTrailRuns() {
 function onTrailPickerChange() {
   const sel = document.getElementById('trail-prd-select');
   const input = document.getElementById('trail-prd-input');
-  if (sel && input && sel.value) {
-    input.value = sel.value;
-  }
+  if (!sel || !input) return;
+  // Prefer the select value; fall back to the manual input already typed.
+  // sel.value is '' when no matching option exists (e.g. value set before
+  // options load) — in that case honour whatever is already in the number input.
+  const prdVal = sel.value || input.value;
+  if (!prdVal) return;
+  input.value = prdVal;
+  loadTrailComparison();
 }
 
 function _fmtDuration(s) {
@@ -4196,25 +4211,64 @@ function toggleRollupPanel() {
 
 /**
  * Load and render the repo rollup.
+ * If the server responds with {status:"computing"}, polls every 2s with a
+ * visible elapsed-time counter so the panel never sits silently.
  */
 async function loadRollup() {
   const lastInput = document.getElementById('rollup-last-input');
   const statusEl = document.getElementById('rollup-status');
   const contentEl = document.getElementById('trail-rollup-content');
   const last = parseInt((lastInput && lastInput.value) || '10', 10) || 10;
-  statusEl.textContent = 'Loading…';
-  contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading rollup…</span>';
+  statusEl.textContent = 'Computing…';
+  statusEl.style.color = 'var(--muted)';
+  const startMs = Date.now();
+
+  const _elapsed = () => {
+    const s = Math.round((Date.now() - startMs) / 1000);
+    return s + 's';
+  };
+
+  contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;" id="rollup-progress-msg">Computing rollup… 0s (scanning PRDs + PRs via gh CLI)</span>';
+
+  const _setProgress = (msg) => {
+    const el = document.getElementById('rollup-progress-msg');
+    if (el) el.textContent = msg;
+  };
+
   try {
-    const resp = await fetch(`/api/rollup?last=${last}`);
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({error: resp.statusText}));
-      throw new Error(err.error || resp.statusText);
+    // Poll loop: keeps fetching until server returns data (not computing).
+    let pollCount = 0;
+    while (true) {
+      const resp = await fetch(`/api/rollup?last=${last}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({error: resp.statusText}));
+        throw new Error(err.error || resp.statusText);
+      }
+      const result = await resp.json();
+
+      // Server still computing — update progress and wait 2s
+      if (result.status === 'computing') {
+        pollCount++;
+        const elapsed = _elapsed();
+        _setProgress(`Computing rollup… ${elapsed} (scanning PRDs + PRs via gh CLI — this takes ~20–30s cold)`);
+        statusEl.textContent = `Computing… ${elapsed}`;
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+
+      // Error from background thread
+      if (result.status === 'error') {
+        throw new Error(result.error || 'rollup failed');
+      }
+
+      // Data ready
+      _renderRollup(result, contentEl);
+      const violations = (result.violations || []).length;
+      const elapsed = _elapsed();
+      statusEl.textContent = `${(result.prd_numbers || []).length} PRDs — ${violations} violation(s) — ${elapsed}`;
+      statusEl.style.color = violations > 0 ? 'var(--fail)' : 'var(--green)';
+      return;
     }
-    const result = await resp.json();
-    _renderRollup(result, contentEl);
-    const violations = (result.violations || []).length;
-    statusEl.textContent = `${(result.prd_numbers || []).length} PRDs — ${violations} violation(s)`;
-    statusEl.style.color = violations > 0 ? 'var(--fail)' : 'var(--green)';
   } catch (e) {
     statusEl.textContent = `Error: ${e.message}`;
     statusEl.style.color = 'var(--red)';

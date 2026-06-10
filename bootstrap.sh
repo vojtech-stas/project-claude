@@ -282,14 +282,23 @@ BP_BODY='{
 }'
 
 if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
-    if printf '%s' "$BP_BODY" \
-        | gh api -X PUT "/repos/${ORIGIN_SLUG}/branches/main/protection" --input - >/dev/null 2>&1; then
+    # Endpoint is deliberately slash-less: a leading "/repos/..." gets rewritten
+    # to "C:/Program Files/Git/repos/..." by MSYS path conversion on Windows
+    # Git Bash, yielding "invalid API endpoint" (ADR-0030 hardening class).
+    # gh treats the slash-less form identically on every platform.
+    BP_ERR=$(printf '%s' "$BP_BODY" \
+        | gh api -X PUT "repos/${ORIGIN_SLUG}/branches/main/protection" --input - 2>&1 >/dev/null)
+    BP_RC=$?
+    if [[ "$BP_RC" -eq 0 ]]; then
         log "branch protection applied to 'main' (R1+R2)."
         note "✓ branch protection: R1+R2 applied to main"
+    elif printf '%s' "$BP_ERR" | grep -qi "upgrade to github pro"; then
+        warn "branch protection unavailable: private repos need GitHub Pro (or make the repo public); skipping."
+        note "⚠ branch protection: skipped (plan does not cover private-repo protection)"
     else
-        warn "branch protection requires admin permission; skipping."
+        warn "branch protection failed; skipping. gh said: ${BP_ERR:-<no stderr captured>}"
         warn "if you're a maintainer, retry with a token that has 'repo' admin scope."
-        note "⚠ branch protection: skipped (no admin permission)"
+        note "⚠ branch protection: skipped (see warning above)"
     fi
 else
     warn "skipping branch protection (gh not ready or origin slug unresolved)."

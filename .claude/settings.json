@@ -18,6 +18,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/dashboard-autostart.sh\""
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" session_start"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -113,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -cn --arg ts \"$(date -Iseconds)\" --arg sid \"${CLAUDE_CODE_SESSION_ID:-}\" '{ts: $ts, session_id: $sid, event: \"session_stop\"}' | bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\""
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" session_stop"
           },
           {
             "type": "command",

@@ -113,8 +113,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | `/glossary` skill (add\|fold subcommands) | `.claude/skills/glossary/SKILL.md` | interactive single-entry (`add`) and bulk fold (`fold`) flows for the glossary INDEX; per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D3 |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 | Cascade-aware deps | `tools/cascade-finder.py` | advisory tool for cascade-aware workflow; see [tools/README.md](tools/README.md) |
-| Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh` |
-| Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of agent/bash/stop events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
+| Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh`; canonical logger: `log-tool-event.sh` |
+| Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of v2 workflow events (schema v2: `{"v":2, "ts", "session_id", "src":"hook", ...}`) per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pre-commit hooks | `.githooks/pre-commit`, `.githooks/install.sh` | workflow enforcement |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md` | immutable; supersede rather than edit |
 | Decisions index | `decisions/README.md` | one row per ADR (number, title, Status); consult before citing a D-ID (rule #18) |

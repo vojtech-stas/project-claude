@@ -5,8 +5,23 @@
 # Emits hookSpecificOutput.additionalContext (non-blocking nudge) if pattern matches.
 # Soft-degrades if `jq` missing → exit 0 (no nudge; not a blocker).
 # CRITICAL: stdin is captured ONCE at the top; never re-read below.
+#
+# skill_invoke routing decision (PRD #668 slice #670 open question):
+# This hook receives a UserPromptSubmit payload (.prompt, .session_id) — NOT a
+# PreToolUse(Skill) payload (.tool_input.skill).  log-tool-event.sh's skill_invoke
+# extraction expects the PreToolUse schema; piping a UserPromptSubmit payload would
+# produce an event with an empty skill field.  Keeping the emission on log-event.sh
+# (which accepts a pre-formatted JSON object) avoids that schema mismatch while still
+# producing a correct skill_invoke event.  log-event.sh remains for this use-case
+# pending a UserPromptSubmit-aware extraction path in log-tool-event.sh (PRD 5+).
 set -uo pipefail
-printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
+
+# Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=lib-root.sh
+source "$SCRIPT_DIR/lib-root.sh"
+
+printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 NUDGE='User prompt matches feature-request pattern. If the design isn'\''t settled yet, consider /grill-me before /ship.'
 

@@ -5,7 +5,13 @@
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
-printf '{"hook":"stop-reviewer-gate","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-.}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
+
+# Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=lib-root.sh
+source "$SCRIPT_DIR/lib-root.sh"
+
+printf '{"hook":"stop-reviewer-gate","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 # Skip subagent context — reviewer subagent's own Stop must not trigger loop.
 if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then

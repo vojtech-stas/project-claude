@@ -24,6 +24,34 @@ Full design rationale: [ADR-0034](../../../decisions/0034-build-orchestrator-and
 
 ## Step-by-step procedure
 
+### Step 0 — Live-feed self-check (capture honesty gate)
+
+Before any pipeline work, verify the capture layer is alive for this session.
+Read the tail of `workflow-events.jsonl` (last 200 lines) and count events whose
+`session_id` matches `$CLAUDE_CODE_SESSION_ID` and whose `ts` is >= the current
+session-start time. Use python3 (rule #12-compatible — reads a log file, does not
+invoke hooks; per PRD #668 §2 orchestrator-level honesty):
+
+```bash
+python3 - <<'PY'
+import os
+log = os.environ.get("CLAUDE_PROJECT_DIR","") + "/.claude/logs/workflow-events.jsonl"
+sid = os.environ.get("CLAUDE_CODE_SESSION_ID","")
+try:
+    lines = open(log, encoding="utf-8", errors="replace").readlines()[-200:]
+    fresh = sum(1 for l in lines if sid and sid in l)
+    print(fresh)
+except Exception:
+    print(0)
+PY
+```
+
+**If count == 0:** state verbatim: "capture is dead (resumed-session class)" and
+stamp this run `capture=dead`. Downstream verification CANNOT claim live hook-fire
+evidence for this run; note it explicitly in the step 5 final report.
+
+**If count > 0:** log "capture alive: N fresh events" and proceed.
+
 ### Step 1 — Ensure dashboard running (idempotent)
 
 Invoke `.claude/hooks/dashboard-autostart.sh` as a subprocess so the human can watch the build live:

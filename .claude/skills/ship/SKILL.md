@@ -72,6 +72,34 @@ When the background `codebase-critic` run completes, the main agent receives a c
 
 ## Step-by-step procedure
 
+### Step 0 — Live-feed self-check (capture honesty gate)
+
+Before the pipeline begins, verify the capture layer is alive for this session.
+Read the tail of `workflow-events.jsonl` (last 200 lines) and count events whose
+`session_id` matches `$CLAUDE_CODE_SESSION_ID` and whose `ts` is >= the current
+session-start time. Use python3 (rule #12-compatible — reads a log file, does not
+invoke hooks; per PRD #668 §2 orchestrator-level honesty):
+
+```bash
+python3 - <<'PY'
+import os
+log = os.environ.get("CLAUDE_PROJECT_DIR","") + "/.claude/logs/workflow-events.jsonl"
+sid = os.environ.get("CLAUDE_CODE_SESSION_ID","")
+try:
+    lines = open(log, encoding="utf-8", errors="replace").readlines()[-200:]
+    fresh = sum(1 for l in lines if sid and sid in l)
+    print(fresh)
+except Exception:
+    print(0)
+PY
+```
+
+**If count == 0:** state verbatim: "capture is dead (resumed-session class)" and
+stamp this run `capture=dead`. Downstream verification CANNOT claim live hook-fire
+evidence for this run; note it explicitly in the step 7 final report.
+
+**If count > 0:** log "capture alive: N fresh events" and proceed.
+
 1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If the design is thin or open, STOP and ask the user to grill further. Do NOT invent a PRD.
 
 2. **Stage 2 — `/to-prd`.** Invoke [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md) unchanged. It runs `prd-critic` (+ `adr-critic` under shared round counter when a macro-ADR is drafted) internally per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1's joint-APPROVE gate, then publishes via `gh issue create`. Capture the PRD issue number.

@@ -339,10 +339,18 @@ def _read_hook_purpose(cmd: str) -> str:
 
 
 def _read_hook_fire_telemetry() -> dict:
-    """Read hook-fires.jsonl and aggregate per-hook fire_count + last_fired.
+    """Read hook-fires.jsonl and aggregate per-event-type fire_count + error_count + last_fired.
+
+    Keys telemetry on the event-type name carried in each beacon's ``hook`` field
+    (e.g. session_start, agent_complete) — distinct per-event-type entries instead
+    of one shared bucket per script file.
+
+    fire_count  = attempt beacons (status == "attempt" or no status field on legacy lines).
+    error_count = error beacons (status == "error").
+    last_fired  = most recent ts across all beacons for that event type.
 
     Reads only the last ~5000 lines to avoid unbounded growth becoming slow.
-    Fail-soft: returns empty dict on any error (every hook will show 0/null).
+    Fail-soft: returns empty dict on any error (every event type will show 0/null).
     """
     beacon_path = REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
     telemetry: dict = {}
@@ -361,17 +369,40 @@ def _read_hook_fire_telemetry() -> dict:
                 obj = json.loads(raw)
             except Exception:
                 continue
-            hook_name = obj.get("hook", "")
+            event_name = obj.get("hook", "")
             ts = obj.get("ts", "")
-            if not hook_name:
+            status = obj.get("status", "")
+            if not event_name:
                 continue
-            entry = telemetry.setdefault(hook_name, {"fire_count": 0, "last_fired": None})
-            entry["fire_count"] += 1
+            entry = telemetry.setdefault(
+                event_name,
+                {"fire_count": 0, "error_count": 0, "last_fired": None},
+            )
+            # fire_count: attempt beacons; legacy lines (no status) also count as attempts.
+            if status in ("attempt", ""):
+                entry["fire_count"] += 1
+            elif status == "error":
+                entry["error_count"] += 1
             if ts and (entry["last_fired"] is None or ts > entry["last_fired"]):
                 entry["last_fired"] = ts
     except Exception:
         pass
     return telemetry
+
+
+def _event_type_from_cmd(cmd: str) -> str:
+    """Extract the event-type argument from a log-tool-event.sh command string.
+
+    Commands look like: bash "...log-tool-event.sh" session_start
+    Returns the event-type token (e.g. "session_start") if present, else "".
+    This is used as the telemetry key so each registered event type gets its own
+    distinct fire_count / error_count bucket instead of collapsing under the script
+    file name.
+    """
+    m = re.search(r'log-tool-event\.sh["\s]+([a-z_]+)', cmd)
+    if m:
+        return m.group(1)
+    return ""
 
 
 def discover_hooks() -> list:
@@ -402,10 +433,19 @@ def discover_hooks() -> list:
                         name = cmd[:60]
                         hook_path = ".claude/settings.json"
                     clean_name = _read_hook_name(cmd)
-                    fire_data = telemetry.get(clean_name, {"fire_count": 0, "last_fired": None})
+                    # For log-tool-event.sh registrations, use the event-type argument
+                    # as the telemetry key so each event type gets its own distinct bucket
+                    # (session_start, agent_complete, …) instead of collapsing under the
+                    # shared script stem "log-tool-event".
+                    event_type_arg = _event_type_from_cmd(cmd)
+                    telemetry_key = event_type_arg if event_type_arg else clean_name
+                    fire_data = telemetry.get(
+                        telemetry_key,
+                        {"fire_count": 0, "error_count": 0, "last_fired": None},
+                    )
                     hooks.append({
-                        "name": clean_name,   # use clean_name for display; backward-compat alias
-                        "clean_name": clean_name,
+                        "name": telemetry_key if event_type_arg else clean_name,
+                        "clean_name": telemetry_key if event_type_arg else clean_name,
                         "event": event,
                         "matcher": matcher,
                         "command": cmd[:120],
@@ -413,6 +453,7 @@ def discover_hooks() -> list:
                         "path": hook_path,  # Fix C: resolved .sh path
                         "purpose": _read_hook_purpose(cmd),  # slice #628
                         "fire_count": fire_data["fire_count"],
+                        "error_count": fire_data.get("error_count", 0),
                         "last_fired": fire_data["last_fired"],
                     })
     except Exception:
@@ -1195,6 +1236,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_error(self, status: int, message: str):
         self._send_json({"error": message}, status)
 
+    # Reader-side fixture-pattern guard — mirrors the writer's FIXTURE_PATTERN in
+    # log-tool-event.sh so the server defensively drops synthetic sids even if the
+    # writer's routing was bypassed (e.g. direct file writes during testing).
+    _FIXTURE_SID_RE = re.compile(
+        r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+    )
+
+    @classmethod
+    def _is_valid_v2_event(cls, obj: dict) -> bool:
+        """Return True iff obj is a schema-v2 event with a non-empty, non-fixture session_id."""
+        if obj.get("v") != 2:
+            return False
+        sid = obj.get("session_id", "")
+        if not sid:
+            return False
+        if cls._FIXTURE_SID_RE.match(sid):
+            return False
+        return True
+
     def _serve_runs(self, query: dict) -> dict:
         """Return run metadata or a single session's events — tail-seek, no full-file read.
 
@@ -1203,13 +1263,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
           before    : str  — session_id cursor; return runs BEFORE it (metadata-only)
           session   : str  — return ONE session's full events as {run:{...events:[]}}
 
-        Metadata response: {runs: [{session_id, first_ts, last_ts, event_count}]}
-          (no events array — keeps the hot-path payload small even for huge logs)
-        Single-session response: {run: {session_id, first_ts, last_ts, events: [...]}}
+        Metadata response: {runs: [...], rejected_lines: N}
+          rejected_lines counts invalid/legacy/fixture lines encountered during the scan
+          (not silently discarded — surfaced for transparency per slice #671).
+        Single-session response: {run: {session_id, first_ts, last_ts, events: []}}
+
+        Validation: only schema-v2 events (``"v":2``) with a non-empty, non-fixture
+        session_id are accepted.  Legacy v1 lines, malformed JSON, empty lines, and
+        fixture-pattern session_ids are counted in ``rejected_lines`` and dropped.
 
         Runs are ordered newest-first (by first_ts descending).
         Events within a run are time-ordered (ascending, as logged).
-        Events without a session_id are grouped under "unknown".
 
         Implementation: reads the file backwards in 64 KiB chunks to collect
         only the lines needed for the last N session_id groups.  For the
@@ -1222,7 +1286,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Return appropriate empty shape depending on query mode
             if (query.get("session") or [""])[0]:
                 return {"run": None}
-            return {"runs": []}
+            return {"runs": [], "rejected_lines": 0}
 
         # --- ?session=<id> branch: return ONE session's full events ---
         session_id_filter = (query.get("session") or [""])[0]
@@ -1239,7 +1303,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         obj = json.loads(raw)
                     except Exception:
                         continue
-                    sid = obj.get("session_id") or "unknown"
+                    if not self._is_valid_v2_event(obj):
+                        continue
+                    sid = obj.get("session_id", "")
                     if sid == session_id_filter:
                         sid_seen = True
                         events_reversed.append(obj)
@@ -1270,6 +1336,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if before_raw:
             before_cursor = before_raw
 
+        rejected_lines = 0
+
         try:
             # Read lines backward via chunk-seek so we never load the full file
             lines_reversed = _iter_lines_reversed(log_path)
@@ -1294,9 +1362,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 try:
                     obj = json.loads(raw)
                 except Exception:
+                    rejected_lines += 1
                     continue
 
-                sid = obj.get("session_id") or "unknown"
+                # Schema-v2 validation: reject legacy/invalid/fixture lines.
+                if not self._is_valid_v2_event(obj):
+                    rejected_lines += 1
+                    continue
+
+                sid = obj.get("session_id", "")
 
                 if in_before_skip:
                     if sid == before_cursor:
@@ -1328,7 +1402,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     entry[3] += 1  # increment count
 
         except Exception:
-            return {"runs": []}
+            return {"runs": [], "rejected_lines": rejected_lines}
 
         runs = []
         for sid, first_ts, last_ts, event_count in sessions_newest_first:
@@ -1337,7 +1411,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         # Already newest-first from reversed iteration; sort is belt-and-suspenders
         runs.sort(key=lambda r: r["first_ts"], reverse=True)
-        return {"runs": runs}
+        return {"runs": runs, "rejected_lines": rejected_lines}
 
     def _serve_sse(self, query: dict):
         """SSE stream: tail workflow-events.jsonl from Last-Event-ID offset."""

@@ -306,6 +306,8 @@
   }
   .hook-fire-badge-never { background: #3d1f00; color: var(--orange); border: 1px solid var(--orange); }
   .hook-fire-badge-stale { background: #2a2000; color: var(--amber); border: 1px solid var(--amber); }
+  /* Error beacon badge (slice #671) */
+  .hook-fire-badge-error { background: #3d0000; color: var(--fail); border: 1px solid var(--fail); }
   /* Extra-fields block rendered inside the shared file viewer for hook entries (slice #643) */
   .viewer-extra-fields {
     background: #0d1117;
@@ -1822,17 +1824,21 @@ function renderHooksSection(data) {
       }
       html += ` &mdash; <span class="hook-desc">${escHtml(desc.slice(0, 120))}</span>`;
       const fireCount = (typeof h.fire_count === 'number') ? h.fire_count : 0;
+      const errorCount = (typeof h.error_count === 'number') ? h.error_count : 0;
       const lastFired = h.last_fired || null;
       const relLast = relativeTime(lastFired);
       const fireText = `fired ${fireCount}× · last ${relLast}`;
-      // Badge: "never fired" when count=0, "stale (>1h)" when last_fired > 1h ago, else none.
+      // Status badges: "never fired", "stale (>1h)", error (red, per slice #671).
       let badgeHtml2 = '';
+      if (errorCount > 0) {
+        badgeHtml2 += `<span class="hook-fire-badge hook-fire-badge-error">&#x2716; ${errorCount} error${errorCount > 1 ? 's' : ''}</span>`;
+      }
       if (fireCount === 0) {
-        badgeHtml2 = '<span class="hook-fire-badge hook-fire-badge-never">⚠ never fired</span>';
+        badgeHtml2 += '<span class="hook-fire-badge hook-fire-badge-never">⚠ never fired</span>';
       } else if (lastFired) {
         const ageMs = Date.now() - Date.parse(lastFired);
         if (!isNaN(ageMs) && ageMs > 3600000) {
-          badgeHtml2 = '<span class="hook-fire-badge hook-fire-badge-stale">⚠ stale (&gt;1h)</span>';
+          badgeHtml2 += '<span class="hook-fire-badge hook-fire-badge-stale">⚠ stale (&gt;1h)</span>';
         }
       }
       html += ` &mdash; <span class="hook-fire-telemetry">${escHtml(fireText)}${badgeHtml2}</span>`;
@@ -1868,8 +1874,10 @@ async function openHookInViewer(key, clickedEl) {
     ? `${h.event} · ${h.matcher}`
     : h.event || '(unknown)';
   const fireCount = (typeof h.fire_count === 'number') ? h.fire_count : 0;
+  const errorCount = (typeof h.error_count === 'number') ? h.error_count : 0;
   const lastFired = h.last_fired || null;
-  const telemetry = `fired ${fireCount}× · last ${relativeTime(lastFired)}`;
+  const telemetry = `fired ${fireCount}× · last ${relativeTime(lastFired)}` +
+    (errorCount > 0 ? ` · ${errorCount} error${errorCount > 1 ? 's' : ''}` : '');
 
   const extraFields = [
     { label: 'Purpose',       value: purpose },

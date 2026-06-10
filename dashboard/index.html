@@ -1156,6 +1156,29 @@
       </div>
     </div>
   </div>
+
+  <!-- Trail (PRD-run comparison) — bare panel (slice 1 walking skeleton; ADR-0053 D3) -->
+  <div class="section" id="trail-section">
+    <h2>Trail (PRD-run comparison)</h2>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+      <span style="color:var(--muted);font-size:11px;">PRD:</span>
+      <input id="trail-prd-input" type="number" value="640"
+             style="width:80px;background:var(--surface);border:1px solid var(--border);
+                    color:var(--text);font-family:var(--font);font-size:12px;padding:4px 6px;
+                    border-radius:4px;"
+             onkeydown="if(event.key==='Enter')loadTrailComparison()"/>
+      <button onclick="loadTrailComparison()"
+              style="background:var(--surface);border:1px solid var(--border);
+                     color:var(--text);font-family:var(--font);font-size:12px;
+                     padding:4px 10px;border-radius:4px;cursor:pointer;">Run</button>
+      <span id="trail-status" style="color:var(--muted);font-size:11px;"></span>
+    </div>
+    <div id="trail-table-container"
+         style="background:var(--surface);border:1px solid var(--border);
+                border-radius:6px;padding:12px;overflow-x:auto;">
+      <span style="color:var(--muted);font-size:11px;">Enter a PRD number and click Run.</span>
+    </div>
+  </div>
 </div>
 
 <!-- LIVE TAB -->
@@ -4140,6 +4163,93 @@ window.switchTab = function(name, btn) {
   _origSwitchTab(name, btn);
   if (name === 'live') startLiveGraph();
 };
+
+// ---------------------------------------------------------------------------
+// Trail (PRD-run comparison) bare panel — slice 1 walking skeleton (ADR-0053)
+// ---------------------------------------------------------------------------
+const _EDGE_STATE_COLORS = {
+  'confirmed':     '#3fb950',   // green
+  'missing':       '#ef4444',   // red
+  'not-reached':   '#8b949e',   // muted gray
+  'not-exercised': '#8b949e',   // muted gray (conditional edge not triggered)
+  'unexpected':    '#f97316',   // orange
+};
+
+async function loadTrailComparison() {
+  const input = document.getElementById('trail-prd-input');
+  const statusEl = document.getElementById('trail-status');
+  const container = document.getElementById('trail-table-container');
+  const prd = parseInt(input.value, 10);
+  if (!prd || isNaN(prd)) {
+    statusEl.textContent = 'Enter a valid PRD number.';
+    return;
+  }
+  statusEl.textContent = 'Fetching…';
+  container.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+  try {
+    const resp = await fetch(`/api/comparison?prd=${prd}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    const report = await resp.json();
+    _renderTrailReport(report, container);
+    const fromCache = report.from_cache ? ' (cached)' : '';
+    const pass = report.run_pass ? '✓ PASS' : '✗ FAIL';
+    statusEl.textContent = `PRD #${prd} — ${pass}${fromCache}`;
+    statusEl.style.color = report.run_pass ? 'var(--green)' : 'var(--red)';
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+    container.innerHTML = `<span style="color:var(--red);font-size:11px;">${e.message}</span>`;
+  }
+}
+
+function _renderTrailReport(report, container) {
+  const edges = report.edges || {};
+  const violations = report.violations || [];
+  const prdNum = report.prd_number || '?';
+
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+    <thead>
+      <tr style="color:var(--muted);border-bottom:1px solid var(--border);">
+        <th style="text-align:left;padding:4px 8px;">Edge</th>
+        <th style="text-align:left;padding:4px 8px;">Evidence</th>
+        <th style="text-align:left;padding:4px 8px;">Required</th>
+        <th style="text-align:left;padding:4px 8px;">State</th>
+        <th style="text-align:left;padding:4px 8px;">Detail</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  for (const [edgeId, info] of Object.entries(edges)) {
+    const state = info.state || '?';
+    const color = _EDGE_STATE_COLORS[state] || 'var(--text)';
+    const detail = (info.detail || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html += `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:4px 8px;font-weight:600;">${edgeId}</td>
+      <td style="padding:4px 8px;color:var(--muted);">${info.evidence || ''}</td>
+      <td style="padding:4px 8px;color:var(--muted);">${info.required || ''}</td>
+      <td style="padding:4px 8px;color:${color};font-weight:600;">${state}</td>
+      <td style="padding:4px 8px;color:var(--muted);">${detail}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table>`;
+
+  if (violations.length > 0) {
+    html += `<div style="margin-top:12px;">
+      <h3 style="color:var(--red);margin-bottom:6px;">Violations (${violations.length})</h3>`;
+    for (const v of violations) {
+      const detail = (v.detail || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      html += `<div style="padding:4px 0;font-size:11px;color:var(--red);">
+        <strong>${v.type}</strong>: ${detail}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  container.innerHTML = html;
+}
 </script>
 </body>
 </html>

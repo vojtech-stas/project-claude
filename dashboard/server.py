@@ -7,11 +7,11 @@ Serves: GET /               -> dashboard/index.html
         GET /api/pipeline     -> JSON pipeline spec (SPEC v2 from pipeline_spec.py)
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
-        GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
         GET /api/runs?n=N     -> last-N run metadata (no events) grouped by session_id
         GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
         GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
+        GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
         GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
         GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
@@ -83,6 +83,217 @@ def _rollup_background(last_n: int) -> None:
     finally:
         with _rollup_lock:
             _rollup_computing.pop(last_n, None)
+
+
+# ---------------------------------------------------------------------------
+# Live-progress cache — resolves the most recent open PRD + reads its trail.
+# Background-thread + 25s TTL, exactly like /api/rollup.  NO gh calls in the
+# HTTP handler.
+# ---------------------------------------------------------------------------
+_live_progress_cache: dict = {}   # {"data": {...}, "ts": float}
+_live_progress_computing: bool = False
+_live_progress_lock = threading.Lock()
+_LIVE_PROGRESS_TTL = 25           # seconds
+
+_WORKFLOW_LOG = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+_CAPTURE_PILL_THRESHOLD = 120     # seconds — coarse freshness threshold
+
+
+def _capture_pill_state() -> dict:
+    """Compute capture pill state from workflow-events.jsonl freshness.
+
+    Returns {"state": "LIVE"|"INACTIVE", "label": str, "last_event_s": float|None}.
+    """
+    try:
+        if not _WORKFLOW_LOG.exists():
+            return {
+                "state": "INACTIVE",
+                "label": (
+                    "INACTIVE — this session never registered hooks "
+                    "(known Claude Code behavior on resumed sessions); "
+                    "run progress is artifact-based"
+                ),
+                "last_event_s": None,
+            }
+        # Find the most recent v2 event timestamp by reading last 16 KiB
+        size = _WORKFLOW_LOG.stat().st_size
+        chunk_size = min(16384, size)
+        with _WORKFLOW_LOG.open("rb") as fh:
+            fh.seek(max(0, size - chunk_size))
+            raw = fh.read(chunk_size)
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        last_ts_str = None
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("v") == 2 and obj.get("ts"):
+                last_ts_str = obj["ts"]
+                break
+        if last_ts_str is None:
+            return {
+                "state": "INACTIVE",
+                "label": (
+                    "INACTIVE — this session never registered hooks "
+                    "(known Claude Code behavior on resumed sessions); "
+                    "run progress is artifact-based"
+                ),
+                "last_event_s": None,
+            }
+        # Parse timestamp
+        ts_epoch = None
+        try:
+            import datetime as _dt
+            ts_epoch = _dt.datetime.fromisoformat(
+                last_ts_str.replace("Z", "+00:00")
+            ).timestamp()
+        except Exception:
+            pass
+        if ts_epoch is None:
+            return {"state": "INACTIVE", "label": "INACTIVE — timestamp parse error",
+                    "last_event_s": None}
+        age_s = time.time() - ts_epoch
+        if age_s < _CAPTURE_PILL_THRESHOLD:
+            return {
+                "state": "LIVE",
+                "label": f"LIVE — last event {int(age_s)}s ago",
+                "last_event_s": age_s,
+            }
+        return {
+            "state": "INACTIVE",
+            "label": (
+                "INACTIVE — this session never registered hooks "
+                "(known Claude Code behavior on resumed sessions); "
+                "run progress is artifact-based"
+            ),
+            "last_event_s": age_s,
+        }
+    except Exception as exc:
+        return {"state": "INACTIVE", "label": f"INACTIVE — read error: {exc}",
+                "last_event_s": None}
+
+
+def _resolve_open_prd() -> int | None:
+    """Return the issue number of the most recent open prd-labeled issue.
+
+    Uses gh CLI; returns None on any error.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--label", "prd",
+                "--state", "open",
+                "--limit", "1",
+                "--json", "number",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            cwd=str(REPO_ROOT),
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            return None
+        items = json.loads(result.stdout)
+        if not items:
+            return None
+        return items[0]["number"]
+    except Exception:
+        return None
+
+
+def _build_live_progress() -> dict:
+    """Fetch the most recent open PRD trail and shape the live-progress payload.
+
+    Called from the background thread; never from an HTTP handler.
+    """
+    pill = _capture_pill_state()
+    prd_number = _resolve_open_prd()
+    if prd_number is None:
+        return {
+            "prd_number": None,
+            "prd_title": None,
+            "slices": [],
+            "collector_status": "no_open_prd",
+            "capture_pill": pill,
+        }
+
+    trail = get_trail(prd_number)
+    collector_status = trail.get("collector_status", "")
+
+    slices_out = []
+    for sl in trail.get("slices", []):
+        sl_num = sl.get("number")
+        pr_num = sl.get("closing_pr_number")
+        pr_info = trail.get("prs", {}).get(str(pr_num)) if pr_num else None
+
+        if sl.get("closed_at"):
+            stage = "closed"
+        elif pr_num and pr_info and pr_info.get("merged_at"):
+            stage = "pr_merged"
+        elif pr_num:
+            stage = "pr_open"
+        elif sl.get("assignees"):
+            stage = "assigned"
+        else:
+            stage = "open"
+
+        last_verdict = None
+        verdict_rounds = 0
+        if pr_info:
+            last_verdict = pr_info.get("last_verdict")
+            verdict_rounds = pr_info.get("verdict_count", 0)
+
+        slices_out.append({
+            "number": sl_num,
+            "title": sl.get("title", ""),
+            "stage": stage,
+            "pr_number": pr_num,
+            "pr_merged_at": pr_info.get("merged_at") if pr_info else None,
+            "pr_created_at": pr_info.get("created_at") if pr_info else None,
+            "slice_created_at": sl.get("created_at"),
+            "slice_closed_at": sl.get("closed_at"),
+            "verdict_rounds": verdict_rounds,
+            "last_verdict": last_verdict,
+            "assignees": sl.get("assignees", []),
+        })
+
+    return {
+        "prd_number": prd_number,
+        "prd_title": trail.get("prd_title", f"PRD #{prd_number}"),
+        "prd_created_at": trail.get("prd_created_at"),
+        "slices": slices_out,
+        "collector_status": collector_status,
+        "capture_pill": pill,
+    }
+
+
+def _live_progress_background() -> None:
+    """Compute live-progress in a background thread and cache the result."""
+    global _live_progress_computing
+    try:
+        result = _build_live_progress()
+        with _live_progress_lock:
+            _live_progress_cache["data"] = result
+            _live_progress_cache["ts"] = time.time()
+    except Exception as e:
+        with _live_progress_lock:
+            _live_progress_cache["data"] = {
+                "error": str(e),
+                "collector_status": "error",
+                "capture_pill": {"state": "INACTIVE", "label": "INACTIVE — error"},
+            }
+            _live_progress_cache["ts"] = time.time()
+    finally:
+        with _live_progress_lock:
+            _live_progress_computing = False
 
 
 def _resolve_invoking_repo_root() -> Path:
@@ -1413,54 +1624,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         runs.sort(key=lambda r: r["first_ts"], reverse=True)
         return {"runs": runs, "rejected_lines": rejected_lines}
 
-    def _serve_sse(self, query: dict):
-        """SSE stream: tail workflow-events.jsonl from Last-Event-ID offset."""
-        log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
-        last_id = self.headers.get("Last-Event-ID", "")
-        try:
-            start_line = int(last_id) if last_id else 0
-        except ValueError:
-            start_line = 0
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-
-        line_index = 0
-        try:
-            while True:
-                if not log_path.exists():
-                    # Empty-state: send a keepalive comment and wait
-                    self.wfile.write(b": keepalive\n\n")
-                    self.wfile.flush()
-                    time.sleep(2)
-                    continue
-
-                with log_path.open(encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-
-                for i, raw in enumerate(lines):
-                    if i < start_line:
-                        continue
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    event_id = i + 1
-                    data = raw.replace("\n", " ")
-                    msg = f"id: {event_id}\ndata: {data}\n\n"
-                    self.wfile.write(msg.encode("utf-8"))
-                    line_index = event_id
-
-                self.wfile.flush()
-                start_line = line_index
-                time.sleep(1)
-
-        except (BrokenPipeError, ConnectionResetError):
-            pass  # client disconnected — normal
-
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1500,8 +1663,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/workitems":
             self._send_json(fetch_workitems())
 
-        elif path == "/api/events":
-            self._serve_sse(query)
+        elif path == "/api/live-progress":
+            # GET /api/live-progress — Lane A run-progress for most recent open PRD.
+            # Returns immediately: {"status":"computing"} while background thread runs;
+            # client polls every ~25s until status is absent (data ready).
+            # Pattern mirrors /api/rollup (background-thread + TTL cache).
+            global _live_progress_computing
+            with _live_progress_lock:
+                cached = _live_progress_cache.get("data")
+                now = time.time()
+                ts = _live_progress_cache.get("ts", 0)
+                if cached is not None and (now - ts) < _LIVE_PROGRESS_TTL:
+                    self._send_json(cached)
+                    return
+                if _live_progress_computing:
+                    self._send_json({"status": "computing"})
+                    return
+                _live_progress_computing = True
+            t = threading.Thread(
+                target=_live_progress_background, daemon=True
+            )
+            t.start()
+            self._send_json({"status": "computing"})
 
         elif path == "/api/runs":
             self._send_json(self._serve_runs(query))

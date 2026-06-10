@@ -6,7 +6,13 @@
 #   - `git commit ... -m ... WIP` → systemMessage warn-only (NOT deny)
 # Soft-degrades if `jq` missing → exit 0 (cannot parse; let Claude's built-in classifier handle).
 set -uo pipefail
-printf '{"hook":"pre-tool-bash","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
+
+# Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=lib-root.sh
+source "$SCRIPT_DIR/lib-root.sh"
+
+printf '{"hook":"pre-tool-bash","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 emit_deny() {
   local reason="$1"

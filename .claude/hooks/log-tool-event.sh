@@ -3,7 +3,8 @@
 #
 # CONTRACT:
 #   Called with exactly one argument: the event_type string
-#   (e.g. session_start, session_stop).
+#   (e.g. session_start, session_stop, agent_start, agent_complete,
+#   bash_complete, skill_invoke, grill_qa).
 #   Hook stdin is a JSON object from Claude Code containing session_id,
 #   hook_event_name, and event-specific fields.
 #
@@ -25,6 +26,15 @@
 # Schema v2: {"v":2, "ts", "session_id" (required/non-empty), "src":"hook",
 #              "wt":<basename of git toplevel>, "event", ...payload}
 #
+# Per-event payload (selected fields only — never the full raw input/response):
+#   agent_start:    subagent_type, input (first 300 chars of description)
+#   agent_complete: subagent_type, input (first 300 chars), tail (last 2000 chars
+#                   of tool_response — trailer capture for verdict parsing)
+#   bash_complete:  command (first 200 chars)
+#   skill_invoke:   skill (name extracted from tool_input), source="skill_tool"
+#   grill_qa:       question (first 300 chars), answer (first 300 chars)
+#   session_start, session_stop: no extra payload
+#
 # NO jq IN THIS FILE — python3 only; jq ENOEXEC hazard is structurally irrelevant.
 #
 # Invoke style (settings.json registration):
@@ -41,10 +51,16 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
+# Route attempt beacon through WORKFLOW_LOG_DIR if set (fix: reviewer follow-up
+# from PR #672 — bash-level beacon was bypassing WORKFLOW_LOG_DIR, causing
+# attempt/ok pairs to land in different directories during sandbox tests).
+_BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
+mkdir -p "$_BEACON_DIR" 2>/dev/null || true
+
 # Write attempt beacon (pure bash printf — no jq, no python).
 printf '{"hook":"%s","status":"attempt","ts":"%s"}\n' \
   "$EVENT_TYPE" "$(date -Iseconds 2>/dev/null)" \
-  >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+  >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 # Steps 3-5: parse, validate, route, write, beacon result — via python3.
 # Pass stdin content via env var (stdin is already consumed above).
@@ -116,8 +132,48 @@ try:
         "event": event_type,
     }
 
-    # Selected payload fields (session_start / session_stop carry no extra
-    # payload in this slice; slices 2-3 will add agent/bash fields).
+    # Per-event payload selection (selected fields only — never full raw input/response).
+    tool_input    = payload.get("tool_input", {}) if isinstance(payload.get("tool_input"), dict) else {}
+    tool_response = payload.get("tool_response", "")
+    # Normalise tool_response to a string for slicing.
+    if not isinstance(tool_response, str):
+        import json as _json
+        tool_response = _json.dumps(tool_response, separators=(",", ":"))
+
+    if event_type == "agent_start":
+        event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
+        event["input"]         = str(tool_input.get("description", ""))[:300]
+
+    elif event_type == "agent_complete":
+        event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
+        event["input"]         = str(tool_input.get("description", ""))[:300]
+        # tail = last 2000 chars of tool_response (trailer capture for verdict parsing).
+        event["tail"]          = tool_response[-2000:] if len(tool_response) > 2000 else tool_response
+
+    elif event_type == "bash_complete":
+        event["command"] = str(tool_input.get("command", ""))[:200]
+
+    elif event_type == "skill_invoke":
+        # Skill tool_input carries the skill name under various keys.
+        skill_name = (
+            tool_input.get("skill")
+            or tool_input.get("command")
+            or tool_input.get("name")
+            or ""
+        )
+        event["skill"]  = str(skill_name)[:200]
+        event["source"] = "skill_tool"
+
+    elif event_type == "grill_qa":
+        q_raw = tool_input.get("question") or tool_input
+        if isinstance(q_raw, dict):
+            import json as _json2
+            q_raw = _json2.dumps(q_raw, separators=(",", ":"))
+        a_raw = tool_response
+        event["question"] = str(q_raw)[:300]
+        event["answer"]   = str(a_raw)[:300]
+
+    # session_start / session_stop carry no extra payload.
 
     line = json.dumps(event, separators=(",", ":"))
 

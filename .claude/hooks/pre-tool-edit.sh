@@ -22,7 +22,13 @@
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
-printf '{"hook":"pre-tool-edit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-.}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
+
+# Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=lib-root.sh
+source "$SCRIPT_DIR/lib-root.sh"
+
+printf '{"hook":"pre-tool-edit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 REASON='Main-agent write to tracked file — CLAUDE.md rule #10 says flow through PR pipeline. Confirm if this is an I3 trivial-lane edit (≤10 LoC, `trivial` label, branch `hotfix/<issue#>-…`); cancel and use /to-prd or /ship otherwise.'
 

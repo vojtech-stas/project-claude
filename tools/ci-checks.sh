@@ -444,36 +444,44 @@ fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
 # CHECK 8: Agent-payload hook-path fixture test (ADR-0042 D1 extension)
-#   Asserts that the Agent-hook jq path in settings.json (.tool_input.subagent_type)
-#   resolves non-empty against the canonical fixture. If a hook were reverted to
-#   .agent_type, the grep check fails. Soft-degrades if jq is unavailable.
-#   Agent-payload jq changes are fixture-validated here; run this check + refresh
-#   dashboard/fixtures/agent-payload-sample.json if Claude Code's hook schema changes.
+#   Updated for PRD #668 slice #670: Agent hooks now call log-tool-event.sh
+#   (python3 parser path) instead of inline jq.  Assertions updated accordingly:
+#   (a) settings.json Agent-matcher hooks call log-tool-event.sh (not inline jq).
+#   (b) The fixture's .tool_input.subagent_type resolves non-empty via python3
+#       (proves the python3 parser path handles the canonical Agent payload).
+#   Agent-payload schema changes: refresh dashboard/fixtures/agent-payload-sample.json
+#   and re-verify this check.  Soft-degrades if python3 unavailable.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 8: Agent-payload hook-path fixture test ---"
 FIXTURE="dashboard/fixtures/agent-payload-sample.json"
 SETTINGS=".claude/settings.json"
-if ! command -v jq > /dev/null 2>&1; then
-    echo "SKIP: CHECK 8 — jq not available (soft-degrade)"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 8 — python3 not available (soft-degrade)"
 elif [ ! -f "$FIXTURE" ]; then
     fail "CHECK 8 — fixture not found: $FIXTURE"
 elif [ ! -f "$SETTINGS" ]; then
     fail "CHECK 8 — settings.json not found: $SETTINGS"
 else
     CHECK8_FAIL=0
-    # Assert settings.json Agent-matcher hooks reference .tool_input.subagent_type
-    if ! grep -q '\.tool_input\.subagent_type' "$SETTINGS"; then
-        fail "CHECK 8 — settings.json Agent hooks do not reference .tool_input.subagent_type (wrong jq path?)"
+    # Assert settings.json Agent-matcher hooks call log-tool-event.sh (python3 path).
+    if ! grep -q 'log-tool-event\.sh.*agent_start\|agent_start.*log-tool-event\.sh\|log-tool-event\.sh.*agent_complete\|agent_complete.*log-tool-event\.sh' "$SETTINGS"; then
+        fail "CHECK 8 — settings.json Agent hooks do not call log-tool-event.sh for agent_start/agent_complete"
         CHECK8_FAIL=1
     fi
-    # Assert the path resolves non-empty in the fixture
-    SUBAGENT_VAL=$(jq -r '.tool_input.subagent_type // ""' "$FIXTURE" 2>/dev/null)
+    # Assert the fixture's tool_input.subagent_type resolves non-empty via python3.
+    SUBAGENT_VAL=$(python3 -c "
+import json, sys
+with open('$FIXTURE') as f:
+    d = json.load(f)
+val = d.get('tool_input', {}).get('subagent_type', '')
+print(val)
+" 2>/dev/null)
     if [ -z "$SUBAGENT_VAL" ]; then
-        fail "CHECK 8 — .tool_input.subagent_type resolved empty in $FIXTURE (fixture stale or wrong path)"
+        fail "CHECK 8 — tool_input.subagent_type resolved empty in $FIXTURE via python3 (fixture stale?)"
         CHECK8_FAIL=1
     fi
     if [ "$CHECK8_FAIL" -eq 0 ]; then
-        pass "CHECK 8 — Agent hook path .tool_input.subagent_type resolves non-empty in fixture (value: $SUBAGENT_VAL)"
+        pass "CHECK 8 — Agent hooks call log-tool-event.sh; python3 resolves subagent_type='$SUBAGENT_VAL' from fixture"
     fi
 fi
 

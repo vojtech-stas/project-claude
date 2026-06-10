@@ -6,7 +6,21 @@
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
-printf '{"hook":"session-start","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "${CLAUDE_PROJECT_DIR:-.}/.claude/logs/hook-fires.jsonl" 2>/dev/null || true
+
+# Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=lib-root.sh
+source "$SCRIPT_DIR/lib-root.sh"
+
+# Python3 in-hook self-test: beacon its result (ok/error) so the interpreter
+# liveness check is explicit and observable (absence let the jq ENOEXEC hide).
+_PY3_STATUS="ok"
+python3 -c "import json,sys" 2>/dev/null || _PY3_STATUS="error"
+printf '{"hook":"session-start","status":"python3_selftest","result":"%s","ts":"%s"}\n' \
+  "$_PY3_STATUS" "$(date -Iseconds 2>/dev/null)" \
+  >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+
+printf '{"hook":"session-start","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 BR=$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")
 DIV="(fetch failed)"

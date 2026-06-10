@@ -114,7 +114,10 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   # Post an inline PR comment with the rendered image.
   # raw.githubusercontent.com renders images directly in PR comments (unlike the
   # blob/?raw=true form which serves the file but does not render inline).
-  gh pr comment <pr-num> --body "![qa-proof](https://raw.githubusercontent.com/vojtech-stas/project-claude/<branch>/qa-proof/<prd-num>/<slug>)"
+  # Derive the slug from origin so the URL is correct in any derived repo,
+  # not just the template (issue #649).
+  REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+  gh pr comment <pr-num> --body "![qa-proof](https://raw.githubusercontent.com/${REPO_SLUG}/<branch>/qa-proof/<prd-num>/<slug>)"
   ```
   If no proof image path is present (command-run or static-check route), skip the commit/comment and continue.
 - **SendUserFile at wrap-up (per CLAUDE.md rule #20 + ADR-0037 D3):** After proof-posting, send each committed proof artifact to the user in chat — one `SendUserFile` call per artifact, with a caption tying it to the verified feature claim. This runs in main-agent context (the wrap-up is always main-agent), so `SendUserFile` is available. For each proof artifact in `qa-proof/<prd-num>/`:

@@ -20,7 +20,7 @@ The `needs-human-check` label (color `#FBCA04`) identifies GitHub issues that co
 1. **List open `needs-human-check` issues.**
 
    ```bash
-   gh issue list --label needs-human-check --state open --repo vojtech-stas/project-claude --json number,title,body,url
+   gh issue list --label needs-human-check --state open --json number,title,body,url
    ```
 
    If zero issues → emit `RESULT: SUCCESS`, `REASON: no open needs-human-check issues`, `RESIDUALS_CLEARED: 0`, `RESIDUALS_PENDING: 0`. Done.
@@ -41,17 +41,17 @@ The `needs-human-check` label (color `#FBCA04`) identifies GitHub issues that co
    d. **Record the verdict based on the human's choice:**
 
       **Accept (option A — verified):**
-      - Comment on the issue: `gh issue comment <issue-number> --body "Verified by human via /qa-review on <YYYY-MM-DD>. Verdict: ACCEPTED — criterion confirmed. Closing." --repo vojtech-stas/project-claude`
-      - Close the issue: `gh issue close <issue-number> --reason completed --repo vojtech-stas/project-claude`
+      - Comment on the issue: `gh issue comment <issue-number> --body "Verified by human via /qa-review on <YYYY-MM-DD>. Verdict: ACCEPTED — criterion confirmed. Closing."`
+      - Close the issue: `gh issue close <issue-number> --reason completed`
       - Count as `cleared`.
 
       **Reject (option B — defect found):**
       - Comment on the issue explaining the rejection.
-      - Relabel the issue from `needs-human-check` to `captured`: `gh issue edit <issue-number> --remove-label needs-human-check --add-label captured --repo vojtech-stas/project-claude`
+      - Relabel the issue from `needs-human-check` to `captured`: `gh issue edit <issue-number> --remove-label needs-human-check --add-label captured`
       - Capture a `captured`-labeled defect issue per CLAUDE.md rule #13 (3-part body shape):
 
         ```bash
-        gh issue create --label captured --repo vojtech-stas/project-claude \
+        gh issue create --label captured \
           --title "QA defect: <criterion summary> (PRD #<N>)" \
           --body "## Symptom\n<what the human observed when eyeballing the criterion>\n\n## Root cause\n<inferred from criterion text — what the machine could not verify and why the human rejected it>\n\n## Proposed workflow change\n<the fix needed: re-open slice, adjust implementation, or accept as known limitation>"
         ```

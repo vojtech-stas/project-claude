@@ -1,131 +1,893 @@
 """
-dashboard/pipeline_spec.py — minimal spine SPEC for the trail-of-record system.
+dashboard/pipeline_spec.py — full SPEC v2 ontology for the trail-of-record system.
 
-Defines the stable edge-id space (E-*) for the PRD→slice→PR→review→merge
-workflow pipeline. Each edge carries:
+Defines the complete node catalog and all workflow edges with stable E-* ids.
+Each node carries:
+  - kind  : 'human' | 'orchestrator' | 'skill' | 'agent' | 'artifact'
+  - label : display string
+  - stage : 'S1' | 'S2' | 'S3' | 'S4' | 'SS' | None
+  - path  : repo-relative path (skills/agents); None for artifacts/human/orchestrator
+
+Each edge carries:
   - id        : stable E-* identifier (never changes after assignment)
-  - from_node : source node kind/id
-  - to_node   : target node kind/id
+  - from_node : source node id (hyphen id-space)
+  - to_node   : target node id (hyphen id-space)
   - evidence  : 'github' | 'runtime' | 'unmeasurable'
-                github = authoritative; evaluated in comparison engine
-                runtime = live enrichment only; never compared against trail
+                github      = authoritative; evaluated in comparison engine
+                runtime     = live enrichment only; never compared against trail
                 unmeasurable = in-conversation; rendered as context only
   - required  : 'always' | 'conditional'
-                always     = every run must traverse this edge
-                conditional = only triggered under certain conditions
-                              (e.g., BLOCK loop, trivial-lane skip)
+                always       = every run must traverse this edge
+                conditional  = only triggered under certain conditions
+                               (BLOCK loop, trivial-lane skip, side-workflow, etc.)
   - predicate : human-readable name for what confirms the edge
+  - label     : short display label for the edge (optional)
+  - style     : 'solid' | 'dashed' (default 'solid')
+  - description : longer prose explanation
 
 ADR-0053 D1/D2: artifact trail is the system of record; one evidence-annotated
-SPEC is the single declared topology.
+SPEC is the single declared topology.  This module is the ONLY hand-edited
+declaration — it replaces both PIPELINE children[] and PIPELINE __edges__.
 
-This is the SPINE SPEC (slice 1 walking skeleton). The full ontology
-(replacing PIPELINE __edges__ + children[]) ships in slice 2.
+Slice 2 of PRD #651: full SPEC v2 ontology.
+Id-space: one canonical hyphen form matching skill/agent directory names.
 """
 
 # ---------------------------------------------------------------------------
-# Nodes — kinds only in this walking-skeleton spec.
-# Stable node id-space uses hyphen-separated names matching skill/agent dirs.
+# Nodes — complete catalog (hyphen id-space)
 # ---------------------------------------------------------------------------
 NODES = {
-    # --- artifacts ---
-    "prd-issue":     {"kind": "artifact", "label": "PRD issue"},
-    "slice-issue":   {"kind": "artifact", "label": "Slice issue"},
-    "pr":            {"kind": "artifact", "label": "Pull Request"},
-    "merge":         {"kind": "artifact", "label": "Merge"},
-    "closed-prd":    {"kind": "artifact", "label": "Closed PRD"},
-    # --- actors (orchestrator / skills / agents) ---
-    "human":         {"kind": "human",        "label": "Human"},
-    "orchestrator":  {"kind": "orchestrator",  "label": "Orchestrator"},
-    "implementer":   {"kind": "agent",         "label": "implementer"},
-    "reviewer":      {"kind": "agent",         "label": "reviewer"},
+    # --- human ---------------------------------------------------------------
+    "user": {
+        "kind": "human",
+        "label": "User",
+        "stage": "S1",
+        "path": None,
+    },
+
+    # --- orchestrator --------------------------------------------------------
+    "orchestrator": {
+        "kind": "orchestrator",
+        "label": "Orchestrator",
+        "stage": None,
+        "path": None,
+    },
+
+    # --- skills (Stage 1: Idea capture) -------------------------------------
+    "build": {
+        "kind": "skill",
+        "label": "/build",
+        "stage": "S1",
+        "path": ".claude/skills/build/SKILL.md",
+    },
+    "grill-me": {
+        "kind": "skill",
+        "label": "/grill-me",
+        "stage": "S1",
+        "path": ".claude/skills/grill-me/SKILL.md",
+    },
+    "ship": {
+        "kind": "skill",
+        "label": "/ship",
+        "stage": "S1",
+        "path": ".claude/skills/ship/SKILL.md",
+    },
+
+    # --- skills (Stage 2–3: PRD authoring + slice decomposition) -----------
+    "to-prd": {
+        "kind": "skill",
+        "label": "/to-prd",
+        "stage": "S2",
+        "path": ".claude/skills/to-prd/SKILL.md",
+    },
+    "to-issues": {
+        "kind": "skill",
+        "label": "/to-issues",
+        "stage": "S2",
+        "path": ".claude/skills/to-issues/SKILL.md",
+    },
+
+    # --- agents (Stage 2: PRD critics) -------------------------------------
+    "prd-critic": {
+        "kind": "agent",
+        "label": "prd-critic",
+        "stage": "S2",
+        "path": ".claude/agents/prd-critic.md",
+    },
+    "adr-critic": {
+        "kind": "agent",
+        "label": "adr-critic",
+        "stage": "S2",
+        "path": ".claude/agents/adr-critic.md",
+    },
+    "slicer": {
+        "kind": "agent",
+        "label": "slicer",
+        "stage": "S2",
+        "path": ".claude/agents/slicer.md",
+    },
+    "slicer-critic": {
+        "kind": "agent",
+        "label": "slicer-critic",
+        "stage": "S2",
+        "path": ".claude/agents/slicer-critic.md",
+    },
+
+    # --- agents (Stage 3: Implementation) ----------------------------------
+    "implementer": {
+        "kind": "agent",
+        "label": "implementer",
+        "stage": "S3",
+        "path": ".claude/agents/implementer.md",
+    },
+    "reviewer": {
+        "kind": "agent",
+        "label": "reviewer",
+        "stage": "S3",
+        "path": ".claude/agents/reviewer.md",
+    },
+
+    # --- skills (Stage 4: Acceptance) ----------------------------------------
+    "qa-plan": {
+        "kind": "skill",
+        "label": "/qa-plan",
+        "stage": "S4",
+        "path": ".claude/skills/qa-plan/SKILL.md",
+    },
+    "qa-review": {
+        "kind": "skill",
+        "label": "/qa-review",
+        "stage": "S4",
+        "path": ".claude/skills/qa-review/SKILL.md",
+    },
+
+    # --- agents (Stage 4) ---------------------------------------------------
+    "qa-tester": {
+        "kind": "agent",
+        "label": "qa-tester",
+        "stage": "S4",
+        "path": ".claude/agents/qa-tester.md",
+    },
+
+    # --- skills (Side workflows) -------------------------------------------
+    "glossary": {
+        "kind": "skill",
+        "label": "/glossary",
+        "stage": "SS",
+        "path": ".claude/skills/glossary/SKILL.md",
+    },
+    "promote-to-backlog": {
+        "kind": "skill",
+        "label": "/promote-to-backlog",
+        "stage": "SS",
+        "path": ".claude/skills/promote-to-backlog/SKILL.md",
+    },
+    "audit-meta": {
+        "kind": "skill",
+        "label": "/audit-meta",
+        "stage": "SS",
+        "path": ".claude/skills/audit-meta/SKILL.md",
+    },
+    "audit-subagents": {
+        "kind": "skill",
+        "label": "/audit-subagents",
+        "stage": "SS",
+        "path": ".claude/skills/audit-subagents/SKILL.md",
+    },
+
+    # --- agents (Side workflows) -------------------------------------------
+    "glossary-critic": {
+        "kind": "agent",
+        "label": "glossary-critic",
+        "stage": "SS",
+        "path": ".claude/agents/glossary-critic.md",
+    },
+    "backlog-critic": {
+        "kind": "agent",
+        "label": "backlog-critic",
+        "stage": "SS",
+        "path": ".claude/agents/backlog-critic.md",
+    },
+    "codebase-critic": {
+        "kind": "agent",
+        "label": "codebase-critic",
+        "stage": "SS",
+        "path": ".claude/agents/codebase-critic.md",
+    },
+
+    # --- artifact pseudo-nodes (no file path) --------------------------------
+    "prd-issue": {
+        "kind": "artifact",
+        "label": "PRD issue",
+        "stage": "S2",
+        "path": None,
+    },
+    "slice-issue": {
+        "kind": "artifact",
+        "label": "Slice issue",
+        "stage": "S2",
+        "path": None,
+    },
+    "pr": {
+        "kind": "artifact",
+        "label": "Pull Request",
+        "stage": "S3",
+        "path": None,
+    },
+    "merge": {
+        "kind": "artifact",
+        "label": "Merge",
+        "stage": "S3",
+        "path": None,
+    },
+    "needs-human": {
+        "kind": "artifact",
+        "label": "needs-human",
+        "stage": "S3",
+        "path": None,
+    },
+    "captured-issue": {
+        "kind": "artifact",
+        "label": "captured issue",
+        "stage": "SS",
+        "path": None,
+    },
+    "backlog-issue": {
+        "kind": "artifact",
+        "label": "backlog issue",
+        "stage": "SS",
+        "path": None,
+    },
+    "glossary-pr": {
+        "kind": "artifact",
+        "label": "glossary PR",
+        "stage": "SS",
+        "path": None,
+    },
+    "verify-verdict": {
+        "kind": "artifact",
+        "label": "verify verdict",
+        "stage": "S4",
+        "path": None,
+    },
 }
 
+
 # ---------------------------------------------------------------------------
-# Spine edges — the ~8 edges covering the PRD→slice→PR→review→merge region.
-# These are the github-tier edges evaluated by the comparison engine.
+# Edges — complete declared workflow with stable E-* ids
+#
+# Evidence tiers (per ADR-0053 D2):
+#   github      = authoritative; evaluated in the comparison engine
+#                 (sub-issues, closingIssuesReferences, PR verdict comments,
+#                  label events, merge events — all GitHub artifact trail)
+#   runtime     = live enrichment only; confirmed by skill_invoke /
+#                 agent_complete hook events; never compared against trail
+#   unmeasurable = in-conversation handoffs or advisory audits;
+#                  rendered as declared context, never as drift
+#
+# Required semantics:
+#   always      = every run must traverse this edge
+#   conditional = only triggered under certain conditions
+#                 (BLOCK loops, trivial lane, side-workflows, optional paths)
 # ---------------------------------------------------------------------------
-SPINE_EDGES = [
+EDGES = [
+    # =========================================================================
+    # Stage 1: Idea capture
+    # =========================================================================
+
+    # User invokes /build or /ship directly (runtime: skill_invoke event)
     {
-        "id": "E-PRD-SLICE",
+        "id": "E-USER-BUILD",
+        "from_node": "user",
+        "to_node": "build",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_build",
+        "label": "/build",
+        "style": "solid",
+        "description": "User invokes /build orchestrator (full-lifecycle conductor).",
+    },
+    {
+        "id": "E-USER-SHIP",
+        "from_node": "user",
+        "to_node": "ship",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_ship",
+        "label": "/ship",
+        "style": "solid",
+        "description": "User invokes /ship directly to run the PRD→merge pipeline.",
+    },
+    {
+        "id": "E-USER-GRILLME",
+        "from_node": "user",
+        "to_node": "grill-me",
+        "evidence": "unmeasurable",
+        "required": "conditional",
+        "predicate": "user_requests_grill",
+        "label": "/grill-me",
+        "style": "dashed",
+        "description": "User requests /grill-me to explore design options (in-conversation).",
+    },
+
+    # /build conducts full lifecycle: dispatches /ship + /qa-plan
+    {
+        "id": "E-BUILD-SHIP",
+        "from_node": "build",
+        "to_node": "ship",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "build_dispatches_ship",
+        "label": "",
+        "style": "solid",
+        "description": "/build conducts /ship as its core step (ADR-0034 D1).",
+    },
+
+    # /grill-me → /ship: settled design handed off (in-conversation)
+    {
+        "id": "E-GRILLME-SHIP",
+        "from_node": "grill-me",
+        "to_node": "ship",
+        "evidence": "unmeasurable",
+        "required": "conditional",
+        "predicate": "grill_settled_to_ship",
+        "label": "settled design",
+        "style": "dashed",
+        "description": "Settled /grill-me design handed to /ship (in-conversation handoff).",
+    },
+
+    # =========================================================================
+    # Stage 2–3: PRD authoring + slice decomposition
+    # =========================================================================
+
+    # /ship → /to-prd (runtime dispatch)
+    {
+        "id": "E-SHIP-TOPRD",
+        "from_node": "ship",
+        "to_node": "to-prd",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "ship_dispatches_to_prd",
+        "label": "",
+        "style": "solid",
+        "description": "/ship invokes /to-prd to author and post the PRD issue.",
+    },
+
+    # /to-prd dispatches critics (runtime)
+    {
+        "id": "E-TOPRD-PRDCRITIC",
+        "from_node": "to-prd",
+        "to_node": "prd-critic",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "to_prd_dispatches_prd_critic",
+        "label": "",
+        "style": "solid",
+        "description": "/to-prd dispatches prd-critic for joint-APPROVE gate.",
+    },
+    {
+        "id": "E-TOPRD-ADRCRITIC",
+        "from_node": "to-prd",
+        "to_node": "adr-critic",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "to_prd_dispatches_adr_critic",
+        "label": "if ADR",
+        "style": "dashed",
+        "description": "/to-prd dispatches adr-critic when PRD includes a macro-ADR.",
+    },
+
+    # prd-critic/adr-critic APPROVE → prd-issue (github: issue creation event)
+    {
+        "id": "E-PRDCRITIC-APPROVE",
+        "from_node": "prd-critic",
+        "to_node": "prd-issue",
+        "evidence": "github",
+        "required": "always",
+        "predicate": "prd_critic_approved_prd_posted",
+        "label": "joint APPROVE",
+        "style": "solid",
+        "description": "prd-critic APPROVE (joint gate) triggers PRD issue creation on GitHub.",
+    },
+    {
+        "id": "E-ADRCRITIC-APPROVE",
+        "from_node": "adr-critic",
+        "to_node": "prd-issue",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "adr_critic_approved_prd_posted",
+        "label": "joint APPROVE",
+        "style": "solid",
+        "description": "adr-critic APPROVE (joint gate) co-triggers PRD issue creation.",
+    },
+
+    # prd-critic BLOCK → back to /to-prd (github: BLOCK verdict comment)
+    {
+        "id": "E-PRDCRITIC-BLOCK",
+        "from_node": "prd-critic",
+        "to_node": "to-prd",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "prd_critic_block_verdict",
+        "label": "BLOCK",
+        "style": "dashed",
+        "description": "prd-critic BLOCK — PRD revised and resubmitted.",
+    },
+
+    # prd-issue → /to-issues (runtime: orchestrator progression)
+    {
+        "id": "E-PRDISSUE-TOISSUES",
         "from_node": "prd-issue",
+        "to_node": "to-issues",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "prd_posted_triggers_to_issues",
+        "label": "",
+        "style": "solid",
+        "description": "PRD issue posted; orchestrator proceeds to /to-issues for slicing.",
+    },
+
+    # /to-issues dispatches slicer (runtime)
+    {
+        "id": "E-TOISSUES-SLICER",
+        "from_node": "to-issues",
+        "to_node": "slicer",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "to_issues_dispatches_slicer",
+        "label": "",
+        "style": "solid",
+        "description": "/to-issues dispatches slicer to decompose PRD into slices.",
+    },
+
+    # slicer → slicer-critic (runtime)
+    {
+        "id": "E-SLICER-SLICERCRITIC",
+        "from_node": "slicer",
+        "to_node": "slicer-critic",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "slicer_dispatches_slicer_critic",
+        "label": "decomposition",
+        "style": "solid",
+        "description": "slicer submits decomposition to slicer-critic for INVEST gate.",
+    },
+
+    # slicer-critic APPROVE → slice-issue (github: sub-issue creation)
+    {
+        "id": "E-SLICERCRITIC-APPROVE",
+        "from_node": "slicer-critic",
         "to_node": "slice-issue",
         "evidence": "github",
         "required": "always",
-        "predicate": "prd_has_sub_issue",
-        "description": "PRD issue has ≥1 native sub-issue (slice)",
+        "predicate": "slicer_critic_approved_slices_posted",
+        "label": "APPROVE",
+        "style": "solid",
+        "description": "slicer-critic APPROVE triggers slice sub-issues posted on GitHub.",
     },
+
+    # slicer-critic BLOCK → back to slicer (runtime)
     {
-        "id": "E-SLICE-PR",
+        "id": "E-SLICERCRITIC-BLOCK",
+        "from_node": "slicer-critic",
+        "to_node": "slicer",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "slicer_critic_block_verdict",
+        "label": "BLOCK",
+        "style": "dashed",
+        "description": "slicer-critic BLOCK — slicer revises decomposition.",
+    },
+
+    # =========================================================================
+    # Stage 3: Implementation
+    # =========================================================================
+
+    # slice-issue → implementer (github: slice assigned/claimed)
+    {
+        "id": "E-SLICEISSUE-IMPL",
         "from_node": "slice-issue",
+        "to_node": "implementer",
+        "evidence": "github",
+        "required": "always",
+        "predicate": "slice_assigned_to_implementer",
+        "label": "",
+        "style": "solid",
+        "description": "Slice issue assigned to implementer (I2 claim protocol).",
+    },
+
+    # implementer → pr (github: PR opened via closingIssuesReferences)
+    {
+        "id": "E-IMPL-PR",
+        "from_node": "implementer",
         "to_node": "pr",
         "evidence": "github",
         "required": "always",
-        "predicate": "slice_closed_by_pr",
-        "description": "Slice is closed by a PR via closingIssuesReferences",
+        "predicate": "implementer_opened_pr",
+        "label": "",
+        "style": "solid",
+        "description": "implementer opens PR with Closes #slice in body.",
     },
+
+    # pr → reviewer (github: PR verdict comment)
     {
-        "id": "E-PR-REVIEW",
+        "id": "E-PR-REVIEWER",
         "from_node": "pr",
         "to_node": "reviewer",
         "evidence": "github",
         "required": "always",
         "predicate": "pr_has_verdict_comment",
-        "description": "PR has ≥1 reviewer verdict comment (VERDICT: APPROVE|BLOCK)",
+        "label": "",
+        "style": "solid",
+        "description": "reviewer posts VERDICT: APPROVE|BLOCK comment on the PR.",
     },
+
+    # reviewer APPROVE → merge (github: PR merged)
     {
-        "id": "E-REVIEW-MERGE",
+        "id": "E-REVIEWER-MERGE",
         "from_node": "reviewer",
         "to_node": "merge",
         "evidence": "github",
         "required": "always",
         "predicate": "pr_merged_after_approve",
-        "description": "PR merged; last verdict before merge was APPROVE",
+        "label": "APPROVE",
+        "style": "solid",
+        "description": "PR merged; last reviewer verdict before merge was APPROVE.",
     },
+
+    # reviewer BLOCK → implementer (github: BLOCK verdict + re-push)
     {
-        "id": "E-MERGE-CLOSE-PRD",
-        "from_node": "merge",
-        "to_node": "closed-prd",
-        "evidence": "github",
-        "required": "always",
-        "predicate": "all_slices_merged_prd_closed",
-        "description": "All slices merged; PRD issue closed",
-    },
-    # Conditional: BLOCK loop (reviewer blocks implementer; multiple rounds)
-    {
-        "id": "E-REVIEW-BLOCK",
+        "id": "E-REVIEWER-BLOCK",
         "from_node": "reviewer",
         "to_node": "implementer",
         "evidence": "github",
         "required": "conditional",
         "predicate": "pr_has_block_verdict",
-        "description": "Reviewer posted BLOCK — implementer revised and re-pushed",
+        "label": "BLOCK",
+        "style": "dashed",
+        "description": "Reviewer posted BLOCK — implementer revised and re-pushed.",
     },
-    # Conditional: trivial-lane (PR ≤10 LoC, trivial label, no slice ceremony)
+
+    # reviewer round-3 BLOCK → needs-human (github: needs-human label added)
     {
-        "id": "E-TRIVIAL-LANE",
+        "id": "E-REVIEWER-NEEDSHUMAN",
+        "from_node": "reviewer",
+        "to_node": "needs-human",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "pr_has_needs_human_label",
+        "label": "round-3 BLOCK",
+        "style": "dashed",
+        "description": "Round-3 BLOCK: reviewer escalates by adding needs-human label.",
+    },
+
+    # trivial lane: PR → merge directly (no reviewer; github: trivial label + merge)
+    {
+        "id": "E-TRIVIAL-MERGE",
         "from_node": "pr",
         "to_node": "merge",
         "evidence": "github",
         "required": "conditional",
         "predicate": "pr_has_trivial_label",
-        "description": "PR is trivial-lane (≤10 LoC, trivial label, no reviewer required)",
+        "label": "trivial",
+        "style": "dashed",
+        "description": "Trivial-lane PR (≤10 LoC, trivial label) merged without full review.",
+    },
+
+    # =========================================================================
+    # Stage 4: Acceptance
+    # =========================================================================
+
+    # merge → /qa-plan (runtime: /build or /ship triggers qa-plan)
+    {
+        "id": "E-MERGE-QAPLAN",
+        "from_node": "merge",
+        "to_node": "qa-plan",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "merge_triggers_qa_plan",
+        "label": "",
+        "style": "solid",
+        "description": "/build step 5 dispatches /qa-plan after last slice merges.",
+    },
+
+    # /qa-plan → qa-tester (runtime dispatch)
+    {
+        "id": "E-QAPLAN-QATESTER",
+        "from_node": "qa-plan",
+        "to_node": "qa-tester",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "qa_plan_dispatches_qa_tester",
+        "label": "",
+        "style": "solid",
+        "description": "/qa-plan dispatches qa-tester for production verification.",
+    },
+
+    # qa-tester → verify-verdict (runtime: PRODUCTION_VERIFY trailer)
+    {
+        "id": "E-QATESTER-VERDICT",
+        "from_node": "qa-tester",
+        "to_node": "verify-verdict",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "qa_tester_emits_verdict",
+        "label": "PASS/FAIL",
+        "style": "solid",
+        "description": "qa-tester emits PRODUCTION_VERIFY: PASS|FAIL verdict.",
+    },
+
+    # /qa-review clears needs-human-check residual (runtime)
+    {
+        "id": "E-MERGE-QAREVIEW",
+        "from_node": "merge",
+        "to_node": "qa-review",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "merge_triggers_qa_review",
+        "label": "residual",
+        "style": "dashed",
+        "description": "/qa-review clears needs-human-check residual queue (ADR-0040 D4).",
+    },
+
+    # =========================================================================
+    # Side workflows: codebase-critic (per-PRD + whole-repo background)
+    # =========================================================================
+
+    # merge → codebase-critic per-PRD gate (runtime: /ship dispatches at last slice)
+    {
+        "id": "E-MERGE-CODEBASECRITIC",
+        "from_node": "merge",
+        "to_node": "codebase-critic",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "ship_dispatches_codebase_critic_per_prd",
+        "label": "per-PRD gate",
+        "style": "dashed",
+        "description": "codebase-critic per-PRD mode fires at last slice before reviewer (ADR-0046 D2).",
+    },
+
+    # codebase-critic → reviewer (runtime: per-PRD quality gate output)
+    {
+        "id": "E-CODEBASECRITIC-REVIEWER",
+        "from_node": "codebase-critic",
+        "to_node": "reviewer",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "codebase_critic_feeds_reviewer",
+        "label": "per-PRD",
+        "style": "dashed",
+        "description": "codebase-critic per-PRD verdict feeds into the reviewer pass.",
+    },
+
+    # ship → codebase-critic whole-repo background (advisory, runtime)
+    {
+        "id": "E-SHIP-CODEBASECRITIC-BG",
+        "from_node": "ship",
+        "to_node": "codebase-critic",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "ship_dispatches_codebase_critic_bg",
+        "label": "whole-repo bg",
+        "style": "dashed",
+        "description": "codebase-critic whole-repo background mode dispatched at /ship start (ADR-0051 D2).",
+    },
+
+    # =========================================================================
+    # Side workflows: glossary
+    # =========================================================================
+
+    # user → /glossary (runtime)
+    {
+        "id": "E-USER-GLOSSARY",
+        "from_node": "user",
+        "to_node": "glossary",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_glossary",
+        "label": "/glossary",
+        "style": "dashed",
+        "description": "User invokes /glossary add|fold to add/consolidate vocab entries.",
+    },
+
+    # /glossary → glossary-critic (runtime)
+    {
+        "id": "E-GLOSSARY-CRITIC",
+        "from_node": "glossary",
+        "to_node": "glossary-critic",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "glossary_dispatches_glossary_critic",
+        "label": "",
+        "style": "solid",
+        "description": "/glossary dispatches glossary-critic for APPROVE/BLOCK gate.",
+    },
+
+    # glossary-critic APPROVE → glossary-pr (github: PR opened)
+    {
+        "id": "E-GLOSSARYCRITIC-APPROVE",
+        "from_node": "glossary-critic",
+        "to_node": "glossary-pr",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "glossary_critic_approved_pr_opened",
+        "label": "APPROVE",
+        "style": "solid",
+        "description": "glossary-critic APPROVE triggers glossary PR creation.",
+    },
+
+    # glossary-pr → reviewer (github: PR verdict)
+    {
+        "id": "E-GLOSSARYPR-REVIEWER",
+        "from_node": "glossary-pr",
+        "to_node": "reviewer",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "glossary_pr_reviewed",
+        "label": "",
+        "style": "solid",
+        "description": "Glossary PR reviewed by reviewer agent.",
+    },
+
+    # =========================================================================
+    # Side workflows: audit utilities (advisory; runtime)
+    # =========================================================================
+
+    # user → /audit-subagents (runtime)
+    {
+        "id": "E-USER-AUDITSUBAGENTS",
+        "from_node": "user",
+        "to_node": "audit-subagents",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_audit_subagents",
+        "label": "",
+        "style": "dashed",
+        "description": "User invokes /audit-subagents advisory check.",
+    },
+
+    # /audit-subagents → reviewer (advisory per-PRD; runtime)
+    {
+        "id": "E-AUDITSUBAGENTS-REVIEWER",
+        "from_node": "audit-subagents",
+        "to_node": "reviewer",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "audit_subagents_feeds_reviewer",
+        "label": "per-PRD",
+        "style": "dashed",
+        "description": "/audit-subagents advisory findings fed to reviewer (per-PRD).",
+    },
+
+    # user → /audit-meta (runtime)
+    {
+        "id": "E-USER-AUDITMETA",
+        "from_node": "user",
+        "to_node": "audit-meta",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_audit_meta",
+        "label": "",
+        "style": "dashed",
+        "description": "User invokes /audit-meta structure + docs-currency check.",
+    },
+
+    # /audit-meta → reviewer (advisory per-PRD; runtime)
+    {
+        "id": "E-AUDITMETA-REVIEWER",
+        "from_node": "audit-meta",
+        "to_node": "reviewer",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "audit_meta_feeds_reviewer",
+        "label": "per-PRD",
+        "style": "dashed",
+        "description": "/audit-meta advisory findings fed to reviewer (per-PRD).",
+    },
+
+    # =========================================================================
+    # Side workflows: capture + promote-to-backlog
+    # =========================================================================
+
+    # orchestrator → captured-issue (github: gh issue create --label captured)
+    {
+        "id": "E-ORCH-CAPTURED",
+        "from_node": "orchestrator",
+        "to_node": "captured-issue",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "agent_created_captured_issue",
+        "label": "capture",
+        "style": "dashed",
+        "description": "Any agent creates a captured-labeled issue (rule #11).",
+    },
+
+    # user → /promote-to-backlog (runtime)
+    {
+        "id": "E-USER-PTB",
+        "from_node": "user",
+        "to_node": "promote-to-backlog",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "user_invokes_promote_to_backlog",
+        "label": "",
+        "style": "dashed",
+        "description": "User invokes /promote-to-backlog to curate the captured tier.",
+    },
+
+    # captured-issue → promote-to-backlog (runtime: skill processes captured issues)
+    {
+        "id": "E-CAPTURED-PTB",
+        "from_node": "captured-issue",
+        "to_node": "promote-to-backlog",
+        "evidence": "runtime",
+        "required": "conditional",
+        "predicate": "captured_issue_enters_promotion",
+        "label": "",
+        "style": "solid",
+        "description": "captured issue enters /promote-to-backlog pipeline.",
+    },
+
+    # promote-to-backlog → backlog-critic (runtime)
+    {
+        "id": "E-PTB-BACKLOGCRITIC",
+        "from_node": "promote-to-backlog",
+        "to_node": "backlog-critic",
+        "evidence": "runtime",
+        "required": "always",
+        "predicate": "ptb_dispatches_backlog_critic",
+        "label": "",
+        "style": "solid",
+        "description": "/promote-to-backlog dispatches backlog-critic for APPROVE/BLOCK gate.",
+    },
+
+    # backlog-critic APPROVE → backlog-issue (github: label change captured→backlog)
+    {
+        "id": "E-BACKLOGCRITIC-APPROVE",
+        "from_node": "backlog-critic",
+        "to_node": "backlog-issue",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "backlog_critic_approved_promoted",
+        "label": "APPROVE",
+        "style": "solid",
+        "description": "backlog-critic APPROVE: issue relabeled captured→backlog.",
+    },
+
+    # backlog-critic BLOCK → captured-issue stays (github: no label change)
+    {
+        "id": "E-BACKLOGCRITIC-BLOCK",
+        "from_node": "backlog-critic",
+        "to_node": "captured-issue",
+        "evidence": "github",
+        "required": "conditional",
+        "predicate": "backlog_critic_block_stays_captured",
+        "label": "BLOCK",
+        "style": "dashed",
+        "description": "backlog-critic BLOCK: issue stays in captured tier.",
     },
 ]
 
 
 def get_spec() -> dict:
-    """Return the full spine spec as a JSON-serializable dict.
+    """Return the full SPEC v2 as a JSON-serializable dict.
 
     Shape:
         {
-          "nodes": {id: {kind, label}, ...},
-          "edges": [{id, from_node, to_node, evidence, required, predicate, description}, ...],
-          "version": "spine-v1"
+          "version": "v2",
+          "nodes": {id: {kind, label, stage, path}, ...},
+          "edges": [{id, from_node, to_node, evidence, required, predicate,
+                     label, style, description}, ...],
         }
+
+    Consumed by:
+      - /api/pipeline (server.py)
+      - render_pipeline_mermaid() (server.py --generate-readme)
+      - dashboard/index.html renderTopologyGraph() (declared mode)
+      - dashboard/comparison.py compare() (github-tier edges)
     """
     return {
-        "version": "spine-v1",
+        "version": "v2",
         "nodes": NODES,
-        "edges": SPINE_EDGES,
+        "edges": EDGES,
     }

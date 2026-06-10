@@ -311,18 +311,7 @@
     border-radius: 2px;
     flex-shrink: 0;
   }
-  .drift-swatch-unexpected { background: #ef4444; }
-  .drift-swatch-unseen { background: #6b7280; border-top: 1px dashed #9ca3af; }
-  .drift-swatch-observed { background: #22c55e; }
-  /* Measured-empty notice */
-  .measured-notice {
-    font-size: 11px;
-    color: var(--muted);
-    font-style: italic;
-    padding: 4px 0;
-    display: none;
-  }
-  .measured-notice.visible { display: block; }
+  /* drift-swatch and measured-notice CSS removed in slice #653 */
   .hooks-section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1113,21 +1102,7 @@
       <div class="legend-item"><span class="node-dot dot-critic"></span> Critics (orange)</div>
       <div class="legend-item"><span class="node-dot dot-artifact"></span> Pipeline artifacts (amber)</div>
     </div>
-    <!-- Measured-overlay mode selector (slice #464) -->
-    <div class="topo-mode-bar">
-      <span class="topo-mode-label">View:</span>
-      <div class="seg-ctrl" id="topo-mode-ctrl">
-        <button class="seg-btn active" data-mode="declared" onclick="setTopoMode('declared', this)">Declared</button>
-        <button class="seg-btn" data-mode="measured" onclick="setTopoMode('measured', this)">Measured</button>
-        <button class="seg-btn" data-mode="both" onclick="setTopoMode('both', this)">Both</button>
-      </div>
-      <div class="drift-legend" id="drift-legend">
-        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-unexpected"></span>unexpected (measured not in spec)</div>
-        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-unseen"></span>not seen (declared never observed)</div>
-        <div class="drift-legend-item"><span class="drift-swatch drift-swatch-observed"></span>observed (declared &amp; measured match)</div>
-      </div>
-      <span class="measured-notice" id="measured-notice">Measured topology unavailable — no workflow events captured (capture inactive).</span>
-    </div>
+    <!-- Topology mode: declared only (slice #653 — measured/both removed; comparison UI in slice 3) -->
     <!-- Topology graph + detail sidebar: side-by-side layout -->
     <div class="topo-layout">
       <div id="topology-graph-container">
@@ -1320,193 +1295,46 @@ const NODE_COLORS = {
   artifact:     '#eab308',  // amber — pipeline state nodes (prd_issue, pr, merge, …)
 };
 
-// Topology spec is fetched from GET /api/pipeline (ADR-0039 D1/D2).
-// DISPATCH_MAP and ORCHESTRATOR_CHILDREN are no longer hardcoded here;
-// the topology renders from the server-side PIPELINE spec instead.
-// _pipelineSpec is populated by loadPipelineSpec() before renderTopologyGraph runs.
+// Topology spec is fetched from GET /api/pipeline (ADR-0053 D2 / ADR-0039 D1 extended).
+// SPEC v2 (pipeline_spec.py) replaces PIPELINE dict; nodes have kind/label/stage/path;
+// edges have id/from_node/to_node/evidence/required/predicate/label/style.
+// _pipelineSpec is populated by loadArchitecture() before renderTopologyGraph runs.
 let _pipelineSpec = null;
 
-// --- Measured-overlay mode state (slice #464) ---
-// Values: 'declared' | 'measured' | 'both'
+// --- Topology mode: declared only (slice #653) ---
+// measured/both modes removed; comparison UI ships in slice 3 (/api/comparison).
 let _topoMode = 'declared';
 
-// Measured edges derived from real events; populated by deriveMeasuredEdges().
-// Each entry: { from: string, to: string }  (logical names like the spec uses)
-let _measuredEdges = [];
+// Measured-overlay functions removed in slice #653 — comparison UI ships in slice 3.
 
-// Whether measured data has been fetched at least once for this session.
-let _measuredFetched = false;
+// _dispatchMapFromSpec and _orchestratorChildrenFromSpec removed in slice #653
+// (old PIPELINE children[] format gone; SPEC v2 uses edges list instead).
 
-/**
- * Switch the topology display mode and re-render.
- * Called by the segmented control onclick handlers.
- * @param {string} mode - 'declared' | 'measured' | 'both'
- * @param {HTMLElement} btn - the clicked button element
- */
-function setTopoMode(mode, btn) {
-  _topoMode = mode;
-  // Update button states
-  document.querySelectorAll('#topo-mode-ctrl .seg-btn').forEach(function(b) {
-    b.classList.toggle('active', b.dataset.mode === mode);
-  });
-  // Show/hide drift legend (only in Both mode)
-  const legendEl = document.getElementById('drift-legend');
-  if (legendEl) legendEl.classList.toggle('visible', mode === 'both');
-
-  // Re-render with new mode (archData and _pipelineSpec already loaded)
-  if (archData && _pipelineSpec) {
-    // Measured/Both: ensure events are fetched first
-    if (mode === 'measured' || mode === 'both') {
-      if (!_measuredFetched) {
-        fetchMeasuredEvents().then(function() {
-          renderTopologyGraph(archData);
-        });
-      } else {
-        renderTopologyGraph(archData);
-      }
-    } else {
-      renderTopologyGraph(archData);
-    }
-  }
-}
-
-/**
- * Fetch all sessions from /api/runs and derive measured edges from skill_invoke +
- * agent_complete events across all available sessions.
- * Populates the module-level _measuredEdges array.
- * Never throws — on error, _measuredEdges stays empty.
- */
-async function fetchMeasuredEvents() {
-  _measuredFetched = true;
-  try {
-    const r = await fetch('/api/runs?n=20');
-    if (!r.ok) return;
-    const data = await r.json();
-    const runs = data.runs || [];
-
-    // Collect all events from all sessions (fetch full events per session)
-    // For efficiency, fetch each session in parallel (up to 5).
-    const sessionIds = runs.map(function(run) { return run.session_id; }).filter(Boolean);
-    // Fetch full events for each session (in parallel, max 5 concurrent)
-    const allEvents = [];
-    for (let i = 0; i < sessionIds.length; i += 5) {
-      const batch = sessionIds.slice(i, i + 5);
-      const results = await Promise.all(batch.map(async function(sid) {
-        try {
-          const rr = await fetch('/api/runs?session=' + encodeURIComponent(sid));
-          if (!rr.ok) return [];
-          const dd = await rr.json();
-          return (dd.run && dd.run.events) ? dd.run.events : [];
-        } catch (_) { return []; }
-      }));
-      for (const evs of results) {
-        for (const ev of evs) allEvents.push(ev);
-      }
-    }
-
-    _measuredEdges = deriveMeasuredEdges(allEvents);
-  } catch (_) {
-    _measuredEdges = [];
-  }
-
-  // Update the measured-notice visibility
-  _updateMeasuredNotice();
-}
-
-/**
- * Derive orchestrator→skill and skill→agent edges from a flat event list.
- *
- * Algorithm:
- *   - Each skill_invoke event yields an orchestrator→skill edge.
- *   - Each agent_complete event is attributed to the most-recent skill_invoke
- *     before it (by timestamp). That yields a skill→agent edge.
- *   - Edges are de-duplicated (same {from,to} pair counted once).
- *   - Returns [] when no relevant events exist (graceful-empty).
- *
- * @param {Array} events - flat array of event objects from the log
- * @returns {Array<{from: string, to: string}>}
- */
-function deriveMeasuredEdges(events) {
-  if (!events || events.length === 0) return [];
-
-  // Sort all events by timestamp ascending
-  const sorted = events.slice().sort(function(a, b) {
-    return tsToSecs(a.ts || '') - tsToSecs(b.ts || '');
-  });
-
-  const edgeSet = new Set();  // "from::to" keys for dedup
-  const edgesArr = [];
-
-  function addEdge(from, to) {
-    const key = from + '::' + to;
-    if (!edgeSet.has(key)) {
-      edgeSet.add(key);
-      edgesArr.push({ from, to });
-    }
-  }
-
-  // Walk events in order; track the most-recent skill_invoke
-  let lastSkill = null;  // skill name string or null
-
-  for (const ev of sorted) {
-    const etype = (ev.event || '').trim();
-
-    if (etype === 'skill_invoke' && ev.skill) {
-      const skillName = ev.skill;
-      // orchestrator → skill
-      addEdge('orchestrator', skillName);
-      lastSkill = skillName;
-    } else if (etype === 'agent_complete' && ev.subagent_type) {
-      const agentName = ev.subagent_type;
-      // skill → agent (use most-recent skill before this event)
-      if (lastSkill) {
-        addEdge(lastSkill, agentName);
-      } else {
-        // No prior skill_invoke: attribute directly to orchestrator
-        addEdge('orchestrator', agentName);
-      }
-    }
-  }
-
-  return edgesArr;
-}
-
-/** Show/hide the "no measured events yet" notice based on _measuredEdges. */
-function _updateMeasuredNotice() {
-  const noticeEl = document.getElementById('measured-notice');
-  if (!noticeEl) return;
-  const show = _measuredFetched && _measuredEdges.length === 0 &&
-               (_topoMode === 'measured' || _topoMode === 'both');
-  noticeEl.classList.toggle('visible', show);
-}
-
-// Build DISPATCH_MAP and ORCHESTRATOR_CHILDREN from the fetched spec.
-function _dispatchMapFromSpec(spec) {
-  const map = {};
-  for (const [name, node] of Object.entries(spec)) {
-    if (name === 'orchestrator') continue;
-    map[name] = node.children || [];
-  }
-  return map;
-}
-
-function _orchestratorChildrenFromSpec(spec) {
-  const orch = spec['orchestrator'];
-  return orch ? (orch.children || []) : [];
-}
-
+// nodeTypeForName: resolve vis-network type from SPEC v2 node kind.
+// SPEC v2 nodes have { kind: 'human'|'orchestrator'|'skill'|'agent'|'artifact' }.
+// Maps kind → vis type used by NODE_COLORS / shape logic.
+// 'agent' nodes are further split: agents ending in -critic or named 'reviewer'
+// → 'critic'; others → 'generator'.
 function nodeTypeForName(name) {
   if (name === 'orchestrator') return 'orchestrator';
   if (!_pipelineSpec) {
-    if (name.endsWith('-critic')) return 'critic';
+    if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
     return 'generator';
   }
-  const node = _pipelineSpec[name];
+  const nodes = _pipelineSpec.nodes || {};
+  const node = nodes[name];
   if (!node) {
-    if (name.endsWith('-critic')) return 'critic';
+    if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
     return 'generator';
   }
-  return node.type || 'generator';
+  const kind = node.kind || 'agent';
+  if (kind === 'human') return 'human';
+  if (kind === 'orchestrator') return 'orchestrator';
+  if (kind === 'skill') return 'skill';
+  if (kind === 'artifact') return 'artifact';
+  // kind === 'agent': split critics vs generators
+  if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
+  return 'generator';
 }
 
 // --- Architecture ---
@@ -1537,24 +1365,22 @@ async function loadArchitecture() {
 
 /**
  * Render the orchestration topology as a vis-network hierarchical graph.
- * Layout: physics OFF, hierarchical (LR). Nodes positioned by declared stage field.
+ * Layout: physics OFF, hierarchical (LR). Declared SPEC v2 mode only (slice #653).
  *
- * Declared mode (slice #627 rewrite):
- *   Renders the spec's __edges__ sequential pipeline flow left→right by stage:
- *     S1 (idea-capture) → S2 (prd+slice) → S3 (implementation) → S4 (acceptance)
- *     SS (side-workflows) in a secondary lane below the main spine.
- *   Pipeline flows from __edges__: grill→ship→to-prd→critics→prd_issue→to-issues→
- *     slicer→slice_issues→implementer→pr→reviewer→merge→qa-plan→qa-tester
- *   Stage-level map: S1=0, S2=1, S3=2, S4=3, SS=4, virtual nodes estimated from
- *   their position in the flow.
- *   ID-form canonicalization: __edges__ uses underscores (to_prd, grill_me) while
- *   PIPELINE dict keys use hyphens (to-prd, grill-me). Lookup always converts
- *   underscore→hyphen. Node IDs in vis use the underscore form from __edges__.
+ * Reads _pipelineSpec.nodes and _pipelineSpec.edges (SPEC v2 format):
+ *   nodes: { id: { kind, label, stage, path } }
+ *   edges: [ { id, from_node, to_node, evidence, required, predicate, label, style } ]
  *
- * Mode (slice #464): controlled by module-level _topoMode ('declared'|'measured'|'both').
- *   declared: __edges__-based sequential flow layout (slice #627).
- *   measured: observed edges from skill_invoke/agent_complete events only.
- *   both:     declared graph with measured edges overlaid; drift flagged by color.
+ * BFS-assigns left→right level from 'user' via non-BLOCK forward edges.
+ * SS side-workflow nodes not reachable from 'user' are assigned level 10.
+ *
+ * Edge tier styling (ADR-0053 D2):
+ *   required:always + solid      → standard gray
+ *   required:conditional / dashed → light gray dashed
+ *   evidence:unmeasurable         → very faint dotted (not drift-colored)
+ *
+ * Node-click → file viewer: SPEC nodes carry path; artifact/orchestrator nodes show
+ * a graceful "no source file" message.
  */
 function renderTopologyGraph(data) {
   const containerEl = document.getElementById('topology-graph-container');
@@ -1562,10 +1388,7 @@ function renderTopologyGraph(data) {
   const loadingEl = document.getElementById('topology-loading');
   if (loadingEl) loadingEl.remove();
 
-  // Update measured-notice visibility
-  _updateMeasuredNotice();
-
-  // Rebuild the node→file map fresh on every render (mode switches re-render).
+  // Rebuild the node→file map fresh on every render.
   topoNodeFileMap = {};
   // Build hook name→path lookup from arch data for this render.
   const _hookPathMap = {};
@@ -1577,103 +1400,54 @@ function renderTopologyGraph(data) {
   const nodes = [];
   const edges = [];
 
-  // ---- ID-form canonicalization (slice #627 — §6 trap 2) ----
-  // __edges__ uses underscore IDs (to_prd, grill_me, prd_critic).
-  // PIPELINE dict keys use hyphens (to-prd, grill-me, prd-critic).
-  // Convert underscore → hyphen to look up in PIPELINE spec.
-  function toHyphen(id) { return String(id || '').replace(/_/g, '-'); }
+  // SPEC v2 nodes and edges
+  const specNodes = (_pipelineSpec && _pipelineSpec.nodes) ? _pipelineSpec.nodes : {};
+  const specEdges = (_pipelineSpec && _pipelineSpec.edges) ? _pipelineSpec.edges : [];
 
-  // Look up a node in _pipelineSpec, canonicalizing ID form.
-  function specNode(id) {
-    if (!_pipelineSpec) return null;
-    return _pipelineSpec[id] || _pipelineSpec[toHyphen(id)] || null;
-  }
-
-  // Resolve the type for an underscore-form or hyphen-form node ID.
-  // Returns 'skill' | 'generator' | 'critic' | 'orchestrator' | 'artifact'.
-  // 'artifact' = virtual pipeline state node (prd_issue, slice_issues, pr, merge, …).
-  const VIRTUAL_ARTIFACT_IDS = new Set([
-    'U1', 'U2', 'prd_issue', 'slice_issues', 'pr', 'merge',
-    'nh', 'glossary_pr', 'cap', 'ptb', 'bl', 'capstay',
-  ]);
-  function resolveType(id) {
-    if (id === 'orchestrator') return 'orchestrator';
-    if (VIRTUAL_ARTIFACT_IDS.has(id)) return 'artifact';
-    const sn = specNode(id);
-    if (sn) return sn.type || 'generator';
-    // Heuristic fallback
-    const h = toHyphen(id);
-    if (h.endsWith('-critic')) return 'critic';
+  // ---- Node type resolution from SPEC v2 kind ----
+  // Maps SPEC kind → vis type used by NODE_COLORS / shape logic.
+  // kind 'agent' is further split: -critic suffix or 'reviewer' → 'critic', else 'generator'.
+  function resolveType(nodeId) {
+    if (nodeId === 'orchestrator') return 'orchestrator';
+    const n = specNodes[nodeId];
+    if (!n) {
+      // Fallback heuristic for unknown nodes
+      if (nodeId.endsWith('-critic') || nodeId === 'reviewer') return 'critic';
+      return 'generator';
+    }
+    const kind = n.kind || 'agent';
+    if (kind === 'human') return 'human';
+    if (kind === 'orchestrator') return 'orchestrator';
+    if (kind === 'skill') return 'skill';
+    if (kind === 'artifact') return 'artifact';
+    // kind === 'agent'
+    if (nodeId.endsWith('-critic') || nodeId === 'reviewer') return 'critic';
     return 'generator';
   }
 
-  // Determine vis level from node's stage field.
-  // S1=0, S2=1, S3=2, S4=3, SS=10 (side lane rendered below main spine).
-  // Virtual artifact nodes get a level estimated from their position in the main flow.
-  const STAGE_LEVEL = { 'S1': 0, 'S2': 1, 'S3': 2, 'S4': 3 };
-  const SS_LEVEL = 10; // side-workflows in their own lane
-
-  // Virtual artifact level assignments (by their pipeline position):
-  const ARTIFACT_LEVEL = {
-    'U1':          0,   // user entry (idea stage)
-    'prd_issue':   1,   // after S2 PRD authoring
-    'slice_issues':2,   // after S2 slicing (just before S3)
-    'pr':          2,   // S3 implementation output
-    'merge':       3,   // after reviewer → into S4 territory
-    'U2':          3,   // user exit (acceptance done)
-    'nh':          2,   // needs-human (round-3 escalation — S3 side)
-    'glossary_pr': 10,  // side workflow
-    'cap':         10,  // side workflow
-    'ptb':         10,  // side workflow
-    'bl':          10,  // side workflow
-    'capstay':     10,  // side workflow
-  };
-
-  function nodeLevel(id) {
-    if (ARTIFACT_LEVEL[id] !== undefined) return ARTIFACT_LEVEL[id];
-    const sn = specNode(id);
-    if (sn && sn.stage) {
-      if (sn.stage === 'SS') return SS_LEVEL;
-      return STAGE_LEVEL[sn.stage] !== undefined ? STAGE_LEVEL[sn.stage] : 2;
-    }
-    return 2; // default to S3 for unknowns
-  }
-
-  // NODE_COLORS entry for 'artifact' type: amber (pipeline state node)
-  const ARTIFACT_COLOR = '#eab308';
-
+  // ---- Resolve vis color for a type ----
+  const ARTIFACT_COLOR = '#eab308';  // amber — pipeline state nodes
   function resolveColor(type) {
     if (type === 'artifact') return ARTIFACT_COLOR;
     return NODE_COLORS[type] || NODE_COLORS.generator;
   }
 
-  // Resolve display label for a node ID.
-  function nodeLabel(id) {
-    const type = resolveType(id);
-    if (type === 'skill') {
-      // Use hyphen form for label
-      return '/' + toHyphen(id);
-    }
-    // Use the underscore form (as-is from __edges__) for display
-    return id;
+  // ---- Resolve display label from SPEC or fallback ----
+  function resolveLabel(nodeId) {
+    const n = specNodes[nodeId];
+    if (n && n.label) return n.label;
+    const type = resolveType(nodeId);
+    if (type === 'skill') return '/' + nodeId;
+    return nodeId;
   }
 
-  // addNode: register in vis DataSet and in topoNodeFileMap.
-  // nodeId = underscore-form (the ID used in __edges__).
+  // ---- addNode: register in vis DataSet and in topoNodeFileMap ----
   function addNode(nodeId, label, type, level, extra) {
     const c = resolveColor(type);
-    // Canonical hyphen-form name for file path resolution.
-    const hyphenName = toHyphen(nodeId);
-    let _path = null;
-    if (type === 'skill') {
-      _path = '.claude/skills/' + hyphenName + '/SKILL.md';
-    } else if (type === 'generator' || type === 'critic') {
-      _path = '.claude/agents/' + hyphenName + '.md';
-    } else if (type === 'hook') {
-      _path = _hookPathMap[hyphenName] || ('.claude/hooks/' + hyphenName + (hyphenName.endsWith('.sh') ? '' : '.sh'));
-    }
-    // artifact / orchestrator / bash / adr / prd → null (no file)
-    topoNodeFileMap[nodeId] = { name: hyphenName, type: type, path: _path };
+    // Path for file-viewer: from SPEC node.path, else null
+    const specNode = specNodes[nodeId];
+    let _path = (specNode && specNode.path) ? specNode.path : null;
+    topoNodeFileMap[nodeId] = { name: nodeId, type: type, path: _path };
     nodes.push({
       id: nodeId,
       label,
@@ -1712,248 +1486,94 @@ function renderTopologyGraph(data) {
     edges.push(e);
   }
 
-  // ---- Build declared edge set for drift comparison (used in 'both' mode) ----
-  // Derived from __edges__ for accurate sequential-flow coverage (not children[]).
-  const declaredNamePairs = new Set();
-  if (_pipelineSpec && _pipelineSpec['__edges__']) {
-    for (const e of _pipelineSpec['__edges__']) {
-      if (e.from && e.to) {
-        // Normalise both forms: store as underscore (the form in __edges__)
-        declaredNamePairs.add((e.from || '') + '::' + (e.to || ''));
-        // Also store hyphen form for measured-edge lookup (measured events use hyphen names)
-        declaredNamePairs.add(toHyphen(e.from) + '::' + toHyphen(e.to));
-      }
+  // =========================================================================
+  // DECLARED topology — SPEC v2 edges sequential flow layout.
+  // BFS level assignment from 'user' via non-BLOCK forward edges.
+  // BLOCK edges and 'conditional' back-edges excluded from BFS to prevent
+  // level regression (same guard as PR #637 fixed).
+  // =========================================================================
+
+  // Collect all unique node IDs referenced in SPEC edges.
+  const allNodeIds = new Set();
+  for (const e of specEdges) {
+    if (e.from_node) allNodeIds.add(e.from_node);
+    if (e.to_node)   allNodeIds.add(e.to_node);
+  }
+  // Also add any nodes defined in SPEC but not referenced by edges (defensive)
+  for (const nodeId of Object.keys(specNodes)) {
+    allNodeIds.add(nodeId);
+  }
+
+  // BFS level assignment: start from 'user'; skip BLOCK back-edges.
+  const bfsLevels = {};
+  const bfsQueue = [];
+  function bfsEnqueue(id, lv) {
+    const cur = bfsLevels[id];
+    // Cap lv at node count to guard against cycles (PR #637 lesson).
+    if ((cur === undefined || lv > cur) && lv < allNodeIds.size) {
+      bfsLevels[id] = lv;
+      bfsQueue.push([id, lv]);
+    }
+  }
+  // Build adjacency excluding BLOCK back-edges
+  const bfsAdj = {};
+  for (const e of specEdges) {
+    if (!e.from_node || !e.to_node) continue;
+    const isDashed = e.style === 'dashed';
+    const isBlock = isDashed && (e.label || '').toUpperCase().includes('BLOCK');
+    if (isBlock) continue;
+    if (!bfsAdj[e.from_node]) bfsAdj[e.from_node] = [];
+    bfsAdj[e.from_node].push(e.to_node);
+  }
+  bfsEnqueue('user', 0);
+  let qi = 0;
+  while (qi < bfsQueue.length) {
+    const [node, lv] = bfsQueue[qi++];
+    for (const nxt of (bfsAdj[node] || [])) {
+      bfsEnqueue(nxt, lv + 1);
+    }
+  }
+  // Assign level 10 to SS / unreachable nodes (side-workflow lane)
+  for (const nodeId of allNodeIds) {
+    if (bfsLevels[nodeId] === undefined) {
+      bfsLevels[nodeId] = 10;
     }
   }
 
-  // ---- Build measured edge set for drift comparison ----
-  const measuredNamePairs = new Set();
-  for (const me of _measuredEdges) {
-    measuredNamePairs.add((me.from || '') + '::' + (me.to || ''));
+  // Render each unique node once.
+  for (const nodeId of allNodeIds) {
+    const type = resolveType(nodeId);
+    const level = bfsLevels[nodeId];
+    const label = resolveLabel(nodeId);
+    addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
   }
 
-  const mode = _topoMode;
-
-  // =========================================================================
-  // MODE: 'declared' — __edges__ sequential flow layout (slice #627 rewrite)
-  // Layout: nodes positioned left→right by BFS depth over solid __edges__ flow.
-  // The BFS traversal naturally respects the stage ordering (S1→S2→S3→S4) while
-  // giving sub-stage resolution: slice_issues(9)→implementer(10)→pr(11)→reviewer(12)→merge(13).
-  // SS side-workflow nodes (not reachable from U1 via solid edges) get level=10.
-  // =========================================================================
-  if (mode === 'declared') {
-    const specEdges = (_pipelineSpec && _pipelineSpec['__edges__']) ? _pipelineSpec['__edges__'] : [];
-
-    // Collect all node IDs referenced in __edges__ (deduplicated).
-    const allNodeIds = new Set();
-    for (const e of specEdges) {
-      if (e.from) allNodeIds.add(e.from);
-      if (e.to)   allNodeIds.add(e.to);
-    }
-
-    // ---- BFS level assignment from U1 via solid/APPROVE edges ----
-    // This gives sequential left-to-right positioning that matches the actual
-    // pipeline flow rather than coarse stage groups.
-    // Dashed BLOCK edges are excluded from BFS to avoid level regression.
-    const bfsLevels = {};
-    const bfsQueue = [];
-    function bfsEnqueue(id, lv) {
-      const cur = bfsLevels[id];
-      // Cap lv at node count: a real longest path can't exceed N-1 levels; any
-      // attempt past that means a (non-BLOCK) cycle exists -- stop re-enqueueing
-      // rather than looping forever (the unbounded relaxation on the
-      // reviewer->merge->codebase_critic->reviewer cycle OOM-crashed the renderer).
-      if ((cur === undefined || lv > cur) && lv < allNodeIds.size) {
-        bfsLevels[id] = lv;
-        bfsQueue.push([id, lv]);
-      }
-    }
-    // Build adjacency from solid + APPROVE-labeled edges only
-    const bfsAdj = {};
-    for (const e of specEdges) {
-      if (!e.from || !e.to) continue;
-      const isDashed = e.style === 'dashed';
-      const isBlockEdge = isDashed && e.label && e.label.toUpperCase().includes('BLOCK');
-      if (isBlockEdge) continue; // skip BLOCK back-edges to avoid level regression
-      if (!bfsAdj[e.from]) bfsAdj[e.from] = [];
-      bfsAdj[e.from].push(e.to);
-    }
-    // Start BFS from U1 (the user entry node)
-    bfsEnqueue('U1', 0);
-    let qi = 0;
-    while (qi < bfsQueue.length) {
-      const [node, lv] = bfsQueue[qi++];
-      for (const nxt of (bfsAdj[node] || [])) {
-        bfsEnqueue(nxt, lv + 1);
-      }
-    }
-    // For SS side-workflow nodes not reachable from U1, assign level 10
-    // (places them below/after the main spine)
-    for (const nodeId of allNodeIds) {
-      if (bfsLevels[nodeId] === undefined) {
-        bfsLevels[nodeId] = 10;
-      }
-    }
-
-    // Render each unique node once using BFS level.
-    for (const nodeId of allNodeIds) {
-      const type = resolveType(nodeId);
-      const level = bfsLevels[nodeId];
-      const label = nodeLabel(nodeId);
-      addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
-    }
-
-    // Render edges from __edges__ spec.
-    for (const e of specEdges) {
-      if (!e.from || !e.to) continue;
-      const isDashed = e.style === 'dashed';
-      const edgeColor = isDashed ? '#6b7280' : '#4b5563';
-      const edgeLabel = e.label || undefined;
-      addEdge(e.from, e.to, edgeColor, isDashed, isDashed ? 1 : 1.5, edgeLabel);
-    }
-  }
-
-  // =========================================================================
-  // MODE: 'measured' — show only observed edges; no spec
-  // =========================================================================
-  else if (mode === 'measured') {
-    if (_measuredEdges.length === 0) {
-      // Graceful-empty: show declared topology only (fallback) so graph is never blank
-      // The measured-notice already explains why
-      addNode('orchestrator', 'orchestrator', 'orchestrator', 0, { size: 30 });
+  // Render edges with tier-aware styling (ADR-0053 D2).
+  // evidence='unmeasurable' → very faint dotted (in-conversation; never drift-colored)
+  // evidence='runtime'      → slightly lighter dashed (live enrichment; not compared)
+  // evidence='github'       → standard color (authoritative; evaluated in comparison)
+  // required='conditional' / style='dashed' → dashed regardless of evidence tier
+  for (const e of specEdges) {
+    if (!e.from_node || !e.to_node) continue;
+    const isDashed = e.style === 'dashed';
+    const ev = e.evidence || 'github';
+    let edgeColor, dashes, width;
+    if (ev === 'unmeasurable') {
+      edgeColor = '#374151';   // very faint — in-conversation; not compared
+      dashes = [3, 5];
+      width = 1;
+    } else if (ev === 'runtime') {
+      edgeColor = isDashed ? '#6b7280' : '#4b7593';  // blue-gray tint for runtime
+      dashes = isDashed;
+      width = isDashed ? 1 : 1.5;
     } else {
-      // Build nodes from measured edges
-      const measuredNodeNames = new Set(['orchestrator']);
-      for (const me of _measuredEdges) {
-        if (me.from) measuredNodeNames.add(me.from);
-        if (me.to)   measuredNodeNames.add(me.to);
-      }
-
-      // Assign levels: orchestrator=0, direct orch children=1, rest=2
-      const measuredLevels = { orchestrator: 0 };
-      for (const me of _measuredEdges) {
-        if ((me.from || '') === 'orchestrator') {
-          measuredLevels[me.to] = 1;
-        }
-      }
-      for (const me of _measuredEdges) {
-        if ((me.from || '') !== 'orchestrator' && measuredLevels[me.to] === undefined) {
-          measuredLevels[me.to] = 2;
-        }
-      }
-
-      for (const name of measuredNodeNames) {
-        const nodeType = name === 'orchestrator' ? 'orchestrator' : nodeTypeForName(name);
-        const level = measuredLevels[name] !== undefined ? measuredLevels[name] : 2;
-        const label = nodeType === 'skill' ? '/' + name : name;
-        addNode('m:' + name, label, nodeType, level, name === 'orchestrator' ? { size: 30 } : {});
-      }
-
-      // Add measured edges (green — observed)
-      for (const me of _measuredEdges) {
-        addEdge('m:' + (me.from || ''), 'm:' + (me.to || ''), '#22c55e99', false, 2);
-      }
+      // github tier: authoritative
+      edgeColor = isDashed ? '#6b7280' : '#4b5563';
+      dashes = isDashed;
+      width = isDashed ? 1 : 1.5;
     }
-  }
-
-  // =========================================================================
-  // MODE: 'both' — declared __edges__ flow + measured overlay; drift flagged
-  // =========================================================================
-  else if (mode === 'both') {
-    // Render declared __edges__ topology as the base (same as declared mode)
-    const specEdges2 = (_pipelineSpec && _pipelineSpec['__edges__']) ? _pipelineSpec['__edges__'] : [];
-    const placedNodeIds = new Set();
-
-    const allNodeIds2 = new Set();
-    for (const e of specEdges2) {
-      if (e.from) allNodeIds2.add(e.from);
-      if (e.to)   allNodeIds2.add(e.to);
-    }
-
-    // BFS level assignment (same as declared mode)
-    const bfsLevels2 = {};
-    const bfsQueue2 = [];
-    function bfsEnqueue2(id, lv) {
-      const cur = bfsLevels2[id];
-      // Cap lv at node count (same cycle-guard as declared-mode bfsEnqueue, PR #637):
-      // bounds the longest-path relaxation so a non-BLOCK cycle can't loop forever.
-      if ((cur === undefined || lv > cur) && lv < allNodeIds2.size) {
-        bfsLevels2[id] = lv;
-        bfsQueue2.push([id, lv]);
-      }
-    }
-    const bfsAdj2 = {};
-    for (const e of specEdges2) {
-      if (!e.from || !e.to) continue;
-      const isDashed = e.style === 'dashed';
-      const isBlockEdge = isDashed && e.label && e.label.toUpperCase().includes('BLOCK');
-      if (isBlockEdge) continue;
-      if (!bfsAdj2[e.from]) bfsAdj2[e.from] = [];
-      bfsAdj2[e.from].push(e.to);
-    }
-    bfsEnqueue2('U1', 0);
-    let qi2 = 0;
-    while (qi2 < bfsQueue2.length) {
-      const [node, lv] = bfsQueue2[qi2++];
-      for (const nxt of (bfsAdj2[node] || [])) {
-        bfsEnqueue2(nxt, lv + 1);
-      }
-    }
-    for (const nodeId of allNodeIds2) {
-      if (bfsLevels2[nodeId] === undefined) bfsLevels2[nodeId] = 10;
-    }
-
-    for (const nodeId of allNodeIds2) {
-      const type = resolveType(nodeId);
-      const level = bfsLevels2[nodeId];
-      const label = nodeLabel(nodeId);
-      addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
-      placedNodeIds.add(nodeId);
-    }
-
-    for (const e of specEdges2) {
-      if (!e.from || !e.to) continue;
-      const isDashed = e.style === 'dashed';
-      const pairKey = (e.from || '') + '::' + (e.to || '');
-      // Check if this declared edge was also measured (using hyphen form for measured lookup)
-      const hyphenKey = toHyphen(e.from) + '::' + toHyphen(e.to);
-      const isObserved = measuredNamePairs.has(pairKey) || measuredNamePairs.has(hyphenKey);
-      let edgeColor, dashed;
-      if (isObserved) {
-        edgeColor = '#22c55e';  // green — declared & measured match
-        dashed = false;
-      } else {
-        edgeColor = isDashed ? '#6b7280' : '#4b5563'; // gray — declared but never observed
-        dashed = isDashed;
-      }
-      const edgeLabel = e.label || undefined;
-      addEdge(e.from, e.to, edgeColor, dashed, dashed ? 1 : 1.5, edgeLabel);
-    }
-
-    // Overlay: add UNEXPECTED measured edges (observed but NOT in declared spec)
-    for (const me of _measuredEdges) {
-      const pairKey = (me.from || '') + '::' + (me.to || '');
-      const underscoreKey = (me.from || '').replace(/-/g,'_') + '::' + (me.to || '').replace(/-/g,'_');
-      if (declaredNamePairs.has(pairKey) || declaredNamePairs.has(underscoreKey)) continue;
-
-      // Unexpected edge: find or create node IDs
-      const fromId = me.from || '';
-      const toId = me.to || '';
-
-      if (fromId && !placedNodeIds.has(fromId)) {
-        const srcType = resolveType(fromId);
-        addNode(fromId, fromId, srcType, 1, { borderWidth: 2.5, borderDashes: [4, 3] });
-        placedNodeIds.add(fromId);
-      }
-      if (toId && !placedNodeIds.has(toId)) {
-        const tgtType = resolveType(toId);
-        addNode(toId, toId, tgtType, 2, { borderWidth: 2.5, borderDashes: [4, 3] });
-        placedNodeIds.add(toId);
-      }
-      if (fromId && toId) {
-        addEdge(fromId, toId, '#ef4444', false, 2.5);
-      }
-    }
+    const edgeLabel = e.label || undefined;
+    addEdge(e.from_node, e.to_node, edgeColor, dashes, width, edgeLabel);
   }
 
   // Create the vis-network
@@ -1995,20 +1615,18 @@ function renderTopologyGraph(data) {
     topoNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
   });
 
-  // Topology node-click → detail sidebar (slice #471).
+  // Topology node-click → detail sidebar.
   // Resolves clicked nodeId via topoNodeFileMap; opens shared file-panel renderer.
   topoNetwork.on('click', function(params) {
     if (!params.nodes || params.nodes.length === 0) return;
     const nodeId = params.nodes[0];
-    // Strip 'm:' prefix used in measured mode
-    const lookupId = String(nodeId).startsWith('m:') ? nodeId : nodeId;
-    const info = topoNodeFileMap[lookupId];
+    const info = topoNodeFileMap[nodeId];
     if (!info) return;
 
     if (info.path) {
       viewFile(info.path, info.name, info.type);
     } else {
-      // Graceful no-file message (orchestrator / artifact / bash / PRD / ADR nodes).
+      // Graceful no-file message (orchestrator / artifact nodes have no standalone .md).
       const titleEl = document.getElementById('file-panel-title');
       const hintEl = document.getElementById('file-panel-hint');
       const summaryEl = document.getElementById('file-summary');

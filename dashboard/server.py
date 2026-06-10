@@ -4,7 +4,7 @@ dashboard/server.py — project-claude workflow dashboard server.
 
 Serves: GET /               -> dashboard/index.html
         GET /api/architecture -> JSON {skills, agents, hooks, adrs, edges}
-        GET /api/pipeline     -> JSON pipeline spec (PIPELINE dict — canonical topology)
+        GET /api/pipeline     -> JSON pipeline spec (SPEC v2 from pipeline_spec.py)
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/events       -> SSE stream of workflow-events.jsonl (slice 2)
@@ -49,171 +49,7 @@ if _DASHBOARD_DIR_STR not in sys.path:
 
 from collector import get_trail  # noqa: E402
 from comparison import compare, get_spec_for_compare  # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# PIPELINE spec — canonical single source for the workflow topology (ADR-0039 D1,
-# extended by ADR-0047 D1/D2).
-# This is the ONE hand-edited declaration.  Both the dashboard Architecture
-# topology (served via GET /api/pipeline → fetched by index.html) and the
-# README pipeline diagram (rendered by render_pipeline_mermaid() inside
-# --generate-readme) are generated from this structure.
-#
-# Node schema (each key → dict):
-#   type     : 'skill' | 'generator' | 'critic' | 'orchestrator'
-#   children : list[str]  — parent-child dispatch relationships
-#   stage    : str | None — mermaid subgraph bucket:
-#                 'S1' idea-capture, 'S2' prd-slice, 'S3' impl, 'S4' acceptance,
-#                 'SS' side-workflows, None (cross-cutting / rendered outside subgraphs)
-#
-# Special key "__edges__": list of explicit edge specs for the mermaid diagram:
-#   {from, to, label?, style?}
-#   style: 'solid' (default →) | 'dashed' (-.->) | 'block' (-->) | 'labeled'
-#   label: edge label string (renders as |label| in solid, or edge text in dashed)
-#
-# Hierarchy grounded in ADR-0034 D1 (/build conductor) + ADR-0003 (pipeline)
-# + ADR-0038 D3 (glossary merged) + ADR-0046 D1 (parsimony principle).
-# ADR-0046 D2: codebase-critic added (per-PRD quality gate); R-BOY-SCOUT retired.
-# ADR-0051 D2: codebase-critic whole-repo background mode (non-blocking, /ship start).
-# ADR-0047 D2: __edges__ schema extension (explicit edge specs for mermaid).
-# ---------------------------------------------------------------------------
-PIPELINE: dict = {
-    # ---- orchestrator (cross-cutting; not in a subgraph) -------------------
-    "orchestrator": {
-        "type": "orchestrator",
-        "stage": None,
-        "children": [
-            "build",
-            "glossary",
-            "audit-meta",
-            "audit-subagents",
-            "promote-to-backlog",
-        ],
-    },
-
-    # ---- Stage 1: Idea capture ---------------------------------------------
-    # build is the primary full-lifecycle conductor (ADR-0034 D1)
-    "build": {
-        "type": "skill",
-        "stage": "S1",
-        "children": ["grill-me", "ship", "qa-plan"],
-    },
-    "grill-me": {
-        "type": "skill",
-        "stage": "S1",
-        "children": [],
-    },
-    # ship orchestrates the full PRD→merge pipeline (ADR-0003)
-    "ship": {
-        "type": "skill",
-        "stage": "S1",
-        "children": ["to-prd", "to-issues", "implementer", "reviewer"],
-    },
-
-    # ---- Stage 2–3: PRD authoring + slice decomposition -------------------
-    # to-prd runs joint-APPROVE gate with both critics
-    "to-prd": {
-        "type": "skill",
-        "stage": "S2",
-        "children": ["prd-critic", "adr-critic"],
-    },
-    "prd-critic":  {"type": "critic",    "stage": "S2", "children": []},
-    "adr-critic":  {"type": "critic",    "stage": "S2", "children": []},
-    # to-issues runs slicer + slicer-critic
-    "to-issues": {
-        "type": "skill",
-        "stage": "S2",
-        "children": ["slicer", "slicer-critic"],
-    },
-    "slicer":       {"type": "generator", "stage": "S2", "children": []},
-    "slicer-critic":{"type": "critic",    "stage": "S2", "children": []},
-
-    # ---- Stage 4: Implementation -------------------------------------------
-    "implementer":  {"type": "generator", "stage": "S3", "children": []},
-    "reviewer":     {"type": "critic",    "stage": "S3", "children": []},
-
-    # ---- Stage 5: Acceptance -----------------------------------------------
-    # qa-plan dispatches qa-tester for acceptance testing
-    "qa-plan": {
-        "type": "skill",
-        "stage": "S4",
-        "children": ["qa-tester"],
-    },
-    "qa-tester":    {"type": "generator", "stage": "S4", "children": []},
-
-    # ---- Side workflows ----------------------------------------------------
-    # glossary = merged glossary-add + glossary-fold (ADR-0038 D3)
-    "glossary": {
-        "type": "skill",
-        "stage": "SS",
-        "children": ["glossary-critic"],
-    },
-    "glossary-critic": {"type": "critic", "stage": "SS", "children": []},
-    "promote-to-backlog": {
-        "type": "skill",
-        "stage": "SS",
-        "children": ["backlog-critic"],
-    },
-    "backlog-critic": {"type": "critic", "stage": "SS", "children": []},
-    # utility skills — orchestrator siblings, render in SS
-    "audit-meta":        {"type": "skill", "stage": "SS", "children": []},
-    "audit-subagents":   {"type": "skill", "stage": "SS", "children": []},
-    # codebase-critic: post-PRD per-PRD quality gate (ADR-0046 D1; added ADR-0046 D2)
-    # fires at the last slice before reviewer within the /ship pipeline; not a
-    # new critic category — it IS the 7th critic replacing the retired R-BOY-SCOUT.
-    # Also dispatched in whole-repo background mode at /ship start (ADR-0051 D2).
-    "codebase-critic": {"type": "critic", "stage": "SS", "children": []},
-
-    # ---- Explicit edge specs (ADR-0047 D2 schema extension) ----------------
-    # These drive render_pipeline_mermaid(); children[] above drive /api/pipeline topology.
-    # format: {from, to, label?, style?}
-    #   style: 'solid' → (default) | 'dashed' -.-. | 'block' -->
-    "__edges__": [
-        # S1 idea-capture
-        {"from": "U1",        "to": "grill_me",   "style": "solid"},
-        {"from": "grill_me",  "to": "ship",        "label": "settled design", "style": "solid"},
-        {"from": "U1",        "to": "build",       "style": "solid"},
-        {"from": "build",     "to": "ship",        "style": "solid"},
-        # S2 PRD+slice
-        {"from": "ship",      "to": "to_prd",      "style": "solid"},
-        {"from": "to_prd",    "to": "prd_critic",  "style": "solid"},
-        {"from": "to_prd",    "to": "adr_critic",  "label": "if ADR", "style": "dashed"},
-        {"from": "prd_critic","to": "prd_issue",   "label": "joint APPROVE", "style": "solid"},
-        {"from": "adr_critic","to": "prd_issue",   "label": "joint APPROVE", "style": "solid"},
-        {"from": "prd_critic","to": "to_prd",      "label": "BLOCK", "style": "dashed"},
-        {"from": "prd_issue", "to": "to_issues",   "style": "solid"},
-        {"from": "to_issues", "to": "slicer",      "style": "solid"},
-        {"from": "slicer",    "to": "slicer_critic","label": "decomposition", "style": "solid"},
-        {"from": "slicer_critic","to": "slice_issues","label": "APPROVE", "style": "solid"},
-        {"from": "slicer_critic","to": "slicer",   "label": "BLOCK", "style": "dashed"},
-        # S3 implementation
-        {"from": "slice_issues","to": "implementer","style": "solid"},
-        {"from": "implementer","to": "pr",          "style": "solid"},
-        {"from": "pr",         "to": "reviewer",    "style": "solid"},
-        {"from": "reviewer",   "to": "merge",       "label": "APPROVE", "style": "solid"},
-        {"from": "reviewer",   "to": "implementer", "label": "BLOCK", "style": "dashed"},
-        {"from": "reviewer",   "to": "nh",          "label": "round-3 BLOCK", "style": "dashed"},
-        # S4 acceptance
-        {"from": "merge",      "to": "qa_plan",     "style": "solid"},
-        {"from": "qa_plan",    "to": "qa_tester",   "style": "solid"},
-        {"from": "qa_tester",  "to": "U2",          "style": "solid"},
-        # SS side-workflows
-        {"from": "audit_subagents","to": "reviewer","label": "per-PRD", "style": "dashed"},
-        {"from": "audit_meta",     "to": "reviewer","label": "per-PRD", "style": "dashed"},
-        {"from": "glossary",       "to": "glossary_critic","style": "solid"},
-        {"from": "glossary_critic","to": "glossary_pr","label": "APPROVE","style": "solid"},
-        {"from": "glossary_pr",    "to": "reviewer",  "style": "solid"},
-        {"from": "cap",            "to": "ptb",        "style": "solid"},
-        {"from": "ptb",            "to": "backlog_critic","style": "solid"},
-        {"from": "backlog_critic", "to": "bl",         "label": "APPROVE","style": "solid"},
-        {"from": "backlog_critic", "to": "capstay",    "label": "BLOCK", "style": "solid"},
-        # codebase-critic per-PRD mode: fires at last slice before reviewer (ADR-0046 D2)
-        {"from": "codebase_critic","to": "reviewer",  "label": "per-PRD gate","style": "dashed"},
-        {"from": "merge",          "to": "codebase_critic","label": "next PRD","style": "dashed"},
-        # codebase-critic whole-repo mode: background dispatch at /ship start (ADR-0051 D2)
-        {"from": "ship",           "to": "codebase_critic","label": "whole-repo bg","style": "dashed"},
-    ],
-}
+from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
 
 
 def _resolve_invoking_repo_root() -> Path:
@@ -579,7 +415,7 @@ def discover_edges() -> list:
 
     NOTE (slice #629, ADR-0039 D2): this is a COMPONENT-REFERENCE graph, NOT
     the canonical workflow topology. The authoritative sequential pipeline flow
-    lives in the PIPELINE spec's ``__edges__`` field and is exposed via
+    lives in the SPEC v2 (pipeline_spec.py) and is exposed via
     ``/api/pipeline`` (rendered by the Architecture topology graph since slice #627).
     This function's output (``/api/architecture`` ``edges``) is consumed only by
     the flat component list section's "Inferred edges" summary — a supplementary
@@ -1541,10 +1377,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(data)
 
         elif path == "/api/pipeline":
-            # Canonical topology spec (ADR-0039 D1).
-            # Returns PIPELINE as JSON; dashboard index.html fetches this instead
-            # of embedding a hardcoded DISPATCH_MAP.
-            self._send_json(PIPELINE)
+            # Canonical topology spec (ADR-0053 D2 / ADR-0039 D1 extended).
+            # Returns SPEC v2 from pipeline_spec.py; dashboard index.html fetches
+            # this for the declared topology render.
+            self._send_json(_get_pipeline_spec())
 
         elif path == "/api/health":
             data = {
@@ -1641,44 +1477,57 @@ def main():
 # README generator  (--generate-readme CLI mode)
 # ---------------------------------------------------------------------------
 
-# render_pipeline_mermaid: generates a mermaid flowchart TD from the PIPELINE
-# spec (ADR-0039 D2).  Both the README diagram and the dashboard topology are
-# sourced from the same PIPELINE dict — editing PIPELINE changes both.
+# render_pipeline_mermaid: generates a mermaid flowchart TD from the SPEC v2
+# (pipeline_spec.py, ADR-0053 D2 / ADR-0039 D1 extended).  Both the README
+# diagram and the dashboard topology are sourced from the same SPEC.
 #
-# The generated diagram is a simplified high-level topology:
-#   orchestrator → skills → agents (critics/generators)
-# It intentionally mirrors the structure of the old hand-written diagram
-# while being derived from the canonical PIPELINE spec.
+# The generated diagram preserves the visual shape of the previous diagram:
+#   S1 idea-capture → S2 PRD+slice → S3 implementation → S4 acceptance
+#   SS side-workflows in a secondary lane.
+# Solid edges = required:always; dashed edges = conditional / unmeasurable.
 
 def _node_id(name: str) -> str:
-    """Sanitise a pipeline node name to a valid mermaid node ID (hyphens → underscores)."""
+    """Sanitise a SPEC node id to a valid mermaid node ID (hyphens → underscores)."""
     return name.replace("-", "_")
 
 
-def _node_decl(name: str, node_type: str) -> str:
-    """Return a mermaid node declaration string for a PIPELINE node.
+def _node_decl_spec(name: str, kind: str, label: str) -> str:
+    """Return a mermaid node declaration for a SPEC v2 node.
 
-    Shape conventions:
-      skill      — ["/name"]   (rectangle, slash-prefix label)
-      generator  — [name]      (rectangle)
-      critic     — {name}      (rhombus) … except 'reviewer' uses {reviewer} too
-      orchestrator — [name]    (rectangle, slash-prefix)
+    Shape conventions (matching vis-network topology render):
+      human        — [label]      (rectangle)
+      orchestrator — ["/name"]    (rectangle, slash-prefix)
+      skill        — ["/name"]    (rectangle, slash-prefix)
+      agent (critic)   — {name}   (rhombus)
+      agent (generator)— [name]   (rectangle)
+      artifact     — [(label)]    (cylinder-ish via (()) not available; use [()])
     """
     nid = _node_id(name)
-    if node_type in ("skill", "orchestrator"):
-        label = f"\"/{name}\""
+    if kind == "human":
+        return f"{nid}[\"{label}\"]"
+    elif kind in ("skill", "orchestrator"):
+        return f"{nid}[\"/{name}\"]"
+    elif kind == "artifact":
+        return f"{nid}[({label})]"
+    elif kind == "agent":
+        # Distinguish critics from generators by name heuristic
+        if name.endswith("-critic") or name in ("reviewer",):
+            return f"{nid}{{{{{label}}}}}"
         return f"{nid}[{label}]"
-    elif node_type == "critic":
-        return f"{nid}{{{name}}}"
-    else:  # generator
-        return f"{nid}[{name}]"
+    else:
+        return f"{nid}[{label}]"
 
 
-def _edge_line(edge: dict) -> str:
-    """Render one edge dict from __edges__ to a mermaid edge string."""
-    src = edge["from"]
-    tgt = edge["to"]
-    label = edge.get("label", "")
+def _edge_line_spec(edge: dict) -> str:
+    """Render one SPEC edge to a mermaid edge string.
+
+    Uses from_node/to_node (hyphen ids) converted to underscores for mermaid.
+    style='dashed' → -.-  or  -.label.-
+    style='solid'  → -->  or  -->|label|
+    """
+    src = _node_id(edge["from_node"])
+    tgt = _node_id(edge["to_node"])
+    label = (edge.get("label") or "").strip()
     style = edge.get("style", "solid")
 
     if style == "dashed":
@@ -1686,34 +1535,28 @@ def _edge_line(edge: dict) -> str:
             return f"  {src} -.{label}.- {tgt}"
         else:
             return f"  {src} -.- {tgt}"
-    else:  # solid / block
+    else:  # solid
         if label:
             return f"  {src} -->|{label}| {tgt}"
         else:
             return f"  {src} --> {tgt}"
 
 
-def render_pipeline_mermaid(pipeline: dict) -> str:
-    """Render the PIPELINE spec to a mermaid flowchart TD string.
+def render_pipeline_mermaid(spec: dict) -> str:
+    """Render the SPEC v2 to a mermaid flowchart TD string.
 
-    Returns a complete ```mermaid ... ``` fenced block suitable for embedding
-    in README.md via the {{GENERATED:pipeline-diagram}} placeholder.
+    Returns a complete ```mermaid ... ``` fenced block for embedding in
+    README.md via the {{GENERATED:pipeline-diagram}} placeholder.
 
-    Derives ALL structure from the pipeline argument (ADR-0047 D2):
-    - Node declarations come from iterating pipeline entries by their 'stage' field.
-    - Edges come from pipeline['__edges__'].
-    - ClassDef assignments are derived from each node's 'type' field.
+    Derives ALL structure from spec (ADR-0053 D2):
+    - Node declarations from spec['nodes'] grouped by stage field.
+    - Edges from spec['edges'] (from_node/to_node in hyphen id-space).
+    - ClassDef assignments from each node's kind field.
 
-    Artifact nodes (prd_issue, pr, merge, etc.) and user nodes (U1, U2) are
-    declared inline in their subgraph because they are structural intermediaries
-    not tracked as pipeline skills/agents; they appear in the edge list.
-
-    Node IDs are sanitised (hyphens → underscores) so mermaid parses them
-    without quoting; labels restore the original name / slash-prefix.
+    Node IDs are sanitised (hyphens → underscores); labels from SPEC.
     """
-    # Separate __edges__ from the node entries
-    edges = pipeline.get("__edges__", [])
-    nodes = {k: v for k, v in pipeline.items() if k != "__edges__"}
+    nodes = spec.get("nodes", {})
+    edges = spec.get("edges", [])
 
     # Group nodes by stage
     by_stage: dict = {}
@@ -1723,75 +1566,64 @@ def render_pipeline_mermaid(pipeline: dict) -> str:
             by_stage[stage] = []
         by_stage[stage].append((name, meta))
 
-    # Collect node type → mermaid class mapping for classDef assignments
-    # Build a dict: node_id → class name
+    # Collect node_id → mermaid class for classDef assignments
     node_classes: dict[str, str] = {}
     for name, meta in nodes.items():
-        ntype = meta.get("type", "skill")
+        kind = meta.get("kind", "agent")
         nid = _node_id(name)
         if name == "reviewer":
             node_classes[nid] = "reviewer_cls"
-        elif ntype == "critic":
-            node_classes[nid] = "critic"
-        elif ntype == "generator":
-            node_classes[nid] = "gen"
-        elif ntype in ("skill", "orchestrator"):
+        elif kind == "human":
+            node_classes[nid] = "human"
+        elif kind in ("skill", "orchestrator"):
             node_classes[nid] = "skill"
+        elif kind == "agent":
+            if name.endswith("-critic") or name == "reviewer":
+                node_classes[nid] = "critic"
+            else:
+                node_classes[nid] = "gen"
+        elif kind == "artifact":
+            node_classes[nid] = "artifact"
 
     lines: list[str] = []
     lines.append("```mermaid")
     lines.append("flowchart TD")
 
     # ---- Subgraph S1: Idea capture -----------------------------------------
-    s1_nodes = [n for n, _ in by_stage.get("S1", [])]
     lines.append('  subgraph S1["Stage 1: Idea capture"]')
-    lines.append("    U1[User]")
     for name, meta in by_stage.get("S1", []):
-        lines.append(f"    {_node_decl(name, meta['type'])}")
+        lines.append(f"    {_node_decl_spec(name, meta['kind'], meta['label'])}")
     lines.append("  end")
 
     # ---- Subgraph S2: PRD authoring + slice decomposition ------------------
-    lines.append('  subgraph S2["Stage 2–3: PRD + slice decomposition"]')
+    lines.append('  subgraph S2["Stage 2-3: PRD + slice decomposition"]')
     for name, meta in by_stage.get("S2", []):
-        lines.append(f"    {_node_decl(name, meta['type'])}")
-    # Artifact nodes that live in S2
-    lines.append("    prd_issue[(PRD issue)]")
-    lines.append("    slice_issues[(slice issues)]")
+        lines.append(f"    {_node_decl_spec(name, meta['kind'], meta['label'])}")
     lines.append("  end")
 
     # ---- Subgraph S3: Implementation ---------------------------------------
     lines.append('  subgraph S3["Stage 4: Implementation"]')
     for name, meta in by_stage.get("S3", []):
-        lines.append(f"    {_node_decl(name, meta['type'])}")
-    # Artifact nodes that live in S3
-    lines.append("    pr[(PR Closes #N)]")
-    lines.append("    merge[(merged on main)]")
-    lines.append("    nh[needs-human]")
+        lines.append(f"    {_node_decl_spec(name, meta['kind'], meta['label'])}")
     lines.append("  end")
 
     # ---- Subgraph S4: Acceptance -------------------------------------------
     lines.append('  subgraph S4["Stage 5: Acceptance"]')
     for name, meta in by_stage.get("S4", []):
-        lines.append(f"    {_node_decl(name, meta['type'])}")
-    lines.append("    U2[User accepts PRD]")
+        lines.append(f"    {_node_decl_spec(name, meta['kind'], meta['label'])}")
     lines.append("  end")
 
     # ---- Subgraph SS: Side workflows ----------------------------------------
     lines.append('  subgraph SS["Side workflows"]')
     for name, meta in by_stage.get("SS", []):
-        lines.append(f"    {_node_decl(name, meta['type'])}")
-    # Artifact nodes that live in SS
-    lines.append("    glossary_pr[(glossary PR)]")
-    lines.append("    cap[captured issue]")
-    lines.append("    bl[backlog label]")
-    lines.append("    capstay[stays captured]")
+        lines.append(f"    {_node_decl_spec(name, meta['kind'], meta['label'])}")
     lines.append("  end")
 
-    # ---- Edges (all derived from __edges__) --------------------------------
+    # ---- Edges (from SPEC edges list) ----------------------------------------
     for edge in edges:
-        lines.append(_edge_line(edge))
+        lines.append(_edge_line_spec(edge))
 
-    # ---- classDef declarations ---------------------------------------------
+    # ---- classDef declarations -----------------------------------------------
     lines.append("  classDef human fill:#3b82f6,color:#fff")
     lines.append("  classDef skill fill:#14b8a6,color:#fff")
     lines.append("  classDef gen fill:#22c55e,color:#fff")
@@ -1799,20 +1631,14 @@ def render_pipeline_mermaid(pipeline: dict) -> str:
     lines.append("  classDef reviewer_cls fill:#ef4444,color:#fff")
     lines.append("  classDef artifact fill:#9ca3af,color:#fff")
 
-    # ---- class assignments derived from pipeline node types ----------------
-    lines.append("  class U1,U2 human")
+    # ---- class assignments from kind/name ----------------------------------
     by_class: dict[str, list[str]] = {}
     for nid, cls in node_classes.items():
         by_class.setdefault(cls, []).append(nid)
-    for cls_name in ("skill", "gen", "critic", "reviewer_cls"):
+    for cls_name in ("human", "skill", "gen", "critic", "reviewer_cls", "artifact"):
         if cls_name in by_class:
             ids = ",".join(sorted(by_class[cls_name]))
             lines.append(f"  class {ids} {cls_name}")
-    # Artifact nodes always get artifact class
-    artifact_ids = (
-        "prd_issue,slice_issues,pr,merge,nh,glossary_pr,cap,bl,capstay"
-    )
-    lines.append(f"  class {artifact_ids} artifact")
 
     lines.append("```")
     return "\n".join(lines)
@@ -1995,7 +1821,7 @@ def generate_readme() -> None:
     template = template_path.read_text(encoding="utf-8")
 
     substitutions = {
-        "{{GENERATED:pipeline-diagram}}": render_pipeline_mermaid(PIPELINE),
+        "{{GENERATED:pipeline-diagram}}": render_pipeline_mermaid(_get_pipeline_spec()),
         "{{GENERATED:component-map}}": _build_component_map().rstrip("\n"),
         "{{GENERATED:counts}}": _build_counts(),
         "{{GENERATED:critic-list}}": _build_critic_list(),

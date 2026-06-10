@@ -300,6 +300,62 @@ Used when the merged diff's dominant changed-path matches `decisions/*`, `docs/*
 
 No browser, no hook firing, no command execution — static only. The "Production check:" line for this route MUST follow the `"static: <assertion>"` or `"N/A -- docs-only, static: <assertion>"` form documented in ADR-0037 D4.
 
+### Route-downgrade policy (per ADR-0054 D5)
+
+When a declared route's required tooling is unavailable in the verification environment (e.g., browser route with no Playwright install, hook-fire route with no `claude` binary), the verdict is **PROVISIONAL** — never a silent PASS via a weaker route.
+
+**Mechanic:**
+1. Before executing any route, probe for required tooling: browser → `python -c "from playwright.sync_api import sync_playwright"` exit 0; hook-fire → `which claude` exit 0; command-run → direct bash; static-check → always available.
+2. If tooling unavailable: do NOT fall back to a weaker route silently. Return:
+   ```
+   PRODUCTION_VERIFY: PROVISIONAL
+   ROUTE: <declared-route> (tooling unavailable)
+   REASON: <declared route tooling unavailable — downgrade would produce silent PASS; routed to needs-human-check per ADR-0054 D5>
+   ```
+3. The calling orchestrator routes this to the `needs-human-check` queue per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D2/D4. Do NOT resolve PROVISIONAL as PASS.
+
+**Rationale:** Silent browser→command-run downgrade shipped the #639 crash. A declared route implies a fidelity contract; breaking that contract without disclosure produces a false PASS. PROVISIONAL preserves flow while keeping a human in the loop — the alternative (hard FAIL) stalls the pipeline on environment variance (A3, rejected per ADR-0054).
+
+### Hook-fire route registration-liveness assertion (per ADR-0054 D5)
+
+Before asserting the hook, verify the hook is actually registered and will fire in the live Claude Code environment. Manual script invocation (`bash .claude/hooks/<name>.sh < payload`) only proves script-correctness — NOT that Claude Code fires the hook on real events.
+
+**Additional step (insert between Step 1 and Step 2 of hook-fire route):**
+
+**Step 1b — Registration-liveness probe.** Spawn a minimal Claude Code no-op invocation from the repo root and assert a fresh beacon appears in `.claude/logs/`:
+```bash
+# Probe: spawn claude with a noop prompt and wait for hook fire
+BEFORE_TS=$(date +%s)
+claude -p 'noop' --output-format text > /dev/null 2>&1 || true
+sleep 2
+# Assert: a hook-fires.jsonl entry newer than BEFORE_TS exists
+python3 -c "
+import json, time, os
+before = $BEFORE_TS
+log = '.claude/logs/hook-fires.jsonl'
+if not os.path.exists(log):
+    print('FAIL: hook-fires.jsonl not found')
+    exit(1)
+lines = open(log).readlines()
+fresh = [l for l in lines if json.loads(l).get('ts', 0) > before]
+if fresh:
+    print(f'PASS: registration-liveness -- {len(fresh)} fresh beacon(s)')
+else:
+    print('PROVISIONAL: no fresh beacon after claude -p noop -- hook may not be registered')
+"
+```
+If the probe returns PROVISIONAL → the hook-fire route verdict is PROVISIONAL (tooling available but hook not registered); route to `needs-human-check`. If the probe returns PASS → continue to Step 2.
+
+### Browser route data-provenance assertions (per ADR-0054 D5)
+
+**Additional assertions for the browser route (append to Step 3):**
+
+- **(D) Data provenance — non-fixture:** Assert that rendered data is NOT fixture-patterned. Check that data visible in the rendered view has a real session/PRD/PR id or timestamp — not a test string like `"fixture"`, `"test-data"`, or `"synthetic"`. Assert via `page.inner_text()` on the data container: if the returned text contains a fixture-pattern substring → PROVISIONAL (human must verify data source).
+- **(E) Data freshness:** Assert that rendered timestamps are newer than the verification start time (`BEFORE_TS`). If a timestamp field is visible, parse it; if it is older than the start time by more than a session-reasonable window (e.g., >1 hr) → PROVISIONAL (dashboard may be showing stale data).
+- **(F) Environment freshness:** When `server.py` is in the merged diff, assert the dashboard process was restarted from the merged code (not a stale pre-merge process). Check: `ps aux | grep server.py` start time vs merge time; if the process predates the merge → FAIL with `"browser route: dashboard process predates merged code; restart required"`.
+
+Update Step 5 (PASS condition) to: PASS when asserts (A)+(B)+(C)+(D)+(E)+(F) all pass. (D) and (E) that cannot be evaluated deterministically → PROVISIONAL (residual); (F) evaluates as FAIL or PASS only.
+
 ### Output shape (production-verify mode)
 
 Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent production-verify extensions. DO NOT emit VERDICT, ROUND, or any critic-rubric fields — qa-tester is a GENERATOR, not a critic (ADR-0037 D3; critic parsimony per ADR-0046 D1).

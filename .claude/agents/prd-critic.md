@@ -154,6 +154,25 @@ Unacceptable (FAIL) forms:
 
 **Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: load http://localhost:8765/live-tab, assert 0 console errors"` → PASS.
 
+### PC-LIVE-FEED
+
+A PRD whose feature consumes an upstream pipeline stage must declare a live-feed precondition.
+
+**Mechanic:** Determine whether the PRD's feature reads from or depends on data emitted by an upstream pipeline (e.g., hook-fires log, workflow-events log, dashboard data from server.py, QA-plan output). If yes:
+
+1. **Precondition declared:** PRD §2 or §5 must explicitly state that the upstream pipeline emits a real datum within a recent window (e.g., "upstream hook fires are live and < 5 min old in the verification environment") before the feature's production verification is valid.
+2. **Failure mode is FAIL, not PROVISIONAL:** PRD §2's "Production check:" line must declare that a dead or stale upstream feed causes the production check to FAIL outright — not PROVISIONAL. (PROVISIONAL is for tooling unavailability; a dead upstream feed is a feature-level failure, not an environment limitation.)
+
+**Check — presence:** If the PRD consumes upstream pipeline data and §2/§5 contain no live-feed precondition → FAIL: `"PC-LIVE-FEED: PRD consumes upstream pipeline data but §2/§5 declare no live-feed precondition (ADR-0054 D6)"`.
+
+**Check — failure mode:** If a live-feed precondition is declared but the "Production check:" line routes a dead-feed to PROVISIONAL rather than FAIL → FAIL: `"PC-LIVE-FEED: dead upstream feed must FAIL the production check, not PROVISIONAL — PROVISIONAL is for tooling absence, not feature failures (ADR-0054 D6)"`.
+
+**Not applicable:** PRDs whose features are self-contained (no upstream data dependency) — PASS by default.
+
+**Rationale:** A feature that consumes pipeline output cannot be meaningfully verified if that pipeline is silent. Routing a dead upstream feed to PROVISIONAL masks the failure — it appears as an environment quirk when it is actually evidence the feature is untestable. Forcing FAIL surfaces the gap immediately and either (a) triggers a pipeline fix upstream or (b) reveals the precondition was not met before verification started. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6.
+
+**Examples:** Dashboard PRD reads hook-fires.jsonl; §2 Production check: does NOT mention live-feed precondition → FAIL. Same PRD; §2 states "precondition: hook fires at least one beacon in the last 5 min; if feed dead, production check FAILS" → PASS. PRD ships a pure doc change with no upstream dependency → not applicable, PASS.
+
 ---
 
 ### ADR consistency sub-check

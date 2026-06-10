@@ -176,6 +176,23 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **Rationale:** Parallel sibling PRs that both touch the same cascade-doc rebase-conflict on merge. This pattern surfaced from the PR #183 + PR #186 collision: both PRs added CLAUDE.md Map rows; whichever merged second hit a hand-resolvable conflict. Multiplied across the autonomous pipeline's parallel-dispatch model (per ADR-0010 D3), the cost compounds — every parallel batch with cascade-doc collisions becomes a rebase round-trip. The deferred-trivial-lane back-ref pattern is the canonical mitigation.
 
+### SC-SYSTEM-SKELETON — Multi-PRD pipeline feature walks system skeleton in slice 1
+
+**Mechanic:** If the PRD's feature implements stage N of a multi-PRD pipeline (i.e., the feature depends on or consumes data emitted by a prior PRD's stage), then slice 1 MUST demonstrate one REAL datum traversing all stages 1..N in the production environment. Per-PRD walking-skeleton discipline is necessary but not sufficient.
+
+**Check:**
+1. Identify whether the PRD is pipeline-consuming: does §1 or §5 name an upstream stage, upstream data source, or predecessor PRD as a precondition?
+2. If yes, verify slice 1's "What ships" and "Acceptance criteria" include a system-level end-to-end exercise — one real datum entering at stage 1 and observable at stage N — not just a per-slice walking-skeleton of this PRD's own layers.
+3. If slice 1 only exercises THIS PRD's layers without verifying the upstream stages emit a real datum that propagates through → FAIL: `"SC-SYSTEM-SKELETON: PRD is pipeline-consuming (depends on upstream stage N-1) but slice 1 does not demonstrate one real datum traversing the full 1..N pipeline in production (ADR-0054 D6 + CLAUDE.md rule #22)"`.
+
+**Not applicable:** Self-contained PRDs with no upstream pipeline dependency — PASS by default.
+
+**WARN threshold:** If the system-level end-to-end exercise is in slice 2 (not slice 1) with a clear justification → WARN rather than FAIL (slice 1 may legitimately need to ship wiring that slice 2 then exercises). No justification → FAIL.
+
+**Rationale:** Per-PRD walking-skeletons ran for 5 consecutive PRDs while no REAL datum traversed the full pipeline in production — forensics P5. The system-level skeleton is never walked by accident; it must be explicit in the decomposition. Catching the gap at slicing time costs one revision loop; discovering it post-merge (when upstream data is absent) costs a re-ship loop on the feature's production verification. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6 + CLAUDE.md rule #22.
+
+**Examples:** PRD adds a dashboard view consuming hook-fires.jsonl (emitted by PRD #644); slice 1 declares "verify at least one hook beacon in hook-fires.jsonl and render it in the dashboard" → PASS. Same PRD; slice 1 only ships the dashboard route with no assertion that hook-fires.jsonl has real data → FAIL. PRD ships a pure docs update with no upstream dependency → not applicable, PASS.
+
 A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ---

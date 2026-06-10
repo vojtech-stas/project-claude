@@ -260,6 +260,31 @@ After checking (whether PASS or FAIL), restore the working tree state with `git 
 
 **Bootstrap-mode (per ADR-0034 D9):** R-DOCS-CURRENT binds FORWARD from the PR that ships it (this rule). The first PR to merge this rule is responsible for also committing a generator-current `README.md` (to avoid a spurious block on the very next PR). Pre-ADR-0034 PRs are grandfathered.
 
+### R-FIXTURE — Code writes to `.claude/logs/` outside `.claude/hooks/`
+
+**Mechanic:** Scan the diff for any code path that writes to a `.claude/logs/` path in a file outside `.claude/hooks/`. Any such write → BLOCK.
+
+```bash
+gh pr diff <PR> --patch | grep -E '^\+.*\.claude/logs/' | grep -v '\.claude/hooks/'
+```
+
+**Literal pattern:** `R-FIXTURE: <file>:<line> writes to .claude/logs/ outside .claude/hooks/ — fixture/synthetic data must never enter production log stores; see CLAUDE.md rule #21`.
+
+**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed.
+
+### R-TRAILER — Critic prompts edited without mandatory trailer keys
+
+**Mechanic:** Fires ONLY when the diff modifies a file matching `.claude/agents/*.md` that contains a CRITIC trailer schema block. Check whether the modified file still documents all three mandatory keys (`VERDICT`, `REASON`, `ROUND`) in its output-format section.
+
+```bash
+gh pr diff <PR> --patch | grep -E '^\+.*(VERDICT|REASON|ROUND)' || true
+gh pr diff <PR> --name-only | grep -E '^\.claude/agents/.*\.md$'
+```
+
+**Literal pattern:** `R-TRAILER: <agent-file> trailer schema modified or dropped mandatory key(s) VERDICT/REASON/ROUND — per ADR-0054 D2 all three core keys are required in every critic trailer`.
+
+**Rationale:** ROUND-less or schema-drifted trailers silently break round-count recovery in the PRD #651 comparison collector (the PR #559 incident class). Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D2, every critic trailer MUST include `VERDICT`, `REASON`, `ROUND` as the first three keys. Exemption: non-critic agent files (e.g., `implementer.md`, `qa-tester.md`) that emit GENERATOR trailers (not CRITIC trailers) are exempt — check only critic agents: `reviewer.md`, `prd-critic.md`, `adr-critic.md`, `slicer-critic.md`, `codebase-critic.md`, `glossary-critic.md`, `backlog-critic.md`.
+
 ---
 
 ## Recommend-only criteria

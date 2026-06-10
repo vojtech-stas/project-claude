@@ -1021,6 +1021,163 @@
   }
   .capture-badge-backlog  { background: #2563eb; color: #fff; }
   .capture-badge-captured { background: #4b5563; color: #d1d5db; }
+
+  /* ---- Comparison view v2 (slice #654) ------------------------------------ */
+  .trail-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+  .trail-picker-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .trail-label {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .trail-run-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .trail-run-btn:hover { border-color: var(--muted); }
+  .trail-rollup-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .trail-rollup-btn:hover { color: var(--text); border-color: var(--muted); }
+  .trail-rollup-btn.active { color: var(--amber); border-color: var(--amber); }
+  .trail-status-text { color: var(--muted); font-size: 11px; }
+  .trail-rollup-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .trail-run-header {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .trail-run-badge {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+  .trail-run-badge-pass { background: var(--pass); color: #fff; }
+  .trail-run-badge-fail { background: var(--fail); color: #fff; }
+  .trail-run-meta { color: var(--muted); font-size: 11px; }
+  .trail-table-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  /* Edge state legend */
+  .trail-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    font-size: 11px;
+  }
+  .trail-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--muted);
+  }
+  .trail-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Edge table rows grouped by evidence tier */
+  .trail-tier-header {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 6px 8px 2px 8px;
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+  }
+  .trail-tier-header td {
+    padding: 4px 8px 2px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Violations panel */
+  .trail-violations {
+    margin-top: 14px;
+    border: 1px solid var(--fail);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .trail-violations-header {
+    background: rgba(239,68,68,0.15);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fail);
+  }
+  .trail-violation-row {
+    padding: 6px 12px;
+    font-size: 11px;
+    border-top: 1px solid #3a1515;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .trail-violation-type {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--fail);
+    text-transform: uppercase;
+    flex-shrink: 0;
+    min-width: 130px;
+  }
+  .trail-violation-detail { color: var(--muted); }
+
+  /* Rollup edge counts table */
+  .rollup-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .rollup-table th {
+    text-align: left; color: var(--muted); padding: 3px 6px;
+    font-weight: 400; border-bottom: 1px solid var(--border);
+  }
+  .rollup-table td { padding: 3px 6px; border-bottom: 1px solid #21262d; }
+  .rollup-table tr:last-child td { border-bottom: none; }
+  .rollup-never-confirmed { color: var(--amber); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -1080,26 +1237,52 @@
     </div>
   </div>
 
-  <!-- Trail (PRD-run comparison) — bare panel (slice 1 walking skeleton; ADR-0053 D3) -->
+  <!-- Comparison view (slice 3 of PRD #651 — ADR-0053 D3) -->
   <div class="section" id="trail-section">
     <h2>Trail (PRD-run comparison)</h2>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-      <span style="color:var(--muted);font-size:11px;">PRD:</span>
-      <input id="trail-prd-input" type="number" value="640"
-             style="width:80px;background:var(--surface);border:1px solid var(--border);
-                    color:var(--text);font-family:var(--font);font-size:12px;padding:4px 6px;
-                    border-radius:4px;"
-             onkeydown="if(event.key==='Enter')loadTrailComparison()"/>
-      <button onclick="loadTrailComparison()"
-              style="background:var(--surface);border:1px solid var(--border);
-                     color:var(--text);font-family:var(--font);font-size:12px;
-                     padding:4px 10px;border-radius:4px;cursor:pointer;">Run</button>
-      <span id="trail-status" style="color:var(--muted);font-size:11px;"></span>
+
+    <!-- Run picker toolbar -->
+    <div class="trail-toolbar">
+      <div class="trail-picker-group">
+        <span class="trail-label">PRD:</span>
+        <select id="trail-prd-select" onchange="onTrailPickerChange()" style="display:none;">
+          <option value="">Loading runs…</option>
+        </select>
+        <input id="trail-prd-input" type="number" value="640"
+               style="width:76px;background:var(--surface);border:1px solid var(--border);
+                      color:var(--text);font-family:var(--font);font-size:12px;padding:4px 6px;
+                      border-radius:4px;"
+               onkeydown="if(event.key==='Enter')loadTrailComparison()"/>
+        <button class="trail-run-btn" onclick="loadTrailComparison()">Run</button>
+        <span id="trail-status" class="trail-status-text"></span>
+      </div>
+      <button class="trail-rollup-btn" onclick="toggleRollupPanel()" id="trail-rollup-toggle">
+        Rollup
+      </button>
     </div>
-    <div id="trail-table-container"
-         style="background:var(--surface);border:1px solid var(--border);
-                border-radius:6px;padding:12px;overflow-x:auto;">
-      <span style="color:var(--muted);font-size:11px;">Enter a PRD number and click Run.</span>
+
+    <!-- Rollup panel (collapsed by default) -->
+    <div id="trail-rollup-panel" class="trail-rollup-panel" style="display:none;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+        <h3 style="margin:0;">Repo rollup</h3>
+        <span style="color:var(--muted);font-size:11px;">last</span>
+        <input id="rollup-last-input" type="number" value="15"
+               style="width:50px;background:var(--surface);border:1px solid var(--border);
+                      color:var(--text);font-family:var(--font);font-size:11px;padding:2px 5px;
+                      border-radius:4px;"/>
+        <span style="color:var(--muted);font-size:11px;">closed PRDs</span>
+        <button class="trail-run-btn" onclick="loadRollup()">Refresh</button>
+        <span id="rollup-status" style="color:var(--muted);font-size:11px;"></span>
+      </div>
+      <div id="trail-rollup-content">
+        <span style="color:var(--muted);font-size:11px;">Click Refresh to load rollup.</span>
+      </div>
+    </div>
+
+    <!-- Per-run comparison output: run header + edge table + violations -->
+    <div id="trail-run-header" class="trail-run-header" style="display:none;"></div>
+    <div id="trail-table-container" class="trail-table-container">
+      <span style="color:var(--muted);font-size:11px;">Select a PRD and click Run.</span>
     </div>
   </div>
 </div>
@@ -1389,7 +1572,7 @@ function renderTopologyGraph(data) {
     });
   }
 
-  function addEdge(from, to, color, dashes, width, label) {
+  function addEdge(from, to, color, dashes, width, label, specId) {
     const e = {
       from, to,
       arrows: 'to',
@@ -1399,6 +1582,8 @@ function renderTopologyGraph(data) {
       dashes: dashes || false,
     };
     if (label) { e.label = label; e.font = { color: '#9ca3af', size: 9, face: 'IBM Plex Mono, monospace' }; }
+    // Store spec edge id as title for later lookup by _paintTopologyStates
+    if (specId) e.title = specId;
     edges.push(e);
   }
 
@@ -1489,7 +1674,8 @@ function renderTopologyGraph(data) {
       width = isDashed ? 1 : 1.5;
     }
     const edgeLabel = e.label || undefined;
-    addEdge(e.from_node, e.to_node, edgeColor, dashes, width, edgeLabel);
+    // Pass spec edge id so _paintTopologyStates can find vis edges by spec id
+    addEdge(e.from_node, e.to_node, edgeColor, dashes, width, edgeLabel, e.id || undefined);
   }
 
   // Create the vis-network
@@ -2082,8 +2268,10 @@ function renderCascade(cf) {
 
 // (toggleDetail defined in live-stream section below — handles both table-row and block)
 
-// Auto-load architecture tab on start
-window.addEventListener('load', () => { loadArchitecture(); });
+// Auto-load architecture tab on start; also kick off trail run picker
+window.addEventListener('load', () => {
+  loadArchitecture().then(() => loadTrailRuns());
+});
 
 // --- Live tab: vis-network bubble graph — nested per-agent bash + time-Y-axis + role colors ---
 //
@@ -3701,54 +3889,190 @@ window.switchTab = function(name, btn) {
 // ---------------------------------------------------------------------------
 // Trail (PRD-run comparison) bare panel — slice 1 walking skeleton (ADR-0053)
 // ---------------------------------------------------------------------------
+// ============================================================================
+// Comparison view v2 (slice #654 — ADR-0053 D3)
+// ============================================================================
+
+// Edge state → display color (also used to paint topology nodes)
 const _EDGE_STATE_COLORS = {
-  'confirmed':     '#3fb950',   // green
-  'missing':       '#ef4444',   // red
-  'not-reached':   '#8b949e',   // muted gray
-  'not-exercised': '#8b949e',   // muted gray (conditional edge not triggered)
-  'unexpected':    '#f97316',   // orange
+  'confirmed':     '#3fb950',   // green  — predicate true
+  'missing':       '#ef4444',   // red    — predicate false, run past the stage
+  'not-reached':   '#8b949e',   // muted  — in-flight / ended early; NEVER red
+  'not-exercised': '#8b949e',   // muted  — conditional not triggered; NEVER red
+  'unexpected':    '#f97316',   // orange — no declared edge for this evidence
+  'not-evaluated': '#4b5563',   // dark   — non-github tier (runtime/unmeasurable)
 };
+
+// Cached list of closed PRD runs (populated by loadTrailRuns on page load)
+let _trailRuns = [];
+// Cached last comparison report (for topology overlay)
+let _lastComparisonReport = null;
+// Rollup panel open state
+let _rollupOpen = false;
+
+/**
+ * Load the closed-PRD run list and populate the picker select.
+ * Called once at architecture load time.
+ */
+async function loadTrailRuns() {
+  try {
+    const resp = await fetch('/api/trail-runs?last=20');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _trailRuns = data.runs || [];
+    const sel = document.getElementById('trail-prd-select');
+    if (!sel) return;
+    if (_trailRuns.length === 0) {
+      sel.innerHTML = '<option value="">No closed PRDs found</option>';
+    } else {
+      sel.innerHTML = _trailRuns.map(r => {
+        const title = (r.title || `PRD #${r.number}`).replace(/^PRD:\s*/i, '').slice(0, 60);
+        const wt = r.wall_time_s ? ' — ' + _fmtDuration(r.wall_time_s) : '';
+        return `<option value="${r.number}">#${r.number} — ${escHtml(title)}${wt}</option>`;
+      }).join('');
+    }
+    // Show the select and sync its value with the manual input
+    sel.style.display = '';
+    const input = document.getElementById('trail-prd-input');
+    if (_trailRuns.length > 0 && input) {
+      sel.value = String(_trailRuns[0].number);
+      input.value = _trailRuns[0].number;
+    }
+  } catch (e) {
+    // silently degrade — manual input still works
+  }
+}
+
+function onTrailPickerChange() {
+  const sel = document.getElementById('trail-prd-select');
+  const input = document.getElementById('trail-prd-input');
+  if (sel && input && sel.value) {
+    input.value = sel.value;
+  }
+}
+
+function _fmtDuration(s) {
+  if (s < 60) return s.toFixed(0) + 's';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  if (m < 60) return m + 'm' + String(sec).padStart(2, '0') + 's';
+  const h = Math.floor(m / 60);
+  const m2 = m % 60;
+  return h + 'h' + String(m2).padStart(2, '0') + 'm' + String(sec).padStart(2, '0') + 's';
+}
 
 async function loadTrailComparison() {
   const input = document.getElementById('trail-prd-input');
   const statusEl = document.getElementById('trail-status');
   const container = document.getElementById('trail-table-container');
+  const headerEl = document.getElementById('trail-run-header');
   const prd = parseInt(input.value, 10);
   if (!prd || isNaN(prd)) {
     statusEl.textContent = 'Enter a valid PRD number.';
     return;
   }
   statusEl.textContent = 'Fetching…';
+  statusEl.style.color = 'var(--muted)';
   container.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
+  if (headerEl) headerEl.style.display = 'none';
   try {
-    const resp = await fetch(`/api/comparison?prd=${prd}`);
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({error: resp.statusText}));
-      throw new Error(err.error || resp.statusText);
+    // Fetch trail (for wall-time) and comparison report in parallel
+    const [trailResp, compResp] = await Promise.all([
+      fetch(`/api/trail?prd=${prd}`),
+      fetch(`/api/comparison?prd=${prd}`),
+    ]);
+    const trail = trailResp.ok ? await trailResp.json() : null;
+    if (!compResp.ok) {
+      const err = await compResp.json().catch(() => ({error: compResp.statusText}));
+      throw new Error(err.error || compResp.statusText);
     }
-    const report = await resp.json();
+    const report = await compResp.json();
+    _lastComparisonReport = report;
+
+    // Render run header
+    if (headerEl) {
+      _renderRunHeader(headerEl, report, trail);
+      headerEl.style.display = 'flex';
+    }
+
+    // Render comparison table
     _renderTrailReport(report, container);
-    const fromCache = report.from_cache ? ' (cached)' : '';
-    const pass = report.run_pass ? '✓ PASS' : '✗ FAIL';
-    statusEl.textContent = `PRD #${prd} — ${pass}${fromCache}`;
+
+    // Paint topology graph with state colors
+    _paintTopologyStates(report);
+
+    const pass = report.run_pass ? 'PASS' : 'FAIL';
+    statusEl.textContent = `PRD #${prd} — ${pass}`;
     statusEl.style.color = report.run_pass ? 'var(--green)' : 'var(--red)';
   } catch (e) {
     statusEl.textContent = `Error: ${e.message}`;
     statusEl.style.color = 'var(--red)';
-    container.innerHTML = `<span style="color:var(--red);font-size:11px;">${e.message}</span>`;
+    container.innerHTML = `<span style="color:var(--red);font-size:11px;">${escHtml(e.message)}</span>`;
   }
 }
 
+/**
+ * Render the run header: PASS/FAIL badge + PRD title + timestamps + wall-time.
+ */
+function _renderRunHeader(el, report, trail) {
+  const pass = report.run_pass;
+  const badgeCls = pass ? 'trail-run-badge-pass' : 'trail-run-badge-fail';
+  const badgeText = pass ? 'PASS' : 'FAIL';
+  const prdNum = report.prd_number || '?';
+  const title = (trail && trail.prd_title) ? escHtml(trail.prd_title.replace(/^PRD:\s*/i, '').slice(0, 80)) : '';
+  const created = trail && trail.prd_created_at ? trail.prd_created_at.slice(0, 10) : '';
+  const closed = trail && trail.prd_closed_at ? trail.prd_closed_at.slice(0, 10) : 'open';
+  const wt = trail && trail.wall_time_s ? ' — wall-time: ' + _fmtDuration(trail.wall_time_s) : '';
+  const viols = (report.violations || []).length;
+  const violNote = viols > 0
+    ? `<span style="color:var(--fail);font-size:11px;">${viols} violation${viols > 1 ? 's' : ''}</span>`
+    : '<span style="color:var(--green);font-size:11px;">no violations</span>';
+  el.innerHTML =
+    `<span class="trail-run-badge ${badgeCls}">${badgeText}</span>` +
+    `<span style="font-size:12px;font-weight:600;color:var(--text);">PRD #${prdNum}</span>` +
+    (title ? `<span style="font-size:11px;color:var(--muted);">${title}</span>` : '') +
+    `<span class="trail-run-meta">${created} → ${closed}${wt}</span>` +
+    violNote;
+}
+
+/**
+ * Render the per-edge comparison table grouped by evidence tier.
+ */
 function _renderTrailReport(report, container) {
   const edges = report.edges || {};
   const violations = report.violations || [];
-  const prdNum = report.prd_number || '?';
 
-  let html = `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+  // Legend
+  let html = '<div class="trail-legend">';
+  const legendItems = [
+    ['confirmed',     'green'],
+    ['missing',       'red'],
+    ['not-reached',   'muted gray'],
+    ['not-exercised', 'muted gray'],
+    ['unexpected',    'orange'],
+    ['not-evaluated', 'dark (runtime/unmeasurable tier)'],
+  ];
+  for (const [state, label] of legendItems) {
+    const color = _EDGE_STATE_COLORS[state] || '#8b949e';
+    html += `<div class="trail-legend-item">
+      <div class="trail-legend-dot" style="background:${color};"></div>
+      <span>${state}</span>
+    </div>`;
+  }
+  html += '</div>';
+
+  // Group edges by evidence tier: github first, then runtime, then unmeasurable
+  const byTier = { github: [], runtime: [], unmeasurable: [] };
+  for (const [edgeId, info] of Object.entries(edges)) {
+    const tier = info.evidence || 'github';
+    if (!byTier[tier]) byTier[tier] = [];
+    byTier[tier].push([edgeId, info]);
+  }
+
+  html += `<table style="width:100%;border-collapse:collapse;font-size:11px;">
     <thead>
       <tr style="color:var(--muted);border-bottom:1px solid var(--border);">
         <th style="text-align:left;padding:4px 8px;">Edge</th>
-        <th style="text-align:left;padding:4px 8px;">Evidence</th>
         <th style="text-align:left;padding:4px 8px;">Required</th>
         <th style="text-align:left;padding:4px 8px;">State</th>
         <th style="text-align:left;padding:4px 8px;">Detail</th>
@@ -3756,34 +4080,225 @@ function _renderTrailReport(report, container) {
     </thead>
     <tbody>`;
 
-  for (const [edgeId, info] of Object.entries(edges)) {
-    const state = info.state || '?';
-    const color = _EDGE_STATE_COLORS[state] || 'var(--text)';
-    const detail = (info.detail || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    html += `<tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:4px 8px;font-weight:600;">${edgeId}</td>
-      <td style="padding:4px 8px;color:var(--muted);">${info.evidence || ''}</td>
-      <td style="padding:4px 8px;color:var(--muted);">${info.required || ''}</td>
-      <td style="padding:4px 8px;color:${color};font-weight:600;">${state}</td>
-      <td style="padding:4px 8px;color:var(--muted);">${detail}</td>
-    </tr>`;
+  for (const [tier, label] of [['github', 'github (authoritative — evaluated)'], ['runtime', 'runtime (live enrichment — not compared)'], ['unmeasurable', 'unmeasurable (in-conversation — not compared)']]) {
+    const rows = byTier[tier] || [];
+    if (rows.length === 0) continue;
+    html += `<tr class="trail-tier-header"><td colspan="4">${escHtml(label)} — ${rows.length} edge(s)</td></tr>`;
+    for (const [edgeId, info] of rows) {
+      const state = info.state || '?';
+      const color = _EDGE_STATE_COLORS[state] || 'var(--text)';
+      const detail = escHtml(info.detail || '');
+      const req = info.required || '';
+      const reqColor = req === 'always' ? 'var(--text)' : 'var(--muted)';
+      // Dim not-evaluated rows (non-github tier)
+      const rowOpacity = state === 'not-evaluated' ? 'opacity:0.5;' : '';
+      html += `<tr style="border-bottom:1px solid var(--border);${rowOpacity}">
+        <td style="padding:4px 8px;font-weight:600;font-size:10px;">${edgeId}</td>
+        <td style="padding:4px 8px;font-size:10px;color:${reqColor};">${req}</td>
+        <td style="padding:4px 8px;color:${color};font-weight:600;">${state}</td>
+        <td style="padding:4px 8px;color:var(--muted);font-size:10px;">${detail}</td>
+      </tr>`;
+    }
   }
 
   html += `</tbody></table>`;
 
+  // Violations panel
   if (violations.length > 0) {
-    html += `<div style="margin-top:12px;">
-      <h3 style="color:var(--red);margin-bottom:6px;">Violations (${violations.length})</h3>`;
+    html += `<div class="trail-violations">
+      <div class="trail-violations-header">Violations (${violations.length})</div>`;
     for (const v of violations) {
-      const detail = (v.detail || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      html += `<div style="padding:4px 0;font-size:11px;color:var(--red);">
-        <strong>${v.type}</strong>: ${detail}</div>`;
+      const detail = escHtml(v.detail || '');
+      const vtype = escHtml(v.type || '');
+      html += `<div class="trail-violation-row">
+        <span class="trail-violation-type">${vtype}</span>
+        <span class="trail-violation-detail">${detail}</span>
+      </div>`;
     }
     html += `</div>`;
   }
 
   container.innerHTML = html;
 }
+
+/**
+ * Paint edge states onto the topology graph (vis-network).
+ * Maps comparison edge states to vis edge colors, overriding the declared colors.
+ * runtime/unmeasurable tier edges are never drift-colored (their state is "not-evaluated").
+ * Only called when topoNetwork and a comparison report are both available.
+ *
+ * Matching: vis edges store their spec id in the `title` field (set in addEdge).
+ * We look up each vis edge by title → spec edge id → comparison report state.
+ */
+function _paintTopologyStates(report) {
+  if (!topoNetwork || !report) return;
+  const topoEdgesData =
+    topoNetwork.body && topoNetwork.body.data && topoNetwork.body.data.edges;
+  if (!topoEdgesData) return;
+
+  const compEdges = report.edges || {};
+  const visEdges = topoEdgesData.get();
+
+  const WIDTH_CONFIRMED = 3;
+  const WIDTH_MISSING   = 2.5;
+  const WIDTH_DEFAULT   = 1.5;
+
+  const updates = [];
+  for (const visEdge of visEdges) {
+    // title holds the spec edge id set at render time
+    const specEid = visEdge.title;
+    if (!specEid) continue;
+
+    const edgeInfo = compEdges[specEid];
+    if (!edgeInfo) continue;
+
+    const evidence = edgeInfo.evidence || 'github';
+    const state    = edgeInfo.state    || 'not-evaluated';
+
+    // Non-github tiers: state is always "not-evaluated"; keep declared neutral color
+    if (evidence !== 'github') continue;
+
+    let color, width;
+    if (state === 'confirmed') {
+      color = '#3fb950';  width = WIDTH_CONFIRMED;  // green
+    } else if (state === 'missing') {
+      color = '#ef4444';  width = WIDTH_MISSING;    // red
+    } else if (state === 'unexpected') {
+      color = '#f97316';  width = WIDTH_MISSING;    // orange
+    } else {
+      // not-reached / not-exercised / not-evaluated: neutral; NEVER drift-red
+      color = '#4b5563';  width = WIDTH_DEFAULT;    // dark muted
+    }
+
+    updates.push({
+      id: visEdge.id,
+      color: { color, highlight: color, hover: color },
+      width,
+    });
+  }
+
+  if (updates.length > 0) {
+    topoEdgesData.update(updates);
+  }
+}
+
+/**
+ * Toggle the rollup panel visibility.
+ */
+function toggleRollupPanel() {
+  _rollupOpen = !_rollupOpen;
+  const panel = document.getElementById('trail-rollup-panel');
+  const btn = document.getElementById('trail-rollup-toggle');
+  if (panel) panel.style.display = _rollupOpen ? 'block' : 'none';
+  if (btn) btn.classList.toggle('active', _rollupOpen);
+  if (_rollupOpen) loadRollup();
+}
+
+/**
+ * Load and render the repo rollup.
+ */
+async function loadRollup() {
+  const lastInput = document.getElementById('rollup-last-input');
+  const statusEl = document.getElementById('rollup-status');
+  const contentEl = document.getElementById('trail-rollup-content');
+  const last = parseInt((lastInput && lastInput.value) || '10', 10) || 10;
+  statusEl.textContent = 'Loading…';
+  contentEl.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading rollup…</span>';
+  try {
+    const resp = await fetch(`/api/rollup?last=${last}`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error: resp.statusText}));
+      throw new Error(err.error || resp.statusText);
+    }
+    const result = await resp.json();
+    _renderRollup(result, contentEl);
+    const violations = (result.violations || []).length;
+    statusEl.textContent = `${(result.prd_numbers || []).length} PRDs — ${violations} violation(s)`;
+    statusEl.style.color = violations > 0 ? 'var(--fail)' : 'var(--green)';
+  } catch (e) {
+    statusEl.textContent = `Error: ${e.message}`;
+    statusEl.style.color = 'var(--red)';
+    contentEl.innerHTML = `<span style="color:var(--red);font-size:11px;">${escHtml(e.message)}</span>`;
+  }
+}
+
+/**
+ * Render the rollup result panel.
+ */
+function _renderRollup(result, el) {
+  const prdNums = result.prd_numbers || [];
+  const edgeCounts = result.edge_counts || {};
+  const neverConfirmed = result.never_confirmed_required || [];
+  const violations = result.violations || [];
+  const runResults = result.run_results || {};
+  const unreviewedPrs = result.unreviewed_prs || [];
+
+  let html = '';
+
+  // Run summary
+  html += '<div style="margin-bottom:12px;">';
+  html += `<span style="font-size:11px;color:var(--muted);">PRDs: </span>`;
+  for (const n of prdNums) {
+    const pass = runResults[String(n)];
+    const color = pass === true ? 'var(--green)' : (pass === false ? 'var(--red)' : 'var(--muted)');
+    html += `<span style="font-size:11px;color:${color};margin-right:8px;">#${n}</span>`;
+  }
+  html += '</div>';
+
+  // Per-edge confirmation counts (github-tier only)
+  const githubEdges = Object.entries(edgeCounts).filter(([, c]) => c);
+  if (githubEdges.length > 0) {
+    html += '<table class="rollup-table">';
+    html += '<tr><th>Edge</th><th>Required</th><th>Confirmed</th><th>Total</th></tr>';
+    for (const [eid, counts] of githubEdges) {
+      const confirmed = counts.confirmed || 0;
+      const total = counts.total || 0;
+      const req = counts.required || 'conditional';
+      const isNever = neverConfirmed.includes(eid);
+      const pct = total > 0 ? Math.round((confirmed / total) * 100) : 0;
+      const barWidth = total > 0 ? Math.round((confirmed / total) * 60) : 0;
+      const barColor = confirmed === total ? 'var(--green)' : (confirmed === 0 && req === 'always' ? 'var(--fail)' : 'var(--amber)');
+      const cls = isNever ? 'rollup-never-confirmed' : '';
+      html += `<tr class="${cls}">
+        <td style="font-size:10px;">${eid}</td>
+        <td style="font-size:10px;color:var(--muted);">${req}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="width:60px;height:6px;background:#21262d;border-radius:3px;overflow:hidden;">
+              <div style="width:${barWidth}px;height:100%;background:${barColor};border-radius:3px;"></div>
+            </div>
+            <span style="font-size:10px;color:${barColor};">${confirmed}/${total}</span>
+            ${isNever ? '<span style="font-size:9px;color:var(--amber);"> ⚠ never</span>' : ''}
+          </div>
+        </td>
+        <td style="font-size:10px;color:var(--muted);">${pct}%</td>
+      </tr>`;
+    }
+    html += '</table>';
+  }
+
+  // Violations across the window
+  if (violations.length > 0) {
+    html += `<div class="trail-violations" style="margin-top:12px;">
+      <div class="trail-violations-header">Violations across rollup window (${violations.length})</div>`;
+    for (const v of violations) {
+      const detail = escHtml(v.detail || '');
+      const vtype = escHtml(v.type || '');
+      const prdNote = v.prd_number ? ` [PRD #${v.prd_number}]` : '';
+      html += `<div class="trail-violation-row">
+        <span class="trail-violation-type">${vtype}${escHtml(prdNote)}</span>
+        <span class="trail-violation-detail">${detail}</span>
+      </div>`;
+    }
+    html += '</div>';
+  } else {
+    html += '<div style="color:var(--green);font-size:11px;margin-top:8px;">No violations in rollup window.</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+
 </script>
 </body>
 </html>

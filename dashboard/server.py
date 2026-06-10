@@ -14,6 +14,8 @@ Serves: GET /               -> dashboard/index.html
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
         GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
+        GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
+        GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -47,7 +49,7 @@ _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in sys.path:
     sys.path.insert(0, _DASHBOARD_DIR_STR)
 
-from collector import get_trail  # noqa: E402
+from collector import get_trail, get_closed_prd_numbers, rollup  # noqa: E402
 from comparison import compare, get_spec_for_compare  # noqa: E402
 from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
 
@@ -1422,6 +1424,43 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 spec = get_spec_for_compare()
                 report = compare(spec, trail)
                 self._send_json(report)
+            except Exception as e:
+                self._send_error(500, str(e))
+
+        elif path == "/api/trail-runs":
+            # GET /api/trail-runs?last=N — list of last N closed PRDs for run picker.
+            last_raw = query.get("last", ["20"])[0]
+            try:
+                last_n = int(last_raw) if last_raw.isdigit() else 20
+            except (ValueError, AttributeError):
+                last_n = 20
+            try:
+                numbers = get_closed_prd_numbers(last_n=last_n)
+                # Fetch minimal metadata (title + closedAt) for each PRD
+                runs = []
+                for n in numbers:
+                    trail = get_trail(n)
+                    runs.append({
+                        "number": n,
+                        "title": trail.get("prd_title", f"PRD #{n}"),
+                        "closed_at": trail.get("prd_closed_at", ""),
+                        "wall_time_s": trail.get("wall_time_s"),
+                    })
+                self._send_json({"runs": runs})
+            except Exception as e:
+                self._send_error(500, str(e))
+
+        elif path == "/api/rollup":
+            # GET /api/rollup?last=N — repo rollup over last N closed PRDs.
+            last_raw = query.get("last", ["10"])[0]
+            try:
+                last_n = int(last_raw) if last_raw.isdigit() else 10
+            except (ValueError, AttributeError):
+                last_n = 10
+            try:
+                spec = get_spec_for_compare()
+                result = rollup(last_n=last_n, compare_fn=compare, spec=spec)
+                self._send_json(result)
             except Exception as e:
                 self._send_error(500, str(e))
 

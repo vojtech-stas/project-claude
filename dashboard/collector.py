@@ -14,6 +14,7 @@ Retry: 0s / 2s / 8s backoff on 401/5xx/timeout.
   Sustained failure → collector_status: "auth_dead"
 
 CLI: python dashboard/collector.py --prd N [--compare]
+     python dashboard/collector.py --rollup [--last N] [--compare]
 """
 
 import json
@@ -54,6 +55,7 @@ query($n:Int!){
           createdAt
           closedAt
           labels(first:10){nodes{name}}
+          assignees(first:5){nodes{login}}
           comments(first:30){nodes{body createdAt}}
           timelineItems(itemTypes:[CLOSED_EVENT,LABELED_EVENT],first:20){
             nodes{
@@ -157,6 +159,8 @@ def _run_gh(args: list[str], timeout: int = 30) -> tuple[str | None, str]:
                 ["gh"] + args,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
                 cwd=str(_REPO_ROOT),
                 stdin=subprocess.DEVNULL,
@@ -234,6 +238,12 @@ def _build_slice_trail(slice_node: dict, prd_number: int) -> dict:
                 closed_event_at = event.get("createdAt")
                 break
 
+    # Assignees: used by E-SLICEISSUE-IMPL evaluator
+    assignees = [
+        n.get("login", "") for n in (slice_node.get("assignees") or {}).get("nodes", [])
+        if n.get("login")
+    ]
+
     return {
         "number": slice_num,
         "title": slice_title,
@@ -243,6 +253,7 @@ def _build_slice_trail(slice_node: dict, prd_number: int) -> dict:
         "closed_at": closed_at,
         "closed_event_at": closed_event_at,
         "closing_pr_number": closing_pr_number,
+        "assignees": assignees,
         # Raw comments kept for debugging; verdict parsing happens in PR fetch
         "comment_count": len((slice_node.get("comments") or {}).get("nodes", [])),
     }
@@ -339,6 +350,18 @@ def collect_trail(prd_number: int) -> dict:
     prd_closed_at = issue.get("closedAt")
     prd_labels = [n["name"] for n in (issue.get("labels") or {}).get("nodes", [])]
 
+    # Parse prd-level critic verdict comments (for E-PRDCRITIC-APPROVE etc.)
+    prd_comment_nodes = (issue.get("comments") or {}).get("nodes", [])
+    prd_verdicts: list[dict] = []
+    for comment in prd_comment_nodes:
+        body = comment.get("body", "")
+        parsed = _parse_verdict_comment(body)
+        if parsed is not None:
+            parsed["created_at"] = comment.get("createdAt", "")
+            parsed["author"] = (comment.get("author") or {}).get("login", "")
+            prd_verdicts.append(parsed)
+    prd_verdicts = _infer_rounds(prd_verdicts)
+
     # Step 2: Build slice trail entries
     sub_issues_nodes = (issue.get("subIssues") or {}).get("nodes", [])
     slices = []
@@ -384,6 +407,7 @@ def collect_trail(prd_number: int) -> dict:
         "prd_created_at": prd_created_at,
         "prd_closed_at": prd_closed_at,
         "prd_labels": prd_labels,
+        "prd_verdicts": prd_verdicts,
         "slices": slices,
         "prs": {str(k): v for k, v in prs.items()},
         "collector_status": collector_status,
@@ -452,6 +476,200 @@ def get_trail(prd_number: int, force_refresh: bool = False) -> dict:
     if "error" not in trail or trail.get("prd_title"):
         _save_cache(prd_number, trail)
     return trail
+
+
+# ---------------------------------------------------------------------------
+# Rollup helpers: closed PRD list + recent PRs (for unreviewed-merge scanning)
+# ---------------------------------------------------------------------------
+
+def get_closed_prd_numbers(last_n: int = 10) -> list[int]:
+    """Return the last N closed PRD issue numbers (most-recent-closed first).
+
+    Uses gh issue list CLI (same pattern as server.py workitems fetcher).
+    Returns [] on any error.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--label", "prd",
+                "--state", "closed",
+                "--limit", str(max(last_n, 10)),
+                "--json", "number",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            cwd=str(_REPO_ROOT),
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            return []
+        items = json.loads(result.stdout)
+        return [item["number"] for item in items[:last_n]]
+    except Exception:
+        return []
+
+
+def get_recent_merged_prs(limit: int = 30) -> list[dict]:
+    """Return recent merged PRs with number, mergedAt, head ref, and labels.
+
+    Used by rollup to detect unreviewed merges that are NOT linked to a PRD trail
+    (e.g., hotfix-lane PRs like #650 that close non-slice issues).
+    Returns [] on any error.
+    """
+    try:
+        stdout, err = _run_gh([
+            "pr", "list",
+            "--state", "merged",
+            "--limit", str(limit),
+            "--json", "number,mergedAt,headRefName,labels,title",
+        ])
+        if stdout is None:
+            return []
+        return json.loads(stdout)
+    except Exception:
+        return []
+
+
+def get_pr_verdict_count(pr_number: int) -> int:
+    """Return the number of reviewer verdict comments on a PR.
+
+    Lightweight check: fetches PR comments and counts VERDICT: lines.
+    Returns -1 on error (treated as unknown, not flagged as violation).
+    """
+    pr_trail, err = _build_pr_trail(pr_number)
+    if pr_trail is None:
+        return -1
+    return pr_trail.get("verdict_count", 0)
+
+
+def rollup(last_n: int = 10, compare_fn=None, spec=None) -> dict:
+    """Aggregate per-edge confirmation counts and violations across last N closed PRDs.
+
+    Args:
+        last_n:     number of closed PRDs to scan (default 10)
+        compare_fn: the compare() function from comparison module (injected to avoid circular)
+        spec:       SPEC dict (injected)
+
+    Returns:
+        {
+          "prd_numbers":  [N, ...],          # PRDs included in rollup
+          "edge_counts":  {E-*: {confirmed:N, total:N, ...}},
+          "never_confirmed_required": [E-*, ...],  # required:always never confirmed
+          "violations":   [{type, detail, pr_number?, ...}],  # all violations
+          "unreviewed_prs": [{number, merged_at, title}],     # global PR scan
+          "run_results":  {N: run_pass},
+          "window_size":  N,
+        }
+    """
+    prd_numbers = get_closed_prd_numbers(last_n)
+
+    edge_counts: dict[str, dict] = {}
+    all_violations: list[dict] = []
+    run_results: dict[int, bool] = {}
+
+    # Per-PRD comparison
+    if compare_fn is not None and spec is not None:
+        github_edges = [
+            e for e in spec.get("edges", []) if e.get("evidence") == "github"
+        ]
+        for eid in [e["id"] for e in github_edges]:
+            edge_counts[eid] = {
+                "confirmed": 0,
+                "total": 0,
+                "required": next(
+                    (e["required"] for e in github_edges if e["id"] == eid), "conditional"
+                ),
+            }
+
+        for prd_num in prd_numbers:
+            trail = get_trail(prd_num)
+            if trail.get("collector_status") == "auth_dead":
+                continue
+            report = compare_fn(spec, trail)
+            run_results[prd_num] = report.get("run_pass", False)
+            edges = report.get("edges", {})
+            for eid, einfo in edges.items():
+                if eid not in edge_counts:
+                    continue
+                state = einfo.get("state", "not-evaluated")
+                edge_counts[eid]["total"] += 1
+                if state == "confirmed":
+                    edge_counts[eid]["confirmed"] += 1
+            # Collect per-PRD violations
+            for v in report.get("violations", []):
+                v2 = dict(v)
+                v2["prd_number"] = prd_num
+                all_violations.append(v2)
+
+    # Global PR scan: detect unreviewed merges not caught by per-PRD comparison
+    # (hotfix-lane PRs, PRs closing non-slice issues, etc.)
+    recent_prs = get_recent_merged_prs(limit=50)
+    known_pr_numbers: set[int] = set()
+    for prd_num in prd_numbers:
+        # Collect PR numbers already covered by the PRD trails
+        trail = get_trail(prd_num)
+        for pr_key in trail.get("prs", {}).keys():
+            try:
+                known_pr_numbers.add(int(pr_key))
+            except (ValueError, TypeError):
+                pass
+
+    unreviewed_prs: list[dict] = []
+    for pr in recent_prs:
+        pr_num = pr.get("number")
+        if not pr_num:
+            continue
+        # Check labels: trivial label means it's expected to have no verdict
+        labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
+        is_trivial = "trivial" in labels
+        if is_trivial:
+            continue
+        # Fetch verdict count for PRs not already in our trails
+        if pr_num in known_pr_numbers:
+            # Already checked via per-PRD comparison; skip to avoid duplicate
+            continue
+        verdict_count = get_pr_verdict_count(pr_num)
+        if verdict_count == 0 and pr.get("mergedAt"):
+            unreviewed_prs.append({
+                "number": pr_num,
+                "merged_at": pr.get("mergedAt", ""),
+                "title": pr.get("title", ""),
+                "head_ref": pr.get("headRefName", ""),
+                "detail": (
+                    f"PR #{pr_num} merged at {pr.get('mergedAt','?')} "
+                    f"with zero reviewer verdicts and no trivial label"
+                ),
+            })
+            all_violations.append({
+                "type": "unreviewed_merge",
+                "pr_number": pr_num,
+                "merged_at": pr.get("mergedAt", ""),
+                "prd_number": None,
+                "detail": (
+                    f"PR #{pr_num} merged at {pr.get('mergedAt','?')} "
+                    f"with zero reviewer verdicts and no trivial label"
+                ),
+            })
+
+    # Identify required:always edges never confirmed across the window
+    never_confirmed_required: list[str] = []
+    for eid, counts in edge_counts.items():
+        if counts["required"] == "always" and counts["total"] > 0 and counts["confirmed"] == 0:
+            never_confirmed_required.append(eid)
+
+    return {
+        "prd_numbers": prd_numbers,
+        "edge_counts": edge_counts,
+        "never_confirmed_required": never_confirmed_required,
+        "violations": all_violations,
+        "unreviewed_prs": unreviewed_prs,
+        "run_results": {str(k): v for k, v in run_results.items()},
+        "window_size": last_n,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +764,58 @@ def _insert_dashboard_path() -> None:
         sys.path.insert(0, dashboard_dir)
 
 
+def _cli_print_rollup(rollup_result: dict) -> None:
+    """Print a human-readable rollup summary to stdout."""
+    prd_numbers = rollup_result.get("prd_numbers", [])
+    window = rollup_result.get("window_size", 10)
+    run_results = rollup_result.get("run_results", {})
+    edge_counts = rollup_result.get("edge_counts", {})
+    never_confirmed = rollup_result.get("never_confirmed_required", [])
+    violations = rollup_result.get("violations", [])
+    unreviewed_prs = rollup_result.get("unreviewed_prs", [])
+
+    print(f"\n--- Rollup: last {window} closed PRDs ---")
+    print(f"  PRDs scanned: {prd_numbers}")
+    pass_count = sum(1 for v in run_results.values() if v)
+    fail_count = len(run_results) - pass_count
+    print(f"  Run results:  PASS={pass_count} FAIL={fail_count}")
+
+    if run_results:
+        for prd_str, passed in sorted(run_results.items(), key=lambda x: int(x[0])):
+            status = "PASS" if passed else "FAIL"
+            print(f"    PRD #{prd_str}: {status}")
+
+    if edge_counts:
+        print(f"\n  Per-edge confirmation counts (github-tier only):")
+        for eid, counts in sorted(edge_counts.items()):
+            confirmed = counts.get("confirmed", 0)
+            total = counts.get("total", 0)
+            req = counts.get("required", "conditional")
+            req_mark = " [required:always]" if req == "always" else ""
+            never_mark = " *** NEVER CONFIRMED ***" if eid in never_confirmed else ""
+            print(f"    {eid:<40} {confirmed}/{total}{req_mark}{never_mark}")
+
+    if never_confirmed:
+        print(f"\n  WARNING: {len(never_confirmed)} required:always edge(s) never confirmed:")
+        for eid in never_confirmed:
+            print(f"    {eid} — never exercised across {len(prd_numbers)} PRDs; spec may be aspirational")
+
+    if violations:
+        print(f"\n  Violations ({len(violations)}) across rollup window:")
+        for v in violations:
+            prd_note = f" [PRD #{v['prd_number']}]" if v.get("prd_number") else ""
+            print(f"    [{v['type']}]{prd_note}: {v['detail']}")
+    else:
+        print("\n  Violations: none")
+
+    if unreviewed_prs:
+        print(f"\n  Unreviewed merges (global PR scan, outside PRD trails):")
+        for pr in unreviewed_prs:
+            print(f"    PR #{pr['number']} merged={pr['merged_at']} — {pr['title'][:60]}")
+    else:
+        print("  Unreviewed merges (global scan): none")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -554,21 +824,39 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Collect GitHub artifact trail for a PRD"
     )
-    parser.add_argument("--prd", type=int, required=True, help="PRD issue number")
+    parser.add_argument("--prd", type=int, default=None, help="PRD issue number")
     parser.add_argument(
         "--compare", action="store_true", help="Run comparison engine after collecting"
     )
     parser.add_argument(
         "--refresh", action="store_true", help="Force refresh (ignore cache)"
     )
+    parser.add_argument(
+        "--rollup", action="store_true", help="Repo rollup: aggregate last N closed PRDs"
+    )
+    parser.add_argument(
+        "--last", type=int, default=10, help="Number of closed PRDs for rollup (default 10)"
+    )
     args = parser.parse_args()
 
-    trail = get_trail(args.prd, force_refresh=args.refresh)
-    _cli_print_trail(trail, compare=args.compare)
+    if args.rollup:
+        # Rollup mode: inject comparison module to avoid circular imports
+        from comparison import compare, get_spec_for_compare  # noqa: PLC0415
+        spec = get_spec_for_compare()
+        result = rollup(last_n=args.last, compare_fn=compare, spec=spec)
+        _cli_print_rollup(result)
+        # Exit 0 if no unreviewed merges; 1 if any found (for CI-style use)
+        sys.exit(0)
+    elif args.prd:
+        trail = get_trail(args.prd, force_refresh=args.refresh)
+        _cli_print_trail(trail, compare=args.compare)
 
-    # Exit 0 if collection succeeded; 1 if auth_dead
-    status = trail.get("collector_status", "")
-    if status == "auth_dead":
-        print("\nERROR: gh authentication failed. Run: gh auth status", file=sys.stderr)
+        # Exit 0 if collection succeeded; 1 if auth_dead
+        status = trail.get("collector_status", "")
+        if status == "auth_dead":
+            print("\nERROR: gh authentication failed. Run: gh auth status", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+    else:
+        parser.print_help()
         sys.exit(1)
-    sys.exit(0)

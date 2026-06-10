@@ -722,6 +722,23 @@
     gap: 8px;
   }
   .graph-empty strong { color: var(--text); }
+  /* Live-tab empty/stale banner (slice #647) */
+  .live-empty-banner {
+    display: none;
+    align-items: flex-start;
+    gap: 8px;
+    background: #1a1200;
+    border: 1px solid var(--amber);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--amber);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .live-empty-banner.visible { display: flex; }
+  .live-empty-banner-icon { flex-shrink: 0; font-size: 14px; }
+  .live-empty-banner-text { flex: 1; }
   .graph-status {
     font-size: 10px;
     color: var(--muted);
@@ -1109,7 +1126,7 @@
         <div class="drift-legend-item"><span class="drift-swatch drift-swatch-unseen"></span>not seen (declared never observed)</div>
         <div class="drift-legend-item"><span class="drift-swatch drift-swatch-observed"></span>observed (declared &amp; measured match)</div>
       </div>
-      <span class="measured-notice" id="measured-notice">no measured events yet (runs accumulate from new sessions)</span>
+      <span class="measured-notice" id="measured-notice">Measured topology unavailable — no workflow events captured (capture inactive).</span>
     </div>
     <!-- Topology graph + detail sidebar: side-by-side layout -->
     <div class="topo-layout">
@@ -1167,6 +1184,11 @@
         <span class="cycle-caveat">cycles from /commands + Skill-tool calls (new this session)</span>
       </div>
       <button class="refresh" onclick="reloadLiveGraph()" style="margin-left:auto;">Refresh</button>
+    </div>
+    <!-- Empty/stale state banner for the Live tab (slice #647) -->
+    <div class="live-empty-banner" id="live-empty-banner">
+      <span class="live-empty-banner-icon">&#9888;</span>
+      <span class="live-empty-banner-text" id="live-empty-banner-text"></span>
     </div>
     <div class="graph-container" id="live-graph-container">
       <!-- Dedicated vis.Network mount: vis replaces this div's innerHTML, not the container's.
@@ -3104,8 +3126,59 @@ async function renderLiveGraph() {
   // Populate session selector (metadata only — uses event_count)
   populateSessionSelector();
 
+  // Show/hide the empty/stale banner (slice #647)
+  _updateLiveEmptyBanner();
+
   // Fetch and render the selected (or latest) session's events
   await fetchAndRenderSelectedSession();
+}
+
+/**
+ * Update the Live-tab empty/stale banner based on sessionRunsCache state (slice #647).
+ *
+ * - No runs at all → "no sessions captured / hooks not firing" banner.
+ * - Runs exist but latest event is stale (>1h) → "capture inactive — last event <relativeTime>" banner.
+ * - Runs exist and recent → banner hidden.
+ */
+function _updateLiveEmptyBanner() {
+  const bannerEl  = document.getElementById('live-empty-banner');
+  const bannerTxt = document.getElementById('live-empty-banner-text');
+  if (!bannerEl || !bannerTxt) return;
+
+  const runs = sessionRunsCache || [];
+
+  if (runs.length === 0) {
+    // No sessions at all
+    bannerTxt.textContent =
+      'No workflow sessions captured. Event-logging hooks aren\'t firing — every hook reads ' +
+      '\'never fired\' in the Architecture tab. (Expected if Claude Code isn\'t running the ' +
+      'project hooks in this session.)';
+    bannerEl.classList.add('visible');
+    return;
+  }
+
+  // Find the latest event timestamp across all cached run metadata
+  let latestTs = null;
+  for (const run of runs) {
+    const ts = run.last_ts || run.first_ts || null;
+    if (!ts) continue;
+    if (latestTs === null || ts > latestTs) latestTs = ts;
+  }
+
+  if (latestTs) {
+    const ageMs = Date.now() - Date.parse(latestTs);
+    const STALE_MS = 3600000; // 1 hour
+    if (!isNaN(ageMs) && ageMs > STALE_MS) {
+      bannerTxt.textContent =
+        'Capture inactive — last event ' + relativeTime(latestTs) +
+        '. Showing the most recent captured session.';
+      bannerEl.classList.add('visible');
+      return;
+    }
+  }
+
+  // Recent data: hide banner
+  bannerEl.classList.remove('visible');
 }
 
 function populateSessionSelector() {

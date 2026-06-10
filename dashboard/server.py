@@ -12,6 +12,8 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
         GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
+        GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
+        GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -34,6 +36,19 @@ from urllib.parse import parse_qs, urlparse
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
+
+# ---------------------------------------------------------------------------
+# Trail module imports — explicit named imports (never import *).
+# sys.path injection keeps imports working both when:
+#   (a) server.py is run as __main__ (dashboard/ is cwd or on path)
+#   (b) server.py is imported by CHECK 9 (cwd is repo root)
+# ---------------------------------------------------------------------------
+_DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
+if _DASHBOARD_DIR_STR not in sys.path:
+    sys.path.insert(0, _DASHBOARD_DIR_STR)
+
+from collector import get_trail  # noqa: E402
+from comparison import compare, get_spec_for_compare  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1547,6 +1562,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/runs":
             self._send_json(self._serve_runs(query))
+
+        elif path == "/api/trail":
+            # GET /api/trail?prd=N — raw artifact trail for a PRD (ADR-0053 D1/D4).
+            prd_raw = query.get("prd", [""])[0]
+            if not prd_raw or not prd_raw.isdigit():
+                self._send_error(400, "prd parameter required (integer)")
+                return
+            try:
+                trail = get_trail(int(prd_raw))
+                self._send_json(trail)
+            except Exception as e:
+                self._send_error(500, str(e))
+
+        elif path == "/api/comparison":
+            # GET /api/comparison?prd=N — comparison report for a PRD (ADR-0053 D3).
+            prd_raw = query.get("prd", [""])[0]
+            if not prd_raw or not prd_raw.isdigit():
+                self._send_error(400, "prd parameter required (integer)")
+                return
+            try:
+                trail = get_trail(int(prd_raw))
+                spec = get_spec_for_compare()
+                report = compare(spec, trail)
+                self._send_json(report)
+            except Exception as e:
+                self._send_error(500, str(e))
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

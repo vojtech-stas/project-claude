@@ -259,59 +259,7 @@
     height: calc(100vh - 360px);
     min-height: 460px;
   }
-  /* Measured-overlay mode control */
-  .topo-mode-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-  }
-  .topo-mode-label {
-    font-size: 11px;
-    color: var(--muted);
-    flex-shrink: 0;
-  }
-  .seg-ctrl {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    overflow: hidden;
-  }
-  .seg-btn {
-    background: none;
-    border: none;
-    border-right: 1px solid var(--border);
-    color: var(--muted);
-    font-family: var(--font);
-    font-size: 11px;
-    padding: 4px 12px;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s;
-  }
-  .seg-btn:last-child { border-right: none; }
-  .seg-btn.active { background: #1a2e1a; color: var(--green); }
-  .seg-btn:hover:not(.active) { color: var(--text); background: #1c2128; }
-  /* Drift legend (shown in Both mode) */
-  .drift-legend {
-    display: none;
-    align-items: center;
-    gap: 14px;
-    font-size: 10px;
-    color: var(--muted);
-    flex-wrap: wrap;
-    padding: 4px 0;
-  }
-  .drift-legend.visible { display: flex; }
-  .drift-legend-item { display: flex; align-items: center; gap: 5px; }
-  .drift-swatch {
-    display: inline-block;
-    width: 28px;
-    height: 3px;
-    border-radius: 2px;
-    flex-shrink: 0;
-  }
-  /* drift-swatch and measured-notice CSS removed in slice #653 */
+  /* topo-mode-bar, seg-ctrl, seg-btn, drift-legend CSS removed in slice #653 */
   .hooks-section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1301,41 +1249,9 @@ const NODE_COLORS = {
 // _pipelineSpec is populated by loadArchitecture() before renderTopologyGraph runs.
 let _pipelineSpec = null;
 
-// --- Topology mode: declared only (slice #653) ---
-// measured/both modes removed; comparison UI ships in slice 3 (/api/comparison).
-let _topoMode = 'declared';
-
-// Measured-overlay functions removed in slice #653 — comparison UI ships in slice 3.
-
-// _dispatchMapFromSpec and _orchestratorChildrenFromSpec removed in slice #653
-// (old PIPELINE children[] format gone; SPEC v2 uses edges list instead).
-
-// nodeTypeForName: resolve vis-network type from SPEC v2 node kind.
-// SPEC v2 nodes have { kind: 'human'|'orchestrator'|'skill'|'agent'|'artifact' }.
-// Maps kind → vis type used by NODE_COLORS / shape logic.
-// 'agent' nodes are further split: agents ending in -critic or named 'reviewer'
-// → 'critic'; others → 'generator'.
-function nodeTypeForName(name) {
-  if (name === 'orchestrator') return 'orchestrator';
-  if (!_pipelineSpec) {
-    if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
-    return 'generator';
-  }
-  const nodes = _pipelineSpec.nodes || {};
-  const node = nodes[name];
-  if (!node) {
-    if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
-    return 'generator';
-  }
-  const kind = node.kind || 'agent';
-  if (kind === 'human') return 'human';
-  if (kind === 'orchestrator') return 'orchestrator';
-  if (kind === 'skill') return 'skill';
-  if (kind === 'artifact') return 'artifact';
-  // kind === 'agent': split critics vs generators
-  if (name.endsWith('-critic') || name === 'reviewer') return 'critic';
-  return 'generator';
-}
+// Measured-overlay mode, _dispatchMapFromSpec, _orchestratorChildrenFromSpec,
+// nodeTypeForName removed in slice #653 — type resolution is now inline in
+// renderTopologyGraph() using SPEC v2 node.kind directly.
 
 // --- Architecture ---
 let archData = null;

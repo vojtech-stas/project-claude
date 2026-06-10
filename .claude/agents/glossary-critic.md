@@ -94,6 +94,8 @@ The canonical verdict template + CRITIC trailer field schema applies. 5 required
 
 Return your verdict inline to the calling agent (`/glossary add` runs the loop before any PR is opened). The Rubric line items map 1:1 to the 5 criteria above. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and include a clear `@vojtech-stas` mention in the verdict body. The calling agent surfaces the verdict back to the user and does NOT open the PR. This matches the escalation surface used by `prd-critic`, `adr-critic`, `slicer-critic`, and `reviewer` byte-for-byte at the contract level.
 
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
+
 ---
 
 ## Tool boundaries

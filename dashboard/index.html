@@ -2025,21 +2025,25 @@ async function fetchLiveProgress() {
   const statusEl = document.getElementById('live-status-bar');
   try {
     let data = await (await fetch('/api/live-progress')).json();
-    // If computing, poll until ready (max 15s, 3 attempts)
+    // status:"computing" only occurs during bootstrap (no payload ever built).
+    // Short-retry loop: 2s intervals, max 10 attempts (~20s window) so the
+    // headline feature appears quickly on first server start without waiting
+    // for the full 25s poll cycle.
     let attempts = 0;
-    while (data && data.status === 'computing' && attempts < 3) {
-      await new Promise(r => setTimeout(r, 5000));
+    while (data && data.status === 'computing' && attempts < 10) {
+      if (statusEl) statusEl.textContent = 'Loading… (attempt ' + (attempts + 1) + '/10)';
+      await new Promise(r => setTimeout(r, 2000));
       data = await (await fetch('/api/live-progress')).json();
       attempts++;
     }
     if (!data || data.status === 'computing') {
-      if (statusEl) statusEl.textContent = 'Still computing...';
+      if (statusEl) statusEl.textContent = 'Still computing — will retry shortly';
       return;
     }
     renderLaneA(data);
     if (statusEl) {
       const ts = new Date().toLocaleTimeString();
-      statusEl.textContent = 'Last updated: ' + ts;
+      statusEl.textContent = 'Last updated: ' + ts + (data.refreshing ? ' (refreshing…)' : '');
     }
   } catch (err) {
     if (statusEl) statusEl.textContent = 'Error: ' + err.message;

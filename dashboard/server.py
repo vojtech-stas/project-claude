@@ -1665,17 +1665,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/live-progress":
             # GET /api/live-progress — Lane A run-progress for most recent open PRD.
-            # Returns immediately: {"status":"computing"} while background thread runs;
-            # client polls every ~25s until status is absent (data ready).
-            # Pattern mirrors /api/rollup (background-thread + TTL cache).
+            # Stale-while-revalidate: if a previous payload exists, ALWAYS return it
+            # immediately (with "refreshing":true while a rebuild is in flight).
+            # {"status":"computing"} is returned ONLY when no payload has ever been
+            # built since process start.  Pattern mirrors /api/rollup.
             global _live_progress_computing
             with _live_progress_lock:
                 cached = _live_progress_cache.get("data")
                 now = time.time()
                 ts = _live_progress_cache.get("ts", 0)
-                if cached is not None and (now - ts) < _LIVE_PROGRESS_TTL:
+                expired = (now - ts) >= _LIVE_PROGRESS_TTL
+                if cached is not None and not expired:
+                    # Fresh cache — return as-is
                     self._send_json(cached)
                     return
+                if cached is not None and expired:
+                    # Stale-while-revalidate: serve stale payload immediately,
+                    # kick off a background refresh if not already running.
+                    payload = dict(cached)
+                    payload["refreshing"] = True
+                    if not _live_progress_computing:
+                        _live_progress_computing = True
+                        t = threading.Thread(
+                            target=_live_progress_background, daemon=True
+                        )
+                        t.start()
+                    self._send_json(payload)
+                    return
+                # No payload ever built yet — bootstrap case
                 if _live_progress_computing:
                     self._send_json({"status": "computing"})
                     return

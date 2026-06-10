@@ -220,6 +220,12 @@ NODES = {
         "stage": "S3",
         "path": None,
     },
+    "closed-prd": {
+        "kind": "artifact",
+        "label": "Closed PRD",
+        "stage": "S3",
+        "path": None,
+    },
     "needs-human": {
         "kind": "artifact",
         "label": "needs-human",
@@ -453,17 +459,18 @@ EDGES = [
         "description": "slicer submits decomposition to slicer-critic for INVEST gate.",
     },
 
-    # slicer-critic APPROVE → slice-issue (github: sub-issue creation)
+    # prd-issue → slice-issue (github: PRD has ≥1 native sub-issue)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-SLICERCRITIC-APPROVE",
-        "from_node": "slicer-critic",
+        "id": "E-PRD-SLICE",
+        "from_node": "prd-issue",
         "to_node": "slice-issue",
         "evidence": "github",
         "required": "always",
-        "predicate": "slicer_critic_approved_slices_posted",
-        "label": "APPROVE",
+        "predicate": "prd_has_sub_issue",
+        "label": "sub-issue",
         "style": "solid",
-        "description": "slicer-critic APPROVE triggers slice sub-issues posted on GitHub.",
+        "description": "PRD issue has ≥1 native sub-issue (slice) — github artifact trail.",
     },
 
     # slicer-critic BLOCK → back to slicer (runtime)
@@ -496,22 +503,24 @@ EDGES = [
         "description": "Slice issue assigned to implementer (I2 claim protocol).",
     },
 
-    # implementer → pr (github: PR opened via closingIssuesReferences)
+    # slice-issue → pr (github: slice closed by PR via closingIssuesReferences)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-IMPL-PR",
-        "from_node": "implementer",
+        "id": "E-SLICE-PR",
+        "from_node": "slice-issue",
         "to_node": "pr",
         "evidence": "github",
         "required": "always",
-        "predicate": "implementer_opened_pr",
+        "predicate": "slice_closed_by_pr",
         "label": "",
         "style": "solid",
-        "description": "implementer opens PR with Closes #slice in body.",
+        "description": "Slice closed by a PR via closingIssuesReferences — github artifact trail.",
     },
 
-    # pr → reviewer (github: PR verdict comment)
+    # pr → reviewer (github: PR has reviewer verdict comment)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-PR-REVIEWER",
+        "id": "E-PR-REVIEW",
         "from_node": "pr",
         "to_node": "reviewer",
         "evidence": "github",
@@ -519,12 +528,13 @@ EDGES = [
         "predicate": "pr_has_verdict_comment",
         "label": "",
         "style": "solid",
-        "description": "reviewer posts VERDICT: APPROVE|BLOCK comment on the PR.",
+        "description": "PR has ≥1 reviewer verdict comment (VERDICT: APPROVE|BLOCK) — github artifact trail.",
     },
 
-    # reviewer APPROVE → merge (github: PR merged)
+    # reviewer APPROVE → merge (github: PR merged after APPROVE verdict)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-REVIEWER-MERGE",
+        "id": "E-REVIEW-MERGE",
         "from_node": "reviewer",
         "to_node": "merge",
         "evidence": "github",
@@ -532,12 +542,27 @@ EDGES = [
         "predicate": "pr_merged_after_approve",
         "label": "APPROVE",
         "style": "solid",
-        "description": "PR merged; last reviewer verdict before merge was APPROVE.",
+        "description": "PR merged; last reviewer verdict before merge was APPROVE — github artifact trail.",
+    },
+
+    # merge → closed-prd (github: all slices merged and PRD issue closed)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
+    {
+        "id": "E-MERGE-CLOSE-PRD",
+        "from_node": "merge",
+        "to_node": "closed-prd",
+        "evidence": "github",
+        "required": "always",
+        "predicate": "all_slices_merged_prd_closed",
+        "label": "",
+        "style": "solid",
+        "description": "All slices merged; PRD issue closed — github artifact trail.",
     },
 
     # reviewer BLOCK → implementer (github: BLOCK verdict + re-push)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-REVIEWER-BLOCK",
+        "id": "E-REVIEW-BLOCK",
         "from_node": "reviewer",
         "to_node": "implementer",
         "evidence": "github",
@@ -562,8 +587,9 @@ EDGES = [
     },
 
     # trivial lane: PR → merge directly (no reviewer; github: trivial label + merge)
+    # Stable spine id preserved from slice-1; evaluated by comparison engine.
     {
-        "id": "E-TRIVIAL-MERGE",
+        "id": "E-TRIVIAL-LANE",
         "from_node": "pr",
         "to_node": "merge",
         "evidence": "github",

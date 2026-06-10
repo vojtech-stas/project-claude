@@ -127,6 +127,7 @@ flowchart TD
     reviewer{{reviewer}}
     pr[(Pull Request)]
     merge[(Merge)]
+    closed_prd[(Closed PRD)]
     needs_human[(needs-human)]
   end
   subgraph S4["Stage 5: Acceptance"]
@@ -161,12 +162,13 @@ flowchart TD
   prd_issue --> to_issues
   to_issues --> slicer
   slicer -->|decomposition| slicer_critic
-  slicer_critic -->|APPROVE| slice_issue
+  prd_issue -->|sub-issue| slice_issue
   slicer_critic -.BLOCK.- slicer
   slice_issue --> implementer
-  implementer --> pr
+  slice_issue --> pr
   pr --> reviewer
   reviewer -->|APPROVE| merge
+  merge --> closed_prd
   reviewer -.BLOCK.- implementer
   reviewer -.round-3 BLOCK.- needs_human
   pr -.trivial.- merge
@@ -202,7 +204,7 @@ flowchart TD
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
-  class backlog_issue,captured_issue,glossary_pr,merge,needs_human,pr,prd_issue,slice_issue,verify_verdict artifact
+  class backlog_issue,captured_issue,closed_prd,glossary_pr,merge,needs_human,pr,prd_issue,slice_issue,verify_verdict artifact
 ```
 
 ### Legend

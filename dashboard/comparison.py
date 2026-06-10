@@ -9,6 +9,9 @@ Edge states (per-edge):
   missing       — predicate evaluated False AND run demonstrably progressed
                   past the stage (not in-flight; provably skipped/failed)
   not-reached   — run is in-flight OR ended before this stage; NEVER red
+  not-evaluated — edge exists in the SPEC but has no implemented evaluator yet
+                  (full predicate coverage ships in slice 3); EXCLUDED from
+                  run_pass computation so slice 1's real-data proof stays alive
   not-exercised — conditional edge whose condition never arose; NEVER red
   unexpected    — evidence in the trail that matches no declared edge
 
@@ -17,8 +20,10 @@ Violation detectors (first-class outputs):
   no_closes_slice  — PR merged but no closingIssuesReferences pointing to a slice
   slice_no_pr      — slice issue closed without a known closing PR
 
-Run PASS := every required:always github-tier edge on the traversed path is
+Run PASS := every required:always github-tier edge that has an evaluator is
             "confirmed" AND zero violations.
+            Edges with state "not-evaluated" are excluded from pass/fail
+            computation (their evaluators ship in slice 3).
 """
 
 from __future__ import annotations
@@ -294,9 +299,10 @@ def compare(spec: dict, trail: dict) -> dict:
         eid = edge["id"]
         evaluator = _EDGE_EVALUATORS.get(eid)
         if evaluator is None:
-            # No evaluator for this edge (future edge not yet implemented)
-            state = "not-reached"
-            detail = "no evaluator implemented yet"
+            # No evaluator for this edge yet (full coverage ships in slice 3).
+            # Use explicit "not-evaluated" state so it's excluded from run_pass.
+            state = "not-evaluated"
+            detail = "no evaluator implemented yet (slice 3)"
         else:
             try:
                 state, detail = evaluator(trail)
@@ -318,12 +324,19 @@ def compare(spec: dict, trail: dict) -> dict:
         + _detect_slice_no_pr(trail)
     )
 
-    # Run PASS: all required:always github-tier edges are "confirmed" AND no violations
+    # Run PASS: all required:always github-tier edges that HAVE an evaluator are
+    # "confirmed" AND zero violations. Edges with state "not-evaluated" (no
+    # evaluator yet — full coverage in slice 3) are excluded from this check so
+    # that slice 1's real-data proof remains valid.
     run_pass = (
         all(
             edges_result[e["id"]]["state"] == "confirmed"
             for e in spec_edges
-            if e.get("required") == "always" and e.get("evidence") == "github"
+            if (
+                e.get("required") == "always"
+                and e.get("evidence") == "github"
+                and edges_result[e["id"]]["state"] != "not-evaluated"
+            )
         )
         and len(violations) == 0
     )

@@ -14,6 +14,8 @@ Serves: GET /               -> dashboard/index.html
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
         GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
+        GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
+        GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -25,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -47,9 +50,39 @@ _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in sys.path:
     sys.path.insert(0, _DASHBOARD_DIR_STR)
 
-from collector import get_trail  # noqa: E402
+from collector import get_trail, get_closed_prd_numbers, rollup  # noqa: E402
 from comparison import compare, get_spec_for_compare  # noqa: E402
 from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Rollup cache — rollup calls gh CLI per-PR so it can take 20-40s on cold
+# start; keyed by last_n with 120s TTL.  Background-thread computation so
+# the HTTP handler returns immediately with {"status":"computing"} while the
+# work runs; client polls until status transitions to "ready".
+# ---------------------------------------------------------------------------
+_rollup_cache: dict = {}        # {last_n: {"data": {...}, "ts": float}}
+_rollup_computing: dict = {}    # {last_n: True} — in-flight marker
+_rollup_lock = threading.Lock()
+_ROLLUP_CACHE_TTL = 120    # seconds
+
+
+def _rollup_background(last_n: int) -> None:
+    """Compute rollup in a background thread and store result in _rollup_cache."""
+    try:
+        spec = get_spec_for_compare()
+        result = rollup(last_n=last_n, compare_fn=compare, spec=spec)
+        with _rollup_lock:
+            _rollup_cache[last_n] = {"data": result, "ts": time.time()}
+    except Exception as e:
+        # Store error so polling can surface it
+        with _rollup_lock:
+            _rollup_cache[last_n] = {
+                "data": {"status": "error", "error": str(e)},
+                "ts": time.time(),
+            }
+    finally:
+        with _rollup_lock:
+            _rollup_computing.pop(last_n, None)
 
 
 def _resolve_invoking_repo_root() -> Path:
@@ -1424,6 +1457,57 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(report)
             except Exception as e:
                 self._send_error(500, str(e))
+
+        elif path == "/api/trail-runs":
+            # GET /api/trail-runs?last=N — list of last N closed PRDs for run picker.
+            last_raw = query.get("last", ["20"])[0]
+            try:
+                last_n = int(last_raw) if last_raw.isdigit() else 20
+            except (ValueError, AttributeError):
+                last_n = 20
+            try:
+                numbers = get_closed_prd_numbers(last_n=last_n)
+                # Fetch minimal metadata (title + closedAt) for each PRD
+                runs = []
+                for n in numbers:
+                    trail = get_trail(n)
+                    runs.append({
+                        "number": n,
+                        "title": trail.get("prd_title", f"PRD #{n}"),
+                        "closed_at": trail.get("prd_closed_at", ""),
+                        "wall_time_s": trail.get("wall_time_s"),
+                    })
+                self._send_json({"runs": runs})
+            except Exception as e:
+                self._send_error(500, str(e))
+
+        elif path == "/api/rollup":
+            # GET /api/rollup?last=N — repo rollup over last N closed PRDs.
+            # Returns immediately: {"status":"computing"} while background thread
+            # runs; client polls every 2s until status is absent (data ready).
+            last_raw = query.get("last", ["10"])[0]
+            try:
+                last_n = int(last_raw) if last_raw.isdigit() else 10
+            except (ValueError, AttributeError):
+                last_n = 10
+            with _rollup_lock:
+                cached = _rollup_cache.get(last_n)
+                now = time.time()
+                if cached and (now - cached.get("ts", 0)) < _ROLLUP_CACHE_TTL:
+                    # Serve cached result; propagate any error status from failed run
+                    self._send_json(cached["data"])
+                    return
+                if _rollup_computing.get(last_n):
+                    # Already in flight — return computing sentinel
+                    self._send_json({"status": "computing", "last_n": last_n})
+                    return
+                # Kick off background computation
+                _rollup_computing[last_n] = True
+            t = threading.Thread(
+                target=_rollup_background, args=(last_n,), daemon=True
+            )
+            t.start()
+            self._send_json({"status": "computing", "last_n": last_n})
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

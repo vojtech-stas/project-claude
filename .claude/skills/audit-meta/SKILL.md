@@ -178,9 +178,9 @@ Empty → PASS; non-empty → FAIL with file list.
 
 ### DOCS-9 — CLAUDE.md glossary entry count ≤ 35 (ADR-0012 D5 soft cap; WARN)
 
-**Mechanic:** `awk '/^## Glossary/{f=1; next} /^## /{f=0} f' CLAUDE.md | grep -cE '^- \*\*'` → ≤ 35 → PASS (report actual count); > 35 → WARN (consolidation candidate).
+**Mechanic:** `awk '/^### Glossary/{f=1; next} /^### /{f=0} f' CLAUDE.md | grep -cE '^- \*\*'` → ≤ 35 → PASS (report actual count); > 35 → WARN (consolidation candidate).
 
-**Rationale:** The glossary is auto-loaded into every Claude Code session's context. Past ~35 entries, the cost-benefit shifts unfavorably: context-window cost inflates the per-session base load; discoverability degrades from "load-bearing terms only" to "general dictionary"; maintenance pressure on each entry's defensibility relaxes. WARN (not FAIL) — hitting the cap is a signal to act, not a failure mode. Options: consolidate related entries, demote generic-leaning terms, or accept if a new entry is genuinely load-bearing. The awk state-flag pattern `{f=1; next}` avoids the false-start bug of the range pattern `/^## Glossary/,/^## /` where both start and end patterns match the heading `## Glossary (key terms)`, causing the range to immediately close and returning zero.
+**Rationale:** The glossary is auto-loaded into every Claude Code session's context. Past ~35 entries, the cost-benefit shifts unfavorably: context-window cost inflates the per-session base load; discoverability degrades from "load-bearing terms only" to "general dictionary"; maintenance pressure on each entry's defensibility relaxes. WARN (not FAIL) — hitting the cap is a signal to act, not a failure mode. Options: consolidate related entries, demote generic-leaning terms, or accept if a new entry is genuinely load-bearing. The awk state-flag pattern `{f=1; next}` avoids the false-start bug of the range pattern `/^### Glossary/,/^### /` where both start and end patterns match the heading `### Glossary (key terms)`, causing the range to immediately close and returning zero. Note: the CLAUDE.md glossary heading is H3 (`### Glossary (key terms)`), not H2; this pattern matches the actual heading.
 
 ### DOCS-10 — no `` `backlog`-labeled `` prose or `--label backlog` literal in agent or skill files
 

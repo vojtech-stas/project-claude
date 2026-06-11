@@ -55,17 +55,18 @@ if command -v jq >/dev/null 2>&1 && [ -n "$SID" ]; then
   [ -n "$STAMPED" ] && LINE="$STAMPED"
 fi
 
-ROOT="${CLAUDE_PROJECT_DIR:-.}"
-COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-if [ -n "$COMMON" ]; then
-  MAIN=$(dirname "$COMMON")
-else
-  MAIN="$ROOT"
-fi
-[ -d "$MAIN" ] || MAIN="$ROOT"
+# Resolve repo root + LOG_DIR via shared lib (replaces the inlined git-common-dir block).
+# shellcheck source=lib-root.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib-root.sh"
 
-LOG_DIR="$MAIN/.claude/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null
+# Honor WORKFLOW_LOG_DIR sandbox override (used by tests / worktree isolation).
+if [ -n "${WORKFLOW_LOG_DIR:-}" ]; then
+  LOG_DIR="$WORKFLOW_LOG_DIR"
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+fi
+
 printf '{"hook":"log-event","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 TARGET_FILE="${LOGFILE:-workflow-events.jsonl}"

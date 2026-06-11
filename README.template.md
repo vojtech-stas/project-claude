@@ -4,6 +4,32 @@ A clone-as-template starter for AI-coded projects, replicating the workflow of a
 
 > **New here? Start here →** Jump to the [5-Minute Quickstart](#5-minute-quickstart) for a literal first-use cycle. Skim the [Concepts cheat sheet](#concepts-cheat-sheet) for one-line definitions. Hit the [FAQ](#frequently-asked-questions) for common newcomer questions. For deep theory, scroll to *What's the idea*; for the architecture, see [CLAUDE.md](CLAUDE.md).
 
+## Using this repo as a template
+
+This repo is designed to be cloned under your own owner/name and run as-is — no find-and-replace needed. All repo identity (GraphQL queries, PR links, escalation mentions) is derived at runtime from `git remote` and `gh`.
+
+**One-time setup checklist:**
+
+1. **Clone** under your own owner and repo name:
+   ```bash
+   git clone https://github.com/<your-owner>/<your-repo> my-project
+   cd my-project
+   ```
+2. **Authenticate** with the GitHub CLI:
+   ```bash
+   gh auth login
+   ```
+3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, and applies branch protection R1+R2 to `main`:
+   ```bash
+   bash bootstrap.sh
+   ```
+4. **Optionally create a project board** — `bootstrap.sh` detects an existing GitHub Project v2 board named "project-claude"; create one via `gh project create --title "project-claude"` if you want the Backlog/Captured columns. The pipeline works without it, but the board gives you a visual queue.
+5. **Open in Claude Code** — `CLAUDE.md` auto-loads; the agents are oriented. Start with `/grill-me` for your first feature.
+
+**Runtime identity — nothing to configure.** `dashboard/collector.py` resolves the repo slug via `gh repo view --json nameWithOwner` (with a `git remote get-url origin` parse fallback). Every API payload, PR link, and escalation mention derives from that single source at runtime. For unusual multi-remote or CI setups, set the `DASH_REPO_SLUG` environment variable (e.g. `DASH_REPO_SLUG=my-org/my-repo`) to override resolution.
+
+**Assumption:** a single `origin` remote pointing to github.com. SSH and HTTPS origins both parse correctly; GitHub Enterprise is not supported.
+
 ## What's the idea
 
 You play **senior engineer**. AI agents play **the team**. The template ships an autonomous pipeline with **exactly two human-touch points**:
@@ -32,7 +58,7 @@ A literal walkthrough of the first full feature cycle. Pick something tiny — e
 **1. Clone + bootstrap (one-time, ~30 seconds):**
 
 ```bash
-git clone https://github.com/vojtech-stas/project-claude my-new-project
+git clone https://github.com/<your-owner>/<your-repo> my-new-project
 cd my-new-project
 ./bootstrap.sh         # creates labels, installs git hooks, applies branch protection
 ```
@@ -171,7 +197,7 @@ The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform
 ## Use it
 
 ```bash
-git clone https://github.com/vojtech-stas/project-claude my-new-project
+git clone https://github.com/<your-owner>/<your-repo> my-new-project
 cd my-new-project
 ./bootstrap.sh         # one-time: labels, git hooks, branch protection (idempotent)
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented

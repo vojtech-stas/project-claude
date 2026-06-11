@@ -7,13 +7,13 @@
 #
 # Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
-#   2. Create the 6 repo-level labels (skip if they already exist).
+#   2. Create the 7 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
 #   5. Apply branch protection R1+R2 on `main` (warn-and-proceed if no admin).
-#   6. yt-dlp dep check (warn-only; ADR-0019 D3).
+#   6. python3 presence check (warn-only; required by event logger).
 #   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
-#   8. Playwright MCP — DEPRECATED (superseded by ADR-0049 D1; Claude_Preview is harness-provided, no install required).
+#   8. Playwright Python library install (pip install playwright; ADR-0050 D1).
 #
 # Explicit DEFERRALS (NOT done here):
 #   - Matt Pocock skills install                    — user-level concern
@@ -122,7 +122,7 @@ if [[ "$GH_OK" -eq 1 ]]; then
     fi
 fi
 
-# ---- step 2: create the 6 repo-level labels -------------------------------
+# ---- step 2: create the 7 repo-level labels -------------------------------
 
 step 2 "create repo labels (idempotent)"
 
@@ -135,6 +135,7 @@ LABELS=(
     "captured|8b949e|Graveyard of backlog-critic rejects per ADR-0008 D1; lazy human review"
     "trivial|fbca04|≤10 LoC runtime; I3 trivial-lane PR; reviewer fast-paths"
     "needs-human|d93f0b|Round-3 BLOCK escalation per I5"
+    "needs-human-check|e4e669|QA-plan residual queue; cleared by /qa-review skill"
 )
 
 create_label() {
@@ -160,7 +161,7 @@ if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
     for spec in "${LABELS[@]}"; do
         IFS='|' read -r name color desc <<<"$spec"
         # We re-grep per-label to keep idempotency check tight; the per-call
-        # cost (one `gh label list` per label) is acceptable for 6 labels.
+        # cost (one `gh label list` per label) is acceptable for 7 labels.
         before=$(gh label list --repo "$ORIGIN_SLUG" --limit 200 2>/dev/null | grep -c "^${name}"$'\t' || true)
         if create_label "$name" "$color" "$desc"; then
             if [[ "$before" -eq 0 ]]; then created=$((created+1)); else skipped=$((skipped+1)); fi
@@ -305,21 +306,21 @@ else
     note "⚠ branch protection: skipped (gh not ready)"
 fi
 
-# ---- step 6: yt-dlp dep check (warn-only) ---------------------------------
+# ---- step 6: python3 presence check (warn-only) ---------------------------
 
-step 6 "yt-dlp dep check (warn-only)"
+step 6 "python3 presence check (warn-only)"
 
-# yt-dlp is required by the /distill-video skill (per ADR-0019 D3) to fetch
-# YouTube transcripts into docs/best-practices/transcripts/. We do NOT
-# auto-install it — cross-platform package-manager complexity (winget / brew /
-# pip / apt) is a rabbit-hole. Per ADR-0019 D3 + Alt-H rejection: warn-only.
-if command -v yt-dlp >/dev/null 2>&1; then
-    log "yt-dlp present: $(yt-dlp --version 2>/dev/null | head -1)"
-    note "✓ yt-dlp: present"
+# python3 is required by the canonical workflow event logger
+# (.claude/hooks/log-tool-event.sh calls python3 for JSON emission) and by
+# the Playwright qa-tester route (step 8). We do NOT auto-install it —
+# a missing Python runtime is a host-setup concern. Warn-and-continue.
+if command -v python3 >/dev/null 2>&1; then
+    log "python3 present: $(python3 --version 2>/dev/null)"
+    note "✓ python3: present"
 else
-    warn "yt-dlp not on PATH. Required by /distill-video skill (ADR-0019 D3)."
-    warn "  Install: pip install yt-dlp  (or: winget install yt-dlp.yt-dlp on Windows; brew install yt-dlp on macOS)"
-    note "⚠ yt-dlp: missing (install for /distill-video; otherwise harmless)"
+    warn "python3 not on PATH. Required by the workflow event logger and Playwright qa-tester."
+    warn "  Install: https://www.python.org/downloads/ (or: winget install Python.Python.3 on Windows; brew install python on macOS)"
+    note "⚠ python3: missing (install for event logger + Playwright qa-tester)"
 fi
 
 # ---- step 7: jq install (per ADR-0030 D1) ---------------------------------
@@ -404,7 +405,7 @@ else
     fi
 fi
 
-# ---- step 8: Playwright Python library install (per ADR-0050 D1) ------------
+# ---- step 8: Playwright Python library install (per ADR-0050 D1) ----------
 
 step 8 "Playwright Python library install (pip install playwright — idempotent)"
 

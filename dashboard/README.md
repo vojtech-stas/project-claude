@@ -45,6 +45,7 @@ Then open `http://localhost:8765` in any modern browser.
 |---|---|---|
 | `DASH_PORT` | `8765` | Port the server listens on |
 | `DASH_NO_BROWSER` | _(unset)_ | Set to any non-empty value to suppress auto-opening the browser on startup (useful in CI, headless, or automated contexts) |
+| `DASH_REPO_SLUG` | _(derived)_ | Override the runtime-derived GitHub repo slug (`owner/name`). Normally derived automatically via `gh repo view` → `git remote get-url origin` parse. Set this only when both derivation paths fail (e.g. detached HEAD, no `origin` remote). Must be in `owner/name` form. Single github.com origin assumed (multi-remote / GHE out of scope — see PRD #753 §3). |
 
 Example with custom port:
 

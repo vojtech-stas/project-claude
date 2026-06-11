@@ -38,10 +38,105 @@ _CACHE_DIR = _REPO_ROOT / ".claude" / "logs" / "trail-cache"
 TTL_OPEN_S = 60          # seconds before an open-PRD cache entry is stale
 RETRY_DELAYS = [0, 2, 8]  # seconds between retry attempts
 
-# GraphQL query — one batched call per PRD (design-verified ~0.8s/PRD)
-_GQL_QUERY = """\
+# ---------------------------------------------------------------------------
+# Runtime repo-slug derivation
+# ---------------------------------------------------------------------------
+_repo_slug_cache: str | None = None
+
+
+def _repo_slug() -> str | None:
+    """Return the GitHub repo slug (owner/name) for this clone.
+
+    Precedence:
+    1. ``gh repo view --json nameWithOwner`` — most authoritative.
+    2. Parse ``git remote get-url origin`` for SSH/HTTPS github.com remotes.
+    3. ``DASH_REPO_SLUG`` environment variable — explicit override.
+    4. Return None — caller must treat this as a collector error state.
+
+    Result is module-level cached after the first successful call so that the
+    ~0.3 s ``gh repo view`` overhead only incurs on the first background cycle.
+    Assumption: single github.com ``origin`` remote (documented non-goal for
+    multi-remote/GHE setups; see PRD #753 §3).
+    """
+    global _repo_slug_cache
+    if _repo_slug_cache is not None:
+        return _repo_slug_cache
+
+    # 1. gh repo view
+    try:
+        result = subprocess.run(
+            ["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            cwd=str(_REPO_ROOT),
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            slug = result.stdout.strip()
+            if "/" in slug:
+                _repo_slug_cache = slug
+                return _repo_slug_cache
+    except Exception:
+        pass
+
+    # 2. git remote get-url origin — parse SSH and HTTPS github.com forms
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            cwd=str(_REPO_ROOT),
+            stdin=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            # SSH: git@github.com:owner/name.git
+            m = re.match(r"git@github\.com:([^/]+/[^/]+?)(?:\.git)?$", url)
+            if m:
+                _repo_slug_cache = m.group(1)
+                return _repo_slug_cache
+            # HTTPS: https://github.com/owner/name[.git]
+            m = re.match(r"https://github\.com/([^/]+/[^/]+?)(?:\.git)?$", url)
+            if m:
+                _repo_slug_cache = m.group(1)
+                return _repo_slug_cache
+    except Exception:
+        pass
+
+    # 3. DASH_REPO_SLUG env override
+    env_slug = os.environ.get("DASH_REPO_SLUG", "").strip()
+    if env_slug and "/" in env_slug:
+        _repo_slug_cache = env_slug
+        return _repo_slug_cache
+
+    # 4. Total failure — return None; collector reports its error state
+    return None
+
+
+def _gql_query_for_slug(slug: str | None) -> str | None:
+    """Return the GQL query string with the runtime-derived repo owner/name.
+
+    Returns None if the slug cannot be derived (triggers collector error state).
+    """
+    if slug is None:
+        return None
+    owner, _, name = slug.partition("/")
+    if not owner or not name:
+        return None
+    return _GQL_QUERY_TEMPLATE.replace("__OWNER__", owner).replace("__NAME__", name)
+
+
+# GraphQL query — one batched call per PRD (design-verified ~0.8s/PRD).
+# Owner and name are substituted at call time from _repo_slug().
+_GQL_QUERY_TEMPLATE = """\
 query($n:Int!){
-  repository(owner:"vojtech-stas",name:"project-claude"){
+  repository(owner:"__OWNER__",name:"__NAME__"){
     issue(number:$n){
       title
       createdAt
@@ -328,8 +423,22 @@ def collect_trail(prd_number: int) -> dict:
           "wall_time_s": float|None,   # prd closed_at - created_at
         }
     """
-    # Step 1: GraphQL batch query
-    gql_data, err = _gh_graphql(_GQL_QUERY, {"n": prd_number})
+    # Step 1: Derive repo slug and build the GraphQL query
+    slug = _repo_slug()
+    gql = _gql_query_for_slug(slug)
+    if gql is None:
+        return {
+            "prd_number": prd_number,
+            "collector_status": "auth_dead",
+            "error": (
+                "repo slug derivation failed: gh repo view unavailable, "
+                "git remote origin not a github.com remote, and "
+                "DASH_REPO_SLUG env var not set"
+            ),
+        }
+
+    # Step 1b: GraphQL batch query
+    gql_data, err = _gh_graphql(gql, {"n": prd_number})
     if gql_data is None:
         return {
             "prd_number": prd_number,

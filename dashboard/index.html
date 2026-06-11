@@ -2118,11 +2118,14 @@ function renderLaneA(data) {
     open: 'open', assigned: 'assigned',
     pr_open: 'PR open', pr_merged: 'PR merged', closed: 'closed'
   };
+  // repo_url is derived at runtime by the backend (_repo_slug() in collector.py).
+  // Fallback keeps links working if the field is absent (older server build).
+  const repoBase = (data.repo_url || '').replace(/\/$/, '');
   tbody.innerHTML = slices.map(function(sl) {
     const stageClass = 'stage-' + (sl.stage || 'open');
     const stageLabel = STAGE_LABELS[sl.stage] || sl.stage || 'open';
     const prHtml = sl.pr_number
-      ? '<a href="https://github.com/vojtech-stas/project-claude/pull/' + sl.pr_number +
+      ? '<a href="' + (repoBase || 'https://github.com') + '/pull/' + sl.pr_number +
         '" target="_blank" style="color:var(--cyan);">#' + sl.pr_number + '</a>'
       : '<span style="color:var(--muted);">-</span>';
     let verdictHtml = '<span style="color:var(--muted);">-</span>';

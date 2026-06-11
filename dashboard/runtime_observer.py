@@ -55,7 +55,7 @@ _DEFAULT_LOG = _OBSERVER_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl
 
 # Fixture-session guard — mirrors events.py FIXTURE_SID_RE (rule #21)
 _FIXTURE_SID_RE = re.compile(
-    r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)", re.IGNORECASE
 )
 
 # ---------------------------------------------------------------------------

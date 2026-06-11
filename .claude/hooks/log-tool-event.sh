@@ -97,7 +97,7 @@ def beacon(status, reason=None):
         pass  # never crash
 
 FIXTURE_PATTERN = re.compile(
-    r"^(demo|test|verify|fixture|manual|sess-)",
+    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)",
     re.IGNORECASE
 )
 

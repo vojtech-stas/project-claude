@@ -22,6 +22,20 @@ Full design rationale: [ADR-0034](../../../decisions/0034-build-orchestrator-and
 - For trivial one-line fixes — use the `hotfix/<thing>` trivial lane (I3); `/build` is for feature-sized work.
 - When only one pipeline stage needs rerunning — invoke that sub-skill directly (`/ship`, `/qa-plan`, etc.).
 
+## Conduct
+
+**Run-to-done.** When multiple goals or PRDs are queued — either explicitly by the user ("build everything in the backlog") or by the run's own decomposition (a multi-slice PRD) — execute them consecutively to completion (merged + production-verified + closed) without pausing between goals. One wrap-up report at the end covers all goals. Stops mid-run are reserved exclusively for:
+- Destructive or irreversible operations (branch deletion, ref rewrites, force-push) — confirm with the user before proceeding.
+- Genuine user-only scope forks — when a design decision cannot be resolved from the grilled context and a wrong choice would require rework that cannot be corrected by later slices; name the specific fork and stop only for that decision.
+- Round-3 strict-stops (rule #19 / I5) — a `needs-human` escalation after three BLOCK rounds; this overrides the run-to-done drive unconditionally.
+
+**Reroute-when-blocked.** On a blocked path — an unregistered agent type, an unavailable tool, or stray environment state — the orchestrator reroutes before stopping:
+1. **Substitute**: if a registered subagent type is unavailable, dispatch `general-purpose` with the role file loaded inline (per the `qa-tester` precedent for unregistered environments).
+2. **Repair**: fix environment state (kill stray servers, run `bash tools/worktree-guard.sh branch-restore` to restore a drifted worktree, clean stale lock files) and retry.
+3. **Re-decompose**: if the blocked path is a design dead-end, re-run the relevant pipeline stage with updated context.
+
+In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change as a `captured`-labeled issue) before continuing. Stopping without rerouting is a last resort, not a first response.
+
 ## Step-by-step procedure
 
 ### Step 0 — Live-feed self-check (capture honesty gate)
@@ -151,6 +165,7 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
 - **SendUserFile at wrap-up (per CLAUDE.md rule #20 + ADR-0037 D3):** After proof-posting, send each committed proof artifact to the user in chat — one `SendUserFile` call per artifact, with a caption tying it to the verified feature claim. This runs in main-agent context (the wrap-up is always main-agent), so `SendUserFile` is available. For each proof artifact in `qa-proof/<prd-num>/`:
   - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
   - **hook-fire / command-run / static-check routes:** no file to send (no image); instead print the `PROOF:` string inline in the summary beside the verified claim.
+- **Visible-surface screenshot floor (run-to-done complement):** Regardless of proof route, if the shipped work has ANY user-visible surface — a dashboard tab, panel, graph, or report view — the wrap-up MUST capture a post-merge production screenshot from a fresh (restarted/live) environment per rule #20's freshness clause and `SendUserFile` it with a claim-tied caption. The route-scoped SendUserFile items above are the per-route minimum; this floor-raises them for visual work. Non-visual work: send the nearest visible artifact if one exists (e.g. a CLI output excerpt as an inline code block), else state honestly "no visual surface — nearest artifact: [quoted output]". Do NOT send a screenshot of a stale or pre-merge environment; restart the relevant server/dashboard before capturing.
 - Mark the feature done; proceed to output.
 
 **FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:

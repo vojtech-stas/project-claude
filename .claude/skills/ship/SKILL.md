@@ -15,6 +15,20 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 - For trivial one-line fixes — use the `hotfix/<thing>` lane (I3).
 - When there is no conversation context to synthesize — `/ship` consumes context, it does not interview.
 
+## Conduct
+
+**Run-to-done.** When multiple goals or PRDs are queued — either explicitly by the user ("ship everything in the backlog") or by the run's own decomposition (a multi-slice PRD) — execute them consecutively to completion (merged + production-verified + closed) without pausing between goals. One wrap-up report at the end covers all goals. Stops mid-run are reserved exclusively for:
+- Destructive or irreversible operations (branch deletion, ref rewrites, force-push) — confirm with the user before proceeding.
+- Genuine user-only scope forks — when a design decision cannot be resolved from the grilled context and a wrong choice would require rework; name the specific fork and stop only for that decision.
+- Round-3 strict-stops (rule #19 / I5) — a `needs-human` escalation after three BLOCK rounds; this overrides the run-to-done drive unconditionally.
+
+**Reroute-when-blocked.** On a blocked path — an unregistered agent type, an unavailable tool, or stray environment state — the orchestrator reroutes before stopping:
+1. **Substitute**: if a registered subagent type is unavailable, dispatch `general-purpose` with the role file loaded inline (per the `qa-tester` precedent for unregistered environments).
+2. **Repair**: fix environment state (kill stray servers, run `bash tools/worktree-guard.sh branch-restore` to restore a drifted worktree, clean stale lock files) and retry.
+3. **Re-decompose**: if the blocked path is a design dead-end, re-run the slicer on the affected PRD with updated context.
+
+In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change as a `captured`-labeled issue) before continuing. Stopping without rerouting is a last resort, not a first response.
+
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 
 Before the implementation pipeline begins, fire a once-per-session whole-repo audit via the existing `codebase-critic` in whole-repo mode. This runs **concurrently** and **never gates** any `/ship` stage — it is a background reflection tool only (ADR-0051 D3).
@@ -100,7 +114,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 
 **If count > 0:** log "capture alive: N fresh events" and proceed.
 
-1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If the design is thin or open, STOP and ask the user to grill further. Do NOT invent a PRD.
+1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If context is thin, design with sensible defaults and record every defaulted decision in the PRD draft — `prd-critic` and `adr-critic` are the safety net that audits those decisions before the PRD posts. Proceed without stopping unless a fork is genuinely user-only (i.e. a design choice where a wrong guess would require rework that cannot be corrected by later slices — name the specific fork and stop only for that decision).
 
 2. **Stage 2 — `/to-prd`.** Invoke [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md) unchanged. It runs `prd-critic` (+ `adr-critic` under shared round counter when a macro-ADR is drafted) internally per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1's joint-APPROVE gate, then publishes via `gh issue create`. Capture the PRD issue number.
 
@@ -163,6 +177,7 @@ evidence for this run; note it explicitly in the step 7 final report.
    - **SendUserFile at wrap-up (per CLAUDE.md rule #20 + ADR-0037 D3):** After proof-posting, send each committed proof artifact to the user in chat alongside the verified claim (step 7 narrative). This runs in main-agent context, so `SendUserFile` is available. At step 7, for each feature's proof:
      - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
      - **hook-fire / command-run / static-check routes:** no file to send; print the `PROOF:` string inline beside the verified claim in the step 7 narrative.
+   - **Visible-surface screenshot floor (run-to-done complement):** Regardless of proof route, if the shipped work has ANY user-visible surface — a dashboard tab, panel, graph, or report view — the wrap-up MUST capture a post-merge production screenshot from a fresh (restarted/live) environment per rule #20's freshness clause and `SendUserFile` it with a claim-tied caption. The route-scoped SendUserFile items above are the per-route minimum; this floor-raises them for visual work. Non-visual work: send the nearest visible artifact if one exists (e.g. a CLI output excerpt as an inline code block), else state honestly "no visual surface — nearest artifact: [quoted output]". Do NOT send a screenshot of a stale or pre-merge environment; restart the relevant server/dashboard before capturing.
    - Proceed to step 7.
 
    **FAIL** (and `round < 3`):

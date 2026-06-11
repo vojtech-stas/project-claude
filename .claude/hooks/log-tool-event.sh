@@ -173,7 +173,58 @@ try:
         event["question"] = str(q_raw)[:300]
         event["answer"]   = str(a_raw)[:300]
 
-    # session_start / session_stop carry no extra payload.
+    elif event_type == "user_prompt":
+        # Capture first 500 chars of the user's prompt (python3 only — no jq).
+        prompt_text = str(payload.get("prompt", ""))
+        event["prompt"] = prompt_text[:500]
+
+    elif event_type == "session_stop":
+        # Attempt to capture assistant_tail from the transcript file.
+        # Fail-soft: ANY failure → omit the field, set optional tail_error,
+        # event still writes, beacon ok, exit 0.
+        transcript_path = payload.get("transcript_path", "")
+        if transcript_path:
+            try:
+                import os as _os
+                _MAX_BYTES = 256 * 1024  # 256 KB tail bound
+                tsize = _os.path.getsize(transcript_path)
+                with open(transcript_path, "rb") as _tf:
+                    if tsize > _MAX_BYTES:
+                        _tf.seek(tsize - _MAX_BYTES)
+                    raw_tail = _tf.read().decode("utf-8", errors="replace")
+                # Discard first partial line (may be cut mid-line by seek).
+                if tsize > _MAX_BYTES:
+                    first_nl = raw_tail.find("\n")
+                    if first_nl != -1:
+                        raw_tail = raw_tail[first_nl + 1:]
+                # Scan for the last assistant message and concatenate text blocks.
+                last_text = None
+                for _line in raw_tail.splitlines():
+                    _line = _line.strip()
+                    if not _line:
+                        continue
+                    try:
+                        _obj = json.loads(_line)
+                        if _obj.get("type") == "assistant":
+                            _msg = _obj.get("message", {})
+                            _content = _msg.get("content", []) if isinstance(_msg, dict) else []
+                            _text = "".join(
+                                _block.get("text", "")
+                                for _block in _content
+                                if isinstance(_block, dict) and _block.get("type") == "text"
+                            )
+                            if _text:
+                                last_text = _text
+                    except Exception:
+                        continue
+                if last_text is not None:
+                    event["assistant_tail"] = last_text[-700:]
+                else:
+                    event["tail_error"] = "no_assistant_message_found"
+            except Exception as _te:
+                event["tail_error"] = str(_te)[:200]
+
+    # session_start carries no extra payload (session_stop handled above).
 
     line = json.dumps(event, separators=(",", ":"))
 

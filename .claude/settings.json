@@ -38,6 +38,15 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.sh\""
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" user_prompt"
+          }
+        ]
       }
     ],
     "PreToolUse": [

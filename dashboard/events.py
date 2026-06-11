@@ -88,8 +88,8 @@ def serve_runs(query: dict, log_path: Path) -> dict:
     Events within a run are time-ordered (ascending, as logged).
 
     Implementation: reads the file backwards in 64 KiB chunks across the full
-    window to collect ALL matching events regardless of interleaving.  The log
-    fits within the 64 KiB chunk, so this is cheap and correct.  Break-early
+    window to collect ALL matching events regardless of interleaving.  Cost is
+    O(file size); correctness requires the full-window collect (no break-early).  Break-early
     is an invalid optimisation for interleaved sessions — two concurrent sessions
     can alternate lines throughout the file, so a contiguous-block assumption
     produces truncated results (slice #739).

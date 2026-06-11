@@ -87,11 +87,16 @@ def serve_runs(query: dict, log_path: Path) -> dict:
     Runs are ordered newest-first (by first_ts descending).
     Events within a run are time-ordered (ascending, as logged).
 
-    Implementation: reads the file backwards in 64 KiB chunks to collect
-    only the lines needed for the last N session_id groups.  For the
-    ?before cursor it scans backward from the end to skip sessions until
-    the cursor session_id is exhausted, then collects N more groups.
-    This avoids loading the full file on the hot path.
+    Implementation: reads the file backwards in 64 KiB chunks across the full
+    window to collect ALL matching events regardless of interleaving.  The log
+    fits within the 64 KiB chunk, so this is cheap and correct.  Break-early
+    is an invalid optimisation for interleaved sessions — two concurrent sessions
+    can alternate lines throughout the file, so a contiguous-block assumption
+    produces truncated results (slice #739).
+
+    For ?before=<cursor>: after the skip phase the cursor sid is permanently
+    excluded so it cannot reappear in the collected page even when its lines
+    are interleaved with the first N collected sessions.
     """
     if not log_path.exists():
         # Return appropriate empty shape depending on query mode
@@ -105,7 +110,6 @@ def serve_runs(query: dict, log_path: Path) -> dict:
         try:
             lines_reversed = iter_lines_reversed(log_path)
             events_reversed: list = []
-            sid_seen = False
             for raw in lines_reversed:
                 raw = raw.strip()
                 if not raw:
@@ -118,11 +122,10 @@ def serve_runs(query: dict, log_path: Path) -> dict:
                     continue
                 sid = obj.get("session_id", "")
                 if sid == session_id_filter:
-                    sid_seen = True
                     events_reversed.append(obj)
-                elif sid_seen:
-                    # We've moved past the target session (reading reversed)
-                    break
+                # Do NOT break on non-matching lines: concurrent sessions
+                # interleave throughout the file — the target session's events
+                # may be scattered in non-contiguous blocks (slice #739 fix).
             events = list(reversed(events_reversed))
             if not events:
                 return {"run": None}
@@ -154,7 +157,7 @@ def serve_runs(query: dict, log_path: Path) -> dict:
         lines_reversed = iter_lines_reversed(log_path)
 
         # Collect session groups in reverse insertion order (newest first).
-        sessions_newest_first: list = []  # list of (sid, first_ts, last_ts, count)
+        sessions_newest_first: list = []  # list of [sid, first_ts, last_ts, count]
         sid_to_idx: dict = {}
 
         # When before_cursor is set we skip all sessions that appear AFTER
@@ -164,6 +167,11 @@ def serve_runs(query: dict, log_path: Path) -> dict:
         # it (into a different session_id) do we start collecting.
         cursor_seen = False  # have we observed at least one cursor-session line?
         in_before_skip = (before_cursor is not None)
+
+        # Track the number of NEW (distinct) sessions collected so we know
+        # when to stop discovering new sessions.  We always continue scanning
+        # to update already-seen sessions (interleave-safe full-window collect).
+        new_sessions_collected = 0
 
         for raw in lines_reversed:
             raw = raw.strip()
@@ -195,11 +203,22 @@ def serve_runs(query: dict, log_path: Path) -> dict:
                     in_before_skip = False
                     # Fall through to process this line normally
 
+            # After the skip phase, permanently exclude the cursor sid so it
+            # cannot reappear in the collected page (interleaved lines fix,
+            # slice #739).
+            if before_cursor is not None and sid == before_cursor:
+                continue
+
             ts = obj.get("ts", "")
             if sid not in sid_to_idx:
-                if len(sessions_newest_first) >= n:
-                    break  # have enough sessions; stop reading
+                # New session: only collect if we haven't reached n yet.
+                if new_sessions_collected >= n:
+                    # We have enough distinct sessions.  Continue scanning to
+                    # update already-seen sessions' counts (full-window collect),
+                    # but skip any brand-new sid we encounter.
+                    continue
                 sid_to_idx[sid] = len(sessions_newest_first)
+                new_sessions_collected += 1
                 # (sid, first_ts_placeholder, last_ts, count)
                 # Reading reversed: first line we see is the LAST event
                 sessions_newest_first.append([sid, ts, ts, 1])

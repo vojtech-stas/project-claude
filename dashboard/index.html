@@ -143,8 +143,6 @@
   .file-no-source {
     font-size: 11px; color: var(--muted); font-style: italic; margin-top: 8px;
   }
-  /* Health cards */
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -176,10 +174,6 @@
   .badge-fail { background: var(--fail); color: #fff; }
   .badge-warn { background: var(--warn); color: #fff; }
   .badge-na   { background: var(--border); color: var(--muted); }
-  .detail-row { display: none; }
-  .detail-row td { color: var(--muted); font-size: 10px; padding: 2px 6px 6px 6px; word-break: break-all; }
-  .expandable { cursor: pointer; }
-  .expandable:hover td { background: #1c2128; }
   button.refresh {
     background: none;
     border: 1px solid var(--border);
@@ -191,23 +185,8 @@
     cursor: pointer;
   }
   button.refresh:hover { color: var(--text); border-color: var(--muted); }
-  /* Placeholder */
-  .placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 300px;
-    color: var(--muted);
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    gap: 8px;
-  }
-  .placeholder strong { color: var(--text); }
   /* Component graph */
   #comp-graph { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; }
-  .agent-table { width: 100%; }
-  .agent-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
   .node-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; margin-top: 4px; }
   /* dot-* colors derive from NODE_COLORS (defined in JS) — skill=purple, generator=green */
   .dot-skill { background: var(--purple); }
@@ -216,12 +195,7 @@
   .dot-hook { background: var(--red); }
   .dot-adr { background: var(--cyan); }
   .dot-orchestrator { background: var(--blue); }
-  .dot-bash { background: var(--gray); }
-  .dot-prd { background: var(--amber); }
   .dot-artifact { background: var(--amber); }
-  .node-name { color: var(--text); cursor: pointer; }
-  .node-name:hover { text-decoration: underline; }
-  .node-desc { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
   /* subagent grid */
@@ -513,13 +487,6 @@
     font-size: 10px;
     color: var(--muted);
     padding: 4px 0;
-  }
-  .lane-b-scaffold {
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    padding: 18px 16px;
-    color: var(--muted);
-    font-size: 12px;
   }
   /* Lane B — session feed (slice #682) */
   .lane-b {
@@ -1011,6 +978,14 @@
 </div>
 
 <script>
+// TAB_ACTIVATION_HOOKS: tab name → array of callbacks; switchTab dispatches all on activation.
+// Guards inside each callback (e.g. _liveTabLoaded) ensure idempotency on re-activation.
+const TAB_ACTIVATION_HOOKS = {};
+function registerTabHook(tabName, fn) {
+  if (!TAB_ACTIVATION_HOOKS[tabName]) TAB_ACTIVATION_HOOKS[tabName] = [];
+  TAB_ACTIVATION_HOOKS[tabName].push(fn);
+}
+
 function switchTab(name, btn) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -1018,6 +993,7 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'architecture') loadArchitecture();
   if (name === 'health') loadHealth();
+  (TAB_ACTIVATION_HOOKS[name] || []).forEach(fn => fn());
 }
 
 function badgeHtml(result) {
@@ -1298,6 +1274,7 @@ function renderTopologyGraph(data) {
 
   const options = {
     layout: {
+      improvedLayout: false,
       hierarchical: {
         enabled: true,
         direction: 'LR',
@@ -1305,7 +1282,6 @@ function renderTopologyGraph(data) {
         levelSeparation: 180,
         nodeSpacing: 60,
         treeSpacing: 100,
-        improvedLayout: false,
         blockShifting: false,
         edgeMinimization: false,
         parentCentralization: true,
@@ -2008,16 +1984,8 @@ function startLiveProgress() {
     fetchLiveProgress();
   }, 25000);
 }
-
-// Patch switchTab to start Lane A + Lane B when Live tab is first opened
-const _origSwitchTab = switchTab;
-window.switchTab = function(name, btn) {
-  _origSwitchTab(name, btn);
-  if (name === 'live') {
-    startLiveProgress();
-    startLaneB();
-  }
-};
+// Register Lane A start into the tab registry (#692)
+registerTabHook('live', startLiveProgress);
 
 // ---------------------------------------------------------------------------
 // Lane B — byte-cursor session feed (slice #682)
@@ -2234,6 +2202,8 @@ function startLaneB() {
     pollLaneB();
   }, 4000);
 }
+// Register Lane B start into the tab registry (#692)
+registerTabHook('live', startLaneB);
 
 // ---------------------------------------------------------------------------
 // Trail (PRD-run comparison) bare panel — slice 1 walking skeleton (ADR-0053)

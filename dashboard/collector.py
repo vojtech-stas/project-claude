@@ -563,11 +563,14 @@ def rollup(last_n: int = 10, compare_fn=None, spec=None) -> dict:
           "unreviewed_prs": [{number, merged_at, title}],     # global PR scan
           "run_results":  {N: run_pass},
           "window_size":  N,
+          "runtime_counts": {E-*: {confirmed:N, unobserved:N, not_observable:N,
+                                    not_exercised:N, total:N}},  # runtime-tier rollup
         }
     """
     prd_numbers = get_closed_prd_numbers(last_n)
 
     edge_counts: dict[str, dict] = {}
+    runtime_counts: dict[str, dict] = {}
     all_violations: list[dict] = []
     run_results: dict[int, bool] = {}
 
@@ -576,12 +579,26 @@ def rollup(last_n: int = 10, compare_fn=None, spec=None) -> dict:
         github_edges = [
             e for e in spec.get("edges", []) if e.get("evidence") == "github"
         ]
+        runtime_edges = [
+            e for e in spec.get("edges", []) if e.get("evidence") == "runtime"
+        ]
         for eid in [e["id"] for e in github_edges]:
             edge_counts[eid] = {
                 "confirmed": 0,
                 "total": 0,
                 "required": next(
                     (e["required"] for e in github_edges if e["id"] == eid), "conditional"
+                ),
+            }
+        for eid in [e["id"] for e in runtime_edges]:
+            runtime_counts[eid] = {
+                "confirmed": 0,
+                "unobserved": 0,
+                "not_observable": 0,
+                "not_exercised": 0,
+                "total": 0,
+                "required": next(
+                    (e["required"] for e in runtime_edges if e["id"] == eid), "conditional"
                 ),
             }
 
@@ -604,6 +621,21 @@ def rollup(last_n: int = 10, compare_fn=None, spec=None) -> dict:
                 v2 = dict(v)
                 v2["prd_number"] = prd_num
                 all_violations.append(v2)
+            # Collect per-PRD runtime observation counts
+            rt_obs = report.get("runtime_edges", {})
+            for eid, rtinfo in rt_obs.items():
+                if eid not in runtime_counts:
+                    continue
+                state = rtinfo.get("state", "")
+                runtime_counts[eid]["total"] += 1
+                if state == "runtime-confirmed":
+                    runtime_counts[eid]["confirmed"] += 1
+                elif state == "runtime-unobserved":
+                    runtime_counts[eid]["unobserved"] += 1
+                elif state == "not-observable":
+                    runtime_counts[eid]["not_observable"] += 1
+                elif state == "not-exercised":
+                    runtime_counts[eid]["not_exercised"] += 1
 
     # Global PR scan: detect unreviewed merges not caught by per-PRD comparison
     # (hotfix-lane PRs, PRs closing non-slice issues, etc.)
@@ -669,6 +701,7 @@ def rollup(last_n: int = 10, compare_fn=None, spec=None) -> dict:
         "unreviewed_prs": unreviewed_prs,
         "run_results": {str(k): v for k, v in run_results.items()},
         "window_size": last_n,
+        "runtime_counts": runtime_counts,
     }
 
 

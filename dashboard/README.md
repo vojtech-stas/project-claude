@@ -53,4 +53,4 @@ Solo developer (you). Observation tool; advisory only. Does not replace `/audit-
 
 ## Fixtures
 
-`dashboard/fixtures/` contains sample payloads used by `tools/ci-checks.sh` CHECK 8 to mechanically validate Agent-hook jq paths. Regenerate from a real `PostToolUse·Agent` payload if Claude Code's hook schema changes.
+`dashboard/fixtures/` contains sample payloads used by `tools/ci-checks.sh` CHECK 8 to mechanically validate the Agent-hook payload schema. CHECK 8 uses a python3 parser (not jq): it loads the fixture via `json.load()` and asserts that `tool_input.subagent_type` resolves to a non-empty value — proving the python3 path handles the canonical `PostToolUse·Agent` payload correctly. Regenerate `dashboard/fixtures/agent-payload-sample.json` from a real `PostToolUse·Agent` payload if Claude Code's hook schema changes.

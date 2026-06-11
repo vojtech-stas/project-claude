@@ -545,9 +545,11 @@
     cursor: default;
     margin-left: auto;
   }
-  .collector-pill.ok   { border-color: var(--blue); color: var(--blue); }
-  .collector-pill.warn { border-color: var(--amber); color: var(--amber); }
-  .collector-pill.dead { border-color: var(--red); color: var(--red); }
+  .collector-pill.ok    { border-color: var(--blue); color: var(--blue); }
+  .collector-pill.warn  { border-color: var(--amber); color: var(--amber); }
+  .collector-pill.dead  { border-color: var(--red); color: var(--red); }
+  .collector-pill.error { border-color: var(--red); color: var(--red); }
+  .collector-pill.empty { border-color: var(--border); color: var(--muted); }
   .lane-b-events {
     max-height: 360px;
     overflow-y: auto;
@@ -2136,7 +2138,7 @@ registerTabHook('live', startLiveProgress);
 // wt field rendered as a small lane badge per row.
 // Collector pill sourced from /api/live-progress collector_status field.
 
-let _lbCursor = 0;
+let _lbCursor = null;  // opaque cursor string "<mtime_int>:<byte_offset>"; null = start
 let _lbSessions = {};      // sid -> {events: [], first_ts, last_ts}
 let _lbSessionOrder = [];  // sids newest-first
 let _lbSelectedSid = null;
@@ -2371,6 +2373,10 @@ function updateLbCollectorPill(liveProgressData) {
   const state = (cs.state || '').toLowerCase();
   if (state === 'ok' || state === 'live') {
     pill.className = 'collector-pill ok';
+  } else if (state === 'error') {
+    pill.className = 'collector-pill error';
+  } else if (state === 'empty') {
+    pill.className = 'collector-pill empty';
   } else if (state === 'auth_dead') {
     pill.className = 'collector-pill dead';
   } else if (state === 'offline') {
@@ -2383,19 +2389,22 @@ function updateLbCollectorPill(liveProgressData) {
 async function pollLaneB() {
   const statusEl = document.getElementById('lb-status-bar');
   try {
-    const resp = await fetch('/api/live-poll?cursor=' + _lbCursor);
+    // _lbCursor is an opaque string "<mtime_int>:<byte_offset>" or null (first poll)
+    const cursorParam = _lbCursor !== null ? encodeURIComponent(_lbCursor) : '0';
+    const resp = await fetch('/api/live-poll?cursor=' + cursorParam);
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
 
     if (data.reset) {
-      // File was truncated/rotated — reset full session state
-      _lbCursor = 0;
+      // File was truncated/rotated or identity changed — reset full session state
+      _lbCursor = null;
       _lbSessions = {};
       _lbSessionOrder = [];
       _lbSelectedSid = null;
     }
 
-    _lbCursor = data.cursor || 0;
+    // Cursor is now an opaque string from the server
+    _lbCursor = data.cursor || null;
 
     let newEvents = 0;
     (data.events || []).forEach(function(ev) {

@@ -13,7 +13,7 @@ That premise has been retired. Capture v2 (PRD #668) ships a beaconed, quarantin
 
 The user's directive: measure all the edges until declared and measured match.
 
-## Decision
+## Decisions
 
 ### D1: Runtime-tier edges get runtime evaluators producing second-class states
 

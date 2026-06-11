@@ -1,43 +1,55 @@
 #!/bin/bash
-# worktree-guard.sh — post-dispatch worktree leak-guard + root ff-sync (ADR-0041 D1/D3).
+# worktree-guard.sh — post-dispatch worktree leak-guard + root ff-sync (ADR-0058 D3).
 #
 # CONTRACT: Orchestrator-invoked via Bash after each isolated Agent dispatch.
 #   NOT a Claude Code event hook (per ADR-0015). Three modes (mode as $1):
 #
 #   branch-restore <expected-branch>
 #     git fetch origin main (soft-degrade on failure); if the current worktree
-#     drifted off <expected-branch> AND the tree is clean, ff-restores via
-#     `git checkout -B <expected> origin/main`. No-op if dirty or already correct.
-#     Enforces the ADR-0036 D3 invariant ("dispatched subagents never mutate the
-#     orchestrator's session worktree") by asserting + restoring after each dispatch.
+#     drifted off <expected-branch> AND the tree is clean, attempts ff-restore via
+#     `git checkout -B <expected> origin/main`.
+#     FF-ONLY (ADR-0058 D3): if the current HEAD is NOT an ancestor of origin/main
+#     (local commits exist), exits NON-ZERO with a divergence message — does NOT
+#     force-reset. The silent reset --hard behaviour is RETIRED.
+#     No-op (exit 0) if tree is dirty or already on the correct branch.
+#     Exits NON-ZERO if an unrepaired violation (diverged branch) remains.
 #
 #   root-sync
 #     Resolves the root repo via `git --git-common-dir` → dirname (same pattern as
 #     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to origin/main:
 #     `git -C <root> checkout main && git -C <root> merge --ff-only origin/main`.
-#     STRICT: ff-only, clean-only, soft-degrade on any error. Never reset/force/non-ff.
+#     STRICT: ff-only, clean-only, non-zero on failure. Never reset/force/non-ff.
 #     Implements ADR-0041 D3 carve-out: orchestrator MAY ff-sync root post-merge.
+#     Exits NON-ZERO if an unrepaired violation (cannot ff-sync) remains.
 #
 #   prune
-#     Removes landed dispatch worktrees to prevent unbounded accumulation.
+#     Removes landed and no-PR-reclaimable dispatch worktrees to prevent unbounded
+#     accumulation.
 #     SAFETY: only removes worktrees whose path basename starts with "agent-"
 #     (the harness dispatch-tree prefix per ADR-0036). This is the PRIMARY safety
 #     boundary — it makes it IMPOSSIBLE to remove the root repo, an orchestrator
 #     session tree (e.g. fervent-colden-*), or any other non-dispatch tree.
-#     SECONDARY guard: branch must be LANDED — defined as having a MERGED PR AND
-#     no OPEN PR (via gh pr list --state merged/open). Correctly handles
-#     squash-merged branches whose remote ref persists (the old ls-remote check
-#     missed these). Requires gh; soft-degrades to no-op if gh is absent.
+#     SECONDARY guard (landed path): branch must be LANDED — defined as having a
+#     MERGED PR AND no OPEN PR (via gh pr list --state merged/open). Correctly
+#     handles squash-merged branches whose remote ref persists.
+#     NO-PR RECLAMATION (ADR-0058 D3): a dispatch worktree with NO PR of any kind
+#     (no open, no merged) is reclaimed when ALL THREE conditions hold:
+#       1. Working tree is clean (no uncommitted changes, no untracked files)
+#       2. Branch is 0-ahead of origin/main (no local commits beyond main)
+#       3. Age threshold: worktree directory mtime > 24 hours ago
+#     This prevents accumulation of agent worktrees abandoned before opening a PR.
+#     The age threshold avoids racing a dispatch in progress.
+#     Requires gh; soft-degrades if gh is absent.
 #     LOCK HANDLING: locked worktrees only force-removed when locking pid is dead;
 #     alive pid or unparseable reason → skip (soft-degrade).
-#     BRANCH CLEANUP: after removing a landed worktree, deletes the local branch
-#     and the lingering remote branch if it still exists on origin.
+#     BRANCH CLEANUP: after removing a worktree, deletes the local branch and the
+#     lingering remote branch if it still exists on origin.
 #     DEPTH guards: skip the current worktree; skip the root worktree.
-#     All four conditions: agent-* path AND landed AND not-current AND not-root.
-#     SOFT-DEGRADE: skips individual trees on any error; never aborts the whole run.
+#     Exits NON-ZERO if any unremovable violation remains after the sweep.
 #
-# SOFT-DEGRADE: every failure path exits 0. A broken guard must never break /ship.
-# Mirror the bare-|| true / 2>/dev/null soft-degrade idioms from log-event.sh.
+# VIOLATION SEMANTICS (ADR-0058 D3): subcommands exit NON-ZERO on unrepaired
+# violations. The old "exit 0 always" soft-degrade contract for branch-restore
+# and prune violations is RETIRED — the orchestrator must detect guard failures.
 
 MODE="$1"
 
@@ -58,10 +70,25 @@ case "$MODE" in
     # Only restore when the tree is clean (no uncommitted orchestrator work).
     DIRTY=$(git status --porcelain --untracked-files=no 2>/dev/null)
     if [ -n "$DIRTY" ]; then
+      # Dirty tree — cannot safely restore; not a guard violation.
       exit 0
     fi
 
-    git checkout -B "$EXPECTED" origin/main 2>/dev/null || true
+    # FF-ONLY CHECK (ADR-0058 D3): refuse non-ff restore.
+    # Check if current HEAD is an ancestor of origin/main.
+    # If not, local commits exist that would be lost by a force-reset.
+    if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+      DIVERGED_SHA=$(git rev-parse --short HEAD 2>/dev/null)
+      ORIGIN_SHA=$(git rev-parse --short origin/main 2>/dev/null)
+      echo "ERROR: branch-restore: HEAD ${DIVERGED_SHA} is not an ancestor of origin/main ${ORIGIN_SHA} — branch '${CURRENT}' has diverged (expected '${EXPECTED}'). Silent force-reset RETIRED per ADR-0058 D3. Manual intervention required." >&2
+      exit 1
+    fi
+
+    # Safe to ff-restore: HEAD is an ancestor of origin/main.
+    git checkout -B "$EXPECTED" origin/main 2>/dev/null || {
+      echo "ERROR: branch-restore: git checkout -B '$EXPECTED' origin/main failed" >&2
+      exit 1
+    }
     exit 0
     ;;
 
@@ -79,12 +106,22 @@ case "$MODE" in
     # Only ff-sync when the root tree is clean.
     DIRTY=$(git -C "$MAIN" status --porcelain --untracked-files=no 2>/dev/null)
     if [ -n "$DIRTY" ]; then
-      exit 0
+      echo "WARNING: root-sync: root tree is dirty; skipping ff-sync" >&2
+      exit 1
     fi
 
-    git -C "$MAIN" fetch origin main 2>/dev/null || true
-    git -C "$MAIN" checkout main 2>/dev/null || true
-    git -C "$MAIN" merge --ff-only origin/main 2>/dev/null || true
+    git -C "$MAIN" fetch origin main 2>/dev/null || {
+      echo "WARNING: root-sync: fetch failed; skipping ff-sync" >&2
+      exit 0
+    }
+    git -C "$MAIN" checkout main 2>/dev/null || {
+      echo "ERROR: root-sync: checkout main failed" >&2
+      exit 1
+    }
+    git -C "$MAIN" merge --ff-only origin/main 2>/dev/null || {
+      echo "ERROR: root-sync: merge --ff-only failed; root repo has diverged from origin/main" >&2
+      exit 1
+    }
     exit 0
     ;;
 
@@ -123,6 +160,76 @@ case "$MODE" in
       return 0
     }
 
+    # is_branch_no_pr <branch>
+    #   Returns 0 (true) iff branch has NO PR at all (no open, no merged).
+    #   Requires gh; returns 1 on any error or gh absence.
+    is_branch_no_pr() {
+      local br="$1"
+      if ! command -v gh >/dev/null 2>&1; then
+        return 1
+      fi
+      local open_count merged_count
+      open_count=$(gh pr list --head "$br" --state open --json number -q 'length' 2>/dev/null) || return 1
+      merged_count=$(gh pr list --head "$br" --state merged --json number -q 'length' 2>/dev/null) || return 1
+      if [ -z "$open_count" ] || [ -z "$merged_count" ]; then
+        return 1
+      fi
+      if [ "$open_count" -eq 0 ] 2>/dev/null && [ "$merged_count" -eq 0 ] 2>/dev/null; then
+        return 0
+      fi
+      return 1
+    }
+
+    # is_worktree_clean <path>
+    #   Returns 0 (true) iff tree has no uncommitted changes AND no untracked files
+    #   (covers the #746/#673 untracked-file leak shape per ADR-0058 D3).
+    is_worktree_clean() {
+      local wt="$1"
+      local dirty
+      dirty=$(git -C "$wt" status --porcelain --untracked-files=no 2>/dev/null)
+      if [ -n "$dirty" ]; then
+        return 1
+      fi
+      local untracked
+      untracked=$(git -C "$wt" status --short --untracked-files=normal 2>/dev/null | grep -c '^??' 2>/dev/null || echo 0)
+      if [ "$untracked" -gt 0 ] 2>/dev/null; then
+        return 1
+      fi
+      return 0
+    }
+
+    # is_branch_zero_ahead <path>
+    #   Returns 0 (true) iff branch at <path> has 0 commits ahead of origin/main.
+    is_branch_zero_ahead() {
+      local wt="$1"
+      local ahead
+      ahead=$(git -C "$wt" rev-list --count "origin/main..HEAD" 2>/dev/null) || return 1
+      if [ -z "$ahead" ]; then
+        return 1
+      fi
+      if [ "$ahead" -eq 0 ] 2>/dev/null; then
+        return 0
+      fi
+      return 1
+    }
+
+    # is_worktree_aged <path>
+    #   Returns 0 (true) iff worktree directory mtime > 24 hours ago.
+    #   Uses python3 for portable mtime check (no GNU stat -c required).
+    is_worktree_aged() {
+      local wt="$1"
+      python3 - "$wt" <<'PY' 2>/dev/null
+import sys, os, time
+wt = sys.argv[1]
+try:
+    mtime = os.path.getmtime(wt)
+    age_hours = (time.time() - mtime) / 3600
+    sys.exit(0 if age_hours > 24 else 1)
+except Exception:
+    sys.exit(1)
+PY
+    }
+
     # Resolve the current worktree path (to implement skip-current guard).
     CURRENT_TREE=$(git rev-parse --show-toplevel 2>/dev/null) || CURRENT_TREE=""
 
@@ -138,11 +245,14 @@ case "$MODE" in
     # Fetch origin so remote state is current for branch-cleanup checks.
     git fetch origin 2>/dev/null || true
 
-    # Soft-degrade if gh is absent — merged-PR detection requires it.
+    # Soft-degrade if gh is absent — merged-PR and no-PR detection both require it.
     if ! command -v gh >/dev/null 2>&1; then
       git worktree prune 2>/dev/null || true
       exit 0
     fi
+
+    # Track violations: worktrees that should be removed but could not be.
+    VIOLATIONS=0
 
     # Iterate worktrees via porcelain output, parsing worktree + branch lines.
     WORKTREE_PATH=""
@@ -202,7 +312,7 @@ case "$MODE" in
               continue
             fi
 
-            # When uncertain (no branch / detached HEAD), leave it.
+            # When no branch (detached HEAD), leave it.
             if [ -z "$WORKTREE_BRANCH" ]; then
               WORKTREE_PATH=""
               WORKTREE_LOCKED=""
@@ -210,15 +320,30 @@ case "$MODE" in
               continue
             fi
 
-            # SECONDARY GUARD: branch must be landed (merged PR + no open PR).
-            # Replaces the old "branch gone from origin" ls-remote check, which
-            # missed squash-merged worktrees whose remote branch persists because
-            # it is checked out in a sibling worktree (--delete-branch skip).
-            # All guards passed: agent-* AND landed AND not-current AND not-root.
+            # Determine removal eligibility via two paths:
+            # PATH A: landed (merged PR + no open PR).
+            # PATH B: no-PR reclamation — clean + 0-ahead + aged (ADR-0058 D3).
+            SHOULD_REMOVE=0
+
             if is_branch_landed "$WORKTREE_BRANCH"; then
+              SHOULD_REMOVE=1
+            fi
+
+            if [ "$SHOULD_REMOVE" -eq 0 ]; then
+              if is_branch_no_pr "$WORKTREE_BRANCH"; then
+                if is_worktree_clean "$WORKTREE_PATH" && \
+                   is_branch_zero_ahead "$WORKTREE_PATH" && \
+                   is_worktree_aged "$WORKTREE_PATH"; then
+                  SHOULD_REMOVE=1
+                fi
+              fi
+            fi
+
+            if [ "$SHOULD_REMOVE" -eq 1 ]; then
               # LOCK HANDLING: if worktree is locked, check if the locking pid is alive.
               # Only override the lock if the pid is confirmed dead; skip (soft-degrade)
               # if the pid is alive or cannot be parsed.
+              REMOVED=0
               if [ -n "$WORKTREE_LOCKED" ]; then
                 # Try to parse a numeric pid from the lock reason (e.g. "locked by pid 12345").
                 LOCK_PID=$(printf '%s' "$WORKTREE_LOCK_REASON" | grep -oE '[0-9]+' | head -1)
@@ -232,7 +357,9 @@ case "$MODE" in
                     continue
                   fi
                   # Pid is dead → stale lock; safe to force-remove.
-                  git worktree remove -f -f "$WORKTREE_PATH" 2>/dev/null || true
+                  if git worktree remove -f -f "$WORKTREE_PATH" 2>/dev/null; then
+                    REMOVED=1
+                  fi
                 else
                   # Cannot parse a pid → soft-degrade: skip this worktree.
                   WORKTREE_PATH=""
@@ -242,16 +369,23 @@ case "$MODE" in
                   continue
                 fi
               else
-                # Not locked — standard force-remove (unlock is a no-op but harmless).
-                git worktree remove --force "$WORKTREE_PATH" 2>/dev/null || true
+                # Not locked — standard force-remove.
+                if git worktree remove --force "$WORKTREE_PATH" 2>/dev/null; then
+                  REMOVED=1
+                fi
               fi
 
-              # BRANCH CLEANUP: delete local branch + lingering remote branch.
-              # git branch -D: ignore error if branch is checked out elsewhere.
-              git branch -D "$WORKTREE_BRANCH" 2>/dev/null || true
-              # Only push --delete if the remote ref still exists.
-              if git ls-remote --exit-code origin "$WORKTREE_BRANCH" >/dev/null 2>&1; then
-                git push origin --delete "$WORKTREE_BRANCH" 2>/dev/null || true
+              if [ "$REMOVED" -eq 1 ]; then
+                # BRANCH CLEANUP: delete local branch + lingering remote branch.
+                # git branch -D: ignore error if branch is checked out elsewhere.
+                git branch -D "$WORKTREE_BRANCH" 2>/dev/null || true
+                # Only push --delete if the remote ref still exists.
+                if git ls-remote --exit-code origin "$WORKTREE_BRANCH" >/dev/null 2>&1; then
+                  git push origin --delete "$WORKTREE_BRANCH" 2>/dev/null || true
+                fi
+              else
+                echo "WARNING: prune: could not remove worktree '$WORKTREE_PATH'" >&2
+                VIOLATIONS=$((VIOLATIONS + 1))
               fi
             fi
           fi
@@ -265,11 +399,17 @@ case "$MODE" in
 
     # Clear stale dir-gone worktree refs.
     git worktree prune 2>/dev/null || true
+
+    if [ "$VIOLATIONS" -gt 0 ]; then
+      echo "ERROR: prune: $VIOLATIONS worktree(s) could not be removed" >&2
+      exit 1
+    fi
     exit 0
     ;;
 
   *)
-    # Unknown mode — soft-degrade.
-    exit 0
+    # Unknown mode — exit non-zero per ADR-0058 D3 (guards never fail silently).
+    echo "ERROR: worktree-guard: unknown mode '$MODE'; valid: branch-restore, root-sync, prune" >&2
+    exit 1
     ;;
 esac

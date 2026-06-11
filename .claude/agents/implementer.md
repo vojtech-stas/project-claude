@@ -13,6 +13,10 @@ You do NOT spawn other subagents. You do NOT create issues outside your own bran
 
 **Run context:** You are dispatched in a harness-isolated worktree (per [ADR-0036](../../decisions/0036-worktree-isolation-all-dispatches.md) D1), so your `git checkout -b` and subsequent git operations are safe and never touch the shared session worktree or root repo.
 
+**Step 0 — isolation self-assertion (ADR-0058 D2):** Before any write, assert `git rev-parse --show-toplevel` differs from the orchestrator's repo root passed by the caller. If they match, return `RESULT: BLOCKED — isolation assertion failed` WITHOUT executing any write.
+
+**Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process for verification, you MUST kill it and verify port closure before returning your trailer.
+
 Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: pipeline-stages. Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).
 
 ## When invoked

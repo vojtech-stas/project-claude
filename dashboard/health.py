@@ -15,6 +15,9 @@ Exports:
     audit_subagents() -> dict
     audit_meta() -> dict
     cascade_finder_summary() -> dict
+    check_capture_slo() -> dict          (slice #767: capture liveness SLO)
+    check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
+    check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -557,6 +560,243 @@ def cascade_finder_summary() -> dict:
         return {"available": False, "detail": str(e)}
 
 
+# ---------------------------------------------------------------------------
+# Substrate health checks (slice #767)
+# ---------------------------------------------------------------------------
+
+# Boundary-only event types that do NOT count as "live" capture (PRD #763 §2 cr.7)
+_BOUNDARY_EVENTS = frozenset({"session_start", "session_stop"})
+
+# Window size for capture SLO: last N sessions with any event in workflow-events.jsonl
+_CAPTURE_SLO_WINDOW = 20
+
+# ADR-0042: bootstrap cutoff for merged_without_ci — PRs merged before this PR are
+# grandfathered (CI gate did not exist yet).  PR #711 was the first one under ADR-0042.
+_CI_GATE_BOOTSTRAP_PR = 711
+
+
+def check_capture_slo() -> dict:
+    """CAPTURE-SLO: sessions with ≥1 non-boundary event / total, last N sessions.
+
+    Reads workflow-events.jsonl (read-only).  Red when fewer than 50% of sessions
+    in the last _CAPTURE_SLO_WINDOW have a non-boundary event (i.e. hooks are mostly dead).
+
+    Returns per-session liveness detail.
+    """
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {
+            "id": "CAPTURE-SLO",
+            "result": "WARN",
+            "detail": "workflow-events.jsonl not found",
+        }
+
+    try:
+        import json as _json
+        sessions: dict[str, set] = {}  # session_id → set of non-boundary event types
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                sid = obj.get("session_id", "")
+                ev = obj.get("event", "")
+                if not sid:
+                    continue
+                if sid not in sessions:
+                    sessions[sid] = set()
+                if ev and ev not in _BOUNDARY_EVENTS:
+                    sessions[sid].add(ev)
+    except Exception as exc:
+        return {"id": "CAPTURE-SLO", "result": "WARN",
+                "detail": f"read error: {exc}"}
+
+    if not sessions:
+        return {"id": "CAPTURE-SLO", "result": "WARN",
+                "detail": "no sessions found in workflow-events.jsonl"}
+
+    # Take the last N sessions (by insertion order in dict — Python 3.7+)
+    window = list(sessions.items())[-_CAPTURE_SLO_WINDOW:]
+    total = len(window)
+    live_count = sum(1 for _sid, evs in window if evs)
+    boundary_only = total - live_count
+    ratio = live_count / total if total > 0 else 0.0
+
+    # Per-session liveness summary (most recent first, capped at 10 for detail string)
+    per_session_notes = []
+    for sid, evs in reversed(window[-10:]):
+        tag = "live" if evs else "boundary-only"
+        per_session_notes.append(f"{sid[:8]}:{tag}")
+
+    detail = (
+        f"{live_count}/{total} live in last {_CAPTURE_SLO_WINDOW}-session window "
+        f"(SLO {ratio*100:.0f}%) | "
+        + ", ".join(per_session_notes)
+    )
+
+    # Red when <50% live
+    result = "PASS" if ratio >= 0.50 else "FAIL"
+    return {"id": "CAPTURE-SLO", "result": result, "detail": detail}
+
+
+def check_hook_integrity() -> dict:
+    """HOOK-INTEGRITY: attempt-vs-ok beacon ratio per hook + ERROR beacon count.
+
+    Reads hook-fires.jsonl (read-only).  Red when any hook's ok rate < attempt rate
+    (i.e. some attempts never produced an ok) or when ERROR beacons are present.
+    """
+    fires_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    if not fires_log.exists():
+        return {
+            "id": "HOOK-INTEGRITY",
+            "result": "WARN",
+            "detail": "hook-fires.jsonl not found",
+        }
+
+    try:
+        import json as _json
+        attempts: dict[str, int] = {}
+        oks: dict[str, int] = {}
+        error_count = 0
+        with fires_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                hook = obj.get("hook", "")
+                status = obj.get("status", "")
+                if not hook:
+                    continue
+                if status == "attempt":
+                    attempts[hook] = attempts.get(hook, 0) + 1
+                elif status == "ok":
+                    oks[hook] = oks.get(hook, 0) + 1
+                elif status == "ERROR" or status == "error":
+                    error_count += 1
+    except Exception as exc:
+        return {"id": "HOOK-INTEGRITY", "result": "WARN",
+                "detail": f"read error: {exc}"}
+
+    # Compute per-hook ratios (only hooks that have attempt beacons)
+    drift_hooks = []
+    ratio_parts = []
+    for hook, att in sorted(attempts.items()):
+        ok = oks.get(hook, 0)
+        ratio_parts.append(f"{hook}:{ok}/{att}")
+        if ok < att:
+            drift_hooks.append(f"{hook}({ok}/{att})")
+
+    detail_parts = []
+    if ratio_parts:
+        detail_parts.append("ratios: " + ", ".join(ratio_parts))
+    if error_count:
+        detail_parts.append(f"ERROR beacons: {error_count}")
+    if drift_hooks:
+        detail_parts.append(f"drift: {', '.join(drift_hooks)}")
+
+    detail = " | ".join(detail_parts) if detail_parts else "no attempt beacons found"
+    result = "FAIL" if (drift_hooks or error_count > 0) else "PASS"
+    return {"id": "HOOK-INTEGRITY", "result": result, "detail": detail}
+
+
+def check_isolation_group() -> dict:
+    """ISOLATION-GROUP: orphaned worktree dirs, prune drift, escaped dispatches.
+
+    Checks:
+    1. Dirs under .claude/worktrees/ that are NOT registered in `git worktree list`
+       (orphaned — agent-* dirs left behind after the worktree was removed).
+    2. Worktrees that are 0-ahead + clean relative to origin/main (prune drift —
+       they could be pruned).
+
+    Read-only: never removes anything; only reports.
+    """
+    worktrees_dir = _HEALTH_REPO_ROOT / ".claude" / "worktrees"
+    if not worktrees_dir.exists():
+        return {
+            "id": "ISOLATION-GROUP",
+            "result": "PASS",
+            "detail": ".claude/worktrees/ does not exist (no dispatches yet)",
+        }
+
+    # Get registered worktrees from git
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        registered_paths: set[str] = set()
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.startswith("worktree "):
+                    wt_path = line[len("worktree "):].strip()
+                    registered_paths.add(wt_path.lower())
+    except Exception as exc:
+        return {"id": "ISOLATION-GROUP", "result": "WARN",
+                "detail": f"git worktree list failed: {exc}"}
+
+    # Scan dirs under .claude/worktrees/
+    orphaned = []
+    prune_drift = []
+    try:
+        dirs = sorted(d for d in worktrees_dir.iterdir() if d.is_dir())
+    except Exception as exc:
+        return {"id": "ISOLATION-GROUP", "result": "WARN",
+                "detail": f"scan failed: {exc}"}
+
+    for d in dirs:
+        path_lower = str(d).lower()
+        registered = any(
+            path_lower == rp or path_lower.rstrip("/\\") == rp.rstrip("/\\")
+            for rp in registered_paths
+        )
+        if not registered:
+            orphaned.append(d.name)
+            continue
+
+        # Check prune-drift: 0-ahead and clean
+        try:
+            ahead = subprocess.run(
+                ["git", "rev-list", "--count", "origin/main..HEAD"],
+                capture_output=True, text=True, timeout=8, cwd=str(d),
+            )
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True, timeout=8, cwd=str(d),
+            )
+            if (ahead.returncode == 0 and ahead.stdout.strip() == "0"
+                    and status.returncode == 0 and not status.stdout.strip()):
+                prune_drift.append(d.name)
+        except Exception:
+            pass  # skip drift check for this worktree; not an error
+
+    parts = []
+    if orphaned:
+        parts.append(f"orphaned: {', '.join(orphaned[:5])}")
+    if prune_drift:
+        parts.append(f"prune-drift: {', '.join(prune_drift[:5])}")
+
+    # Escaped-dispatch note (informational only; not computable from logs alone)
+    total_dirs = len(dirs)
+    parts.append(f"dirs: {total_dirs}, registered: {len(registered_paths)}")
+
+    result = "FAIL" if orphaned else "WARN" if prune_drift else "PASS"
+    detail = " | ".join(parts) if parts else f"dirs: {total_dirs}"
+    return {"id": "ISOLATION-GROUP", "result": result, "detail": detail}
+
+
 def _build_health_data() -> dict:
     """Build the full /api/health payload synchronously.
 
@@ -566,6 +806,13 @@ def _build_health_data() -> dict:
         "auditMeta": audit_meta(),
         "auditSubagents": audit_subagents(),
         "cascadeFinder": cascade_finder_summary(),
+        "substrateMeta": {
+            "checks": [
+                check_capture_slo(),
+                check_hook_integrity(),
+                check_isolation_group(),
+            ]
+        },
     }
 
 
@@ -584,6 +831,7 @@ def _health_background() -> None:
                 "auditMeta": {"checks": []},
                 "auditSubagents": {},
                 "cascadeFinder": {"available": False, "detail": f"error: {e}"},
+                "substrateMeta": {"checks": []},
             }
             _health_cache["ts"] = time.time()
     finally:

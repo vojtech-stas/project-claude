@@ -295,11 +295,17 @@ def _gh_graphql(query: str, variables: dict, timeout: int = 30) -> tuple[dict | 
 
 
 def _gh_pr_view(pr_number: int, timeout: int = 20) -> tuple[dict | None, str]:
-    """Fetch PR details via gh pr view. Returns (pr_dict, error_class)."""
+    """Fetch PR details via gh pr view. Returns (pr_dict, error_class).
+
+    Fetches statusCheckRollup for merged_without_ci detection (slice #767).
+    Older PRs that predate the gh API field may return an empty list — that is
+    handled gracefully in _build_pr_trail (bootstrap-mode grandfathering).
+    """
     args = [
         "pr", "view", str(pr_number),
         "--json",
-        "number,createdAt,mergedAt,headRefName,body,comments,closingIssuesReferences",
+        "number,createdAt,mergedAt,headRefName,body,comments,"
+        "closingIssuesReferences,statusCheckRollup",
     ]
     stdout, err = _run_gh(args, timeout=timeout)
     if stdout is None:
@@ -392,6 +398,10 @@ def _build_pr_trail(pr_number: int) -> tuple[dict | None, str]:
         and merged_at is not None
     )
 
+    # statusCheckRollup — list of check-run objects; absent on old PRs → graceful default [].
+    # Shape: [{"__typename":"CheckRun","name":str,"conclusion":str|None,"status":str,...}]
+    status_check_rollup = pr_data.get("statusCheckRollup") or []
+
     return {
         "number": pr_number,
         "created_at": pr_data.get("createdAt", ""),
@@ -404,6 +414,7 @@ def _build_pr_trail(pr_number: int) -> tuple[dict | None, str]:
         "reviewed_before_merge": reviewed_before_merge,
         "is_trivial": is_trivial,
         "body_excerpt": body[:200],
+        "status_check_rollup": status_check_rollup,
     }, ""
 
 

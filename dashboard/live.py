@@ -31,7 +31,7 @@ _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in _sys.path:
     _sys.path.insert(0, _DASHBOARD_DIR_STR)
 
-from collector import get_trail  # noqa: E402
+from collector import get_trail, _repo_slug  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Live-progress cache — resolves the most recent open PRD + reads its trail.
@@ -320,9 +320,16 @@ def _build_live_progress() -> dict:
     """Fetch the most recent open PRD trail and shape the live-progress payload.
 
     Called from the background thread; never from an HTTP handler.
+    The ``repo_url`` field is derived from ``_repo_slug()`` (single source of
+    truth shared with the GraphQL query) so that the UI can build PR links
+    without hardcoding the upstream repository URL.
     """
     pill = _capture_pill_state()
     prd_result = _resolve_open_prd()
+
+    # Derive repo_url once — used in every return path so the UI always has it.
+    slug = _repo_slug()
+    repo_url = f"https://github.com/{slug}" if slug else ""
 
     if prd_result["state"] == "error":
         return {
@@ -334,6 +341,7 @@ def _build_live_progress() -> dict:
                 "label": prd_result["label"],
             },
             "capture_pill": pill,
+            "repo_url": repo_url,
         }
 
     if prd_result["state"] == "empty":
@@ -343,6 +351,7 @@ def _build_live_progress() -> dict:
             "slices": [],
             "collector_status": {"state": "empty", "label": "No open PRD"},
             "capture_pill": pill,
+            "repo_url": repo_url,
         }
 
     prd_number = prd_result["number"]
@@ -400,6 +409,7 @@ def _build_live_progress() -> dict:
         "slices": slices_out,
         "collector_status": collector_status,
         "capture_pill": pill,
+        "repo_url": repo_url,
     }
 
 

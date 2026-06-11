@@ -52,11 +52,14 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
 
     Adds to report (never modifying run_pass/violations/unexpected per ADR-0055 D2):
       - runtime_edges: {edge_id: {state, detail, evidence, required, ...}}
-      - runtime_coverage: {confirmed, unobserved, not_observable, not_exercised}
+      - runtime_coverage: {confirmed, unobserved, not_observable, not_exercised,
+                           unmeasurable}
       - capture_liveness: bool
+      - coverage_strip: {github, runtime, unmeasurable, total, per_state_counts}
+                        Summary for the ADR-0055 D5 coverage strip display.
 
-    Existing 'edges' entries for runtime-tier edges are updated from
-    'not-evaluated' to their observed state.
+    Existing 'edges' entries for runtime-tier and unmeasurable-tier edges are
+    updated from 'not-evaluated' to their observed/unmeasurable state.
     """
     import sys
     from pathlib import Path as _Path
@@ -75,6 +78,7 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
             "runtime_coverage": {
                 "confirmed": 0, "unobserved": 0,
                 "not_observable": 0, "not_exercised": 0,
+                "unmeasurable": 0,
             },
             "capture_liveness": False,
             "_observer_error": str(exc),
@@ -85,7 +89,7 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
     report["runtime_coverage"] = obs["runtime_coverage"]
     report["capture_liveness"] = obs.get("capture_liveness", False)
 
-    # Update the main edges dict: replace not-evaluated entries for covered runtime edges
+    # Update the main edges dict: replace not-evaluated entries for runtime/unmeasurable edges
     for eid, rt_entry in obs["runtime_edges"].items():
         if eid in report["edges"]:
             # Preserve evidence/required from SPEC; update state + detail
@@ -93,6 +97,36 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
             report["edges"][eid]["detail"] = rt_entry["detail"]
             if "event_evidence" in rt_entry:
                 report["edges"][eid]["event_evidence"] = rt_entry["event_evidence"]
+
+    # Build coverage strip (ADR-0055 D5):
+    # 45 declared = 17 github + 26 runtime + 2 unmeasurable
+    # Per-state counts over ALL edges (github + runtime + unmeasurable)
+    all_edges = report.get("edges", {})
+    per_state: dict[str, int] = {}
+    for einfo in all_edges.values():
+        st = einfo.get("state", "not-evaluated")
+        per_state[st] = per_state.get(st, 0) + 1
+
+    github_count = sum(
+        1 for einfo in all_edges.values() if einfo.get("evidence") == "github"
+    )
+    runtime_count = sum(
+        1 for einfo in all_edges.values() if einfo.get("evidence") == "runtime"
+    )
+    unmeasurable_count = sum(
+        1 for einfo in all_edges.values() if einfo.get("evidence") == "unmeasurable"
+    )
+    not_evaluated_count = per_state.get("not-evaluated", 0)
+
+    report["coverage_strip"] = {
+        "total_declared": len(all_edges),
+        "github": github_count,
+        "runtime": runtime_count,
+        "unmeasurable_by_design": unmeasurable_count,
+        "not_evaluated": not_evaluated_count,
+        "per_state_counts": per_state,
+        "zero_not_evaluated": not_evaluated_count == 0,
+    }
 
     return report
 
@@ -559,12 +593,15 @@ def compare(spec: dict, trail: dict) -> dict:
 
     Edge states:
       confirmed / missing / not-reached / not-exercised / not-evaluated / unexpected
+      runtime-confirmed / runtime-unobserved / not-observable / unmeasurable
 
-    State "not-evaluated" is reserved for:
-      - runtime-tier edges (live enrichment only; never compared)
-      - unmeasurable-tier edges (in-conversation; never compared)
+    State "not-evaluated" is the initial placeholder for runtime/unmeasurable edges.
+    After _apply_runtime_observation(), all runtime-tier edges get runtime states and
+    all unmeasurable-tier edges get state="unmeasurable" — no edge stays "not-evaluated".
+    "not-evaluated" in the final report is a bug (zero-closure invariant, ADR-0055 D5).
 
     Run PASS := every required:always github-tier edge is "confirmed" AND zero violations.
+    Runtime states never affect run_pass (ADR-0055 D2).
     """
     edges_result: dict[str, dict] = {}
     spec_edges = spec.get("edges", [])

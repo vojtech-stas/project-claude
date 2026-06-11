@@ -2464,11 +2464,12 @@ const _EDGE_STATE_COLORS = {
   'not-reached':        '#8b949e',   // muted  — in-flight / ended early; NEVER red
   'not-exercised':      '#8b949e',   // muted  — conditional not triggered; NEVER red
   'unexpected':         '#f97316',   // orange — no declared edge for this evidence
-  'not-evaluated':      '#4b5563',   // dark   — non-github tier (legacy fallback)
+  'not-evaluated':      '#4b5563',   // dark   — legacy fallback (should be zero after ADR-0055)
   // ADR-0055 D1: runtime-tier second-class states
   'runtime-confirmed':  '#86efac',   // green-tint  — observed in event log
   'runtime-unobserved': '#f97316',   // orange      — capture live but event missing
   'not-observable':     '#4b5563',   // neutral/dark — capture dead in window
+  'unmeasurable':       '#374151',   // very dark — in-conversation by design (ADR-0055 D5)
 };
 
 // Cached list of closed PRD runs (populated by loadTrailRuns on page load)
@@ -2655,8 +2656,52 @@ function _renderTrailReport(report, container) {
   const edges = report.edges || {};
   const violations = report.violations || [];
 
+  // Coverage strip (ADR-0055 D5): 45 declared = 17 github + 26 runtime + 2 unmeasurable
+  const cs = report.coverage_strip || {};
+  const csTotal = cs.total_declared || 0;
+  const csGithub = cs.github || 0;
+  const csRuntime = cs.runtime || 0;
+  const csUnmeas = cs.unmeasurable_by_design || 0;
+  const csNotEval = cs.not_evaluated || 0;
+  const csPerState = cs.per_state_counts || {};
+  const csZero = cs.zero_not_evaluated === true;
+  const csCovBadge = csZero
+    ? '<span style="color:#86efac;font-weight:700;">zero not-evaluated</span>'
+    : `<span style="color:#f97316;font-weight:700;">${csNotEval} not-evaluated remaining</span>`;
+  // Runtime observation counts (from runtime_coverage)
+  const rc = report.runtime_coverage || {};
+  const rtConfirmed = rc.confirmed || 0;
+  const rtUnobserved = rc.unobserved || 0;
+  const rtNotObs = rc.not_observable || 0;
+  const rtNotEx = rc.not_exercised || 0;
+  const rtUnmeas = rc.unmeasurable || 0;
+
+  let html = `<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:11px;">
+    <div style="font-weight:700;color:var(--text);margin-bottom:6px;">
+      Coverage — ${csCovBadge}
+    </div>
+    <div style="color:var(--muted);margin-bottom:4px;">
+      ${csTotal} declared = ${csGithub} github-evaluated + ${csRuntime} runtime-observed + ${csUnmeas} unmeasurable-by-design
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">`;
+
+  // Per-state counts for all states that appear
+  const stateOrder = ['confirmed','runtime-confirmed','missing','not-reached','not-exercised',
+    'runtime-unobserved','not-observable','unmeasurable','unexpected','not-evaluated'];
+  for (const st of stateOrder) {
+    const cnt = csPerState[st];
+    if (!cnt) continue;
+    const color = _EDGE_STATE_COLORS[st] || 'var(--muted)';
+    html += `<span style="color:${color};">${st}: <strong>${cnt}</strong></span>`;
+  }
+  html += `</div>
+    <div style="margin-top:6px;color:var(--muted);">
+      runtime observation: ${rtConfirmed} confirmed · ${rtUnobserved} unobserved · ${rtNotObs} not-observable · ${rtNotEx} not-exercised · ${rtUnmeas} unmeasurable
+    </div>
+  </div>`;
+
   // Legend
-  let html = '<div class="trail-legend">';
+  html += '<div class="trail-legend">';
   const legendItems = [
     ['confirmed',          'green (github verified)'],
     ['runtime-confirmed',  'green-tint (runtime observed)'],
@@ -2666,7 +2711,8 @@ function _renderTrailReport(report, container) {
     ['unexpected',         'orange'],
     ['runtime-unobserved', 'orange (capture live, event absent)'],
     ['not-observable',     'dark (capture dead in window)'],
-    ['not-evaluated',      'dark (unmeasurable tier)'],
+    ['unmeasurable',       'very dark (in-conversation by design)'],
+    ['not-evaluated',      'dark (should be zero — bug indicator)'],
   ];
   for (const [state, label] of legendItems) {
     const color = _EDGE_STATE_COLORS[state] || '#8b949e';
@@ -2706,8 +2752,8 @@ function _renderTrailReport(report, container) {
       const detail = escHtml(info.detail || '');
       const req = info.required || '';
       const reqColor = req === 'always' ? 'var(--text)' : 'var(--muted)';
-      // Dim not-evaluated rows (unmeasurable tier only); runtime rows get full opacity
-      const rowOpacity = state === 'not-evaluated' && tier === 'unmeasurable' ? 'opacity:0.5;' : '';
+      // Unmeasurable edges get dimmed; all others full opacity
+      const rowOpacity = state === 'unmeasurable' ? 'opacity:0.5;' : '';
       html += `<tr style="border-bottom:1px solid var(--border);${rowOpacity}">
         <td style="padding:4px 8px;font-weight:600;font-size:10px;">${edgeId}</td>
         <td style="padding:4px 8px;font-size:10px;color:${reqColor};">${req}</td>
@@ -2891,6 +2937,7 @@ function _renderRollup(result, el) {
   const violations = result.violations || [];
   const runResults = result.run_results || {};
   const unreviewedPrs = result.unreviewed_prs || [];
+  const runtimeCounts = result.runtime_counts || {};
 
   let html = '';
 
@@ -2904,9 +2951,10 @@ function _renderRollup(result, el) {
   }
   html += '</div>';
 
-  // Per-edge confirmation counts (github-tier only)
+  // Per-edge confirmation counts (github-tier)
   const githubEdges = Object.entries(edgeCounts).filter(([, c]) => c);
   if (githubEdges.length > 0) {
+    html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600;">github-tier edges (authoritative)</div>';
     html += '<table class="rollup-table">';
     html += '<tr><th>Edge</th><th>Required</th><th>Confirmed</th><th>Total</th></tr>';
     for (const [eid, counts] of githubEdges) {
@@ -2931,6 +2979,32 @@ function _renderRollup(result, el) {
           </div>
         </td>
         <td style="font-size:10px;color:var(--muted);">${pct}%</td>
+      </tr>`;
+    }
+    html += '</table>';
+  }
+
+  // Per-edge runtime exercise counts (runtime-tier — second-class, ADR-0055 D5)
+  const rtEdges = Object.entries(runtimeCounts).filter(([, c]) => c && c.total > 0);
+  if (rtEdges.length > 0) {
+    html += '<div style="font-size:10px;color:var(--muted);margin:10px 0 4px;font-weight:600;">runtime-tier edges (ADR-0055 — second-class observed)</div>';
+    html += '<table class="rollup-table">';
+    html += '<tr><th>Edge</th><th>Required</th><th>Confirmed</th><th>Unobserved</th><th>Not-Observable</th><th>Not-Exercised</th></tr>';
+    for (const [eid, counts] of rtEdges) {
+      const confirmed = counts.confirmed || 0;
+      const unobserved = counts.unobserved || 0;
+      const notObs = counts.not_observable || 0;
+      const notEx = counts.not_exercised || 0;
+      const total = counts.total || 0;
+      const req = counts.required || 'conditional';
+      const confColor = confirmed > 0 ? '#86efac' : (unobserved > 0 ? '#f97316' : 'var(--muted)');
+      html += `<tr>
+        <td style="font-size:10px;">${eid}</td>
+        <td style="font-size:10px;color:var(--muted);">${req}</td>
+        <td style="font-size:10px;color:${confColor};">${confirmed}/${total}</td>
+        <td style="font-size:10px;color:${unobserved > 0 ? '#f97316' : 'var(--muted)'};">${unobserved}</td>
+        <td style="font-size:10px;color:var(--muted);">${notObs}</td>
+        <td style="font-size:10px;color:var(--muted);">${notEx}</td>
       </tr>`;
     }
     html += '</table>';

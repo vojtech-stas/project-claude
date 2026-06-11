@@ -1,6 +1,6 @@
 ---
 name: qa-review
-description: Main-agent clearing skill for QA residuals (ADR-0040 D4). Lists open needs-human-check issues, presents each as an AskUserQuestion card (recommendation + PRO/CON inferred from the criterion), and records the verdict — accept closes the issue as verified; reject relabels and captures a defect. Tools: Read, Bash, AskUserQuestion only (NO Write/Edit/Agent). Emits a GENERATOR trailer.
+description: "Main-agent clearing skill for QA residuals (ADR-0040 D4). Lists open needs-human-check issues, presents each as an AskUserQuestion card (recommendation + PRO/CON inferred from the criterion), and records the verdict — accept closes the issue as verified; reject relabels and captures a defect. Tools: Read, Bash, AskUserQuestion only (NO Write/Edit/Agent). Emits a GENERATOR trailer."
 ---
 
 # /qa-review — QA residual clearing skill

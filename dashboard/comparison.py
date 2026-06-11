@@ -44,6 +44,60 @@ def get_spec_for_compare() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Runtime observation merge step (ADR-0055 D1/D2)
+# ---------------------------------------------------------------------------
+
+def _apply_runtime_observation(report: dict, trail: dict) -> dict:
+    """Merge runtime_observer output into the comparison report.
+
+    Adds to report (never modifying run_pass/violations/unexpected per ADR-0055 D2):
+      - runtime_edges: {edge_id: {state, detail, evidence, required, ...}}
+      - runtime_coverage: {confirmed, unobserved, not_observable, not_exercised}
+      - capture_liveness: bool
+
+    Existing 'edges' entries for runtime-tier edges are updated from
+    'not-evaluated' to their observed state.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    dashboard_dir = str(_Path(__file__).resolve().parent)
+    if dashboard_dir not in sys.path:
+        sys.path.insert(0, dashboard_dir)
+
+    try:
+        from runtime_observer import observe  # noqa: PLC0415
+        obs = observe(trail)
+    except Exception as exc:
+        # Observation is advisory — never crash the comparison report
+        obs = {
+            "runtime_edges": {},
+            "runtime_coverage": {
+                "confirmed": 0, "unobserved": 0,
+                "not_observable": 0, "not_exercised": 0,
+            },
+            "capture_liveness": False,
+            "_observer_error": str(exc),
+        }
+
+    # Attach top-level fields
+    report["runtime_edges"] = obs["runtime_edges"]
+    report["runtime_coverage"] = obs["runtime_coverage"]
+    report["capture_liveness"] = obs.get("capture_liveness", False)
+
+    # Update the main edges dict: replace not-evaluated entries for covered runtime edges
+    for eid, rt_entry in obs["runtime_edges"].items():
+        if eid in report["edges"]:
+            # Preserve evidence/required from SPEC; update state + detail
+            report["edges"][eid]["state"] = rt_entry["state"]
+            report["edges"][eid]["detail"] = rt_entry["detail"]
+            if "event_evidence" in rt_entry:
+                report["edges"][eid]["event_evidence"] = rt_entry["event_evidence"]
+
+    return report
+
+
+# ---------------------------------------------------------------------------
 # Predicate evaluators — one per github-tier SPEC edge
 #
 # Naming: _eval_<edge_id_without_dashes_lowercased>
@@ -579,10 +633,17 @@ def compare(spec: dict, trail: dict) -> dict:
         and len(violations) == 0
     )
 
-    return {
+    report = {
         "prd_number": trail.get("prd_number"),
         "run_pass": run_pass,
         "edges": edges_result,
         "violations": violations,
         "unexpected": [],
     }
+
+    # ADR-0055 D1/D2: apply runtime observation pass.
+    # Adds runtime_edges, runtime_coverage, capture_liveness.
+    # NEVER modifies run_pass, violations, or unexpected.
+    report = _apply_runtime_observation(report, trail)
+
+    return report

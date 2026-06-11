@@ -2216,12 +2216,9 @@ async function pollLaneB() {
         (newEvents > 0 ? ' — +' + newEvents + ' event(s)' : '');
     }
 
-    // Also refresh collector pill from live-progress cache (no extra network cost:
-    // just use the cached value the server already has)
-    try {
-      const lp = await (await fetch('/api/live-progress')).json();
-      updateLbCollectorPill(lp);
-    } catch (_) {}
+    // Collector pill sourced from live-poll response collector_status field (#690):
+    // no extra network cost — server carries it from the in-memory live-progress cache.
+    updateLbCollectorPill(data);
 
   } catch (err) {
     if (statusEl) statusEl.textContent = 'Poll error: ' + err.message;

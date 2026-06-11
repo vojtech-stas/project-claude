@@ -398,64 +398,6 @@ def _eval_skill_sequence(
 
 # ---- critic-dispatch class -------------------------------------------------
 
-def _eval_agent_start_by_type(
-    subagent_type: str,
-    index: dict,
-    capture_live: bool,
-    required: str = "always",
-    input_hint: str = "",
-) -> tuple[str, str, dict | None]:
-    """Evaluator for edges confirmed by agent_start with a specific subagent_type.
-
-    input_hint: if provided, also check input field for this string when subagent_type
-    doesn't match exactly (e.g. general-purpose dispatches named in input).
-    """
-    if not capture_live:
-        return "not-observable", "no events in window — capture not live during this run", None
-
-    # Direct subagent_type match
-    events = index.get("agent_start", {}).get(subagent_type, [])
-    if events:
-        ev = events[0]
-        detail = (
-            f"agent_start(subagent_type={subagent_type}) at {ev.get('ts','?')} "
-            f"session={ev.get('session_id','?')[:8]}"
-        )
-        return "runtime-confirmed", detail, {
-            **_ev_ref(ev),
-            "subagent_type": subagent_type,
-            "input_prefix": str(ev.get("input", ""))[:100],
-        }
-
-    # input_hint fallback: check all agent_start events for hint in input
-    if input_hint:
-        hint_lower = input_hint.lower()
-        for ev in index.get("agent_start", {}).get("__all__", []):
-            inp = str(ev.get("input", "")).lower()
-            if hint_lower in inp:
-                detail = (
-                    f"agent_start(input~={input_hint!r}) at {ev.get('ts','?')} "
-                    f"session={ev.get('session_id','?')[:8]} "
-                    f"(subagent_type={ev.get('subagent_type','?')})"
-                )
-                return "runtime-confirmed", detail, {
-                    **_ev_ref(ev),
-                    "subagent_type": ev.get("subagent_type"),
-                    "input_prefix": str(ev.get("input", ""))[:100],
-                    "matched_hint": input_hint,
-                }
-
-    if required == "always":
-        return "runtime-unobserved", (
-            f"capture live but no agent_start(subagent_type={subagent_type}) found"
-            + (f" or input~={input_hint!r}" if input_hint else "")
-        ), None
-    return "not-exercised", (
-        f"capture live but no agent_start(subagent_type={subagent_type}) "
-        f"— conditional dispatch not triggered"
-    ), None
-
-
 def _eval_agent_start_after_skill(
     from_skill: str,
     subagent_type: str,

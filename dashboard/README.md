@@ -2,6 +2,23 @@
 
 Local web visualizer for the project's autonomous pipeline.
 
+## Backend modules
+
+The backend is split into flat sibling modules under `dashboard/`; `server.py` is a thin HTTP facade that re-exports everything:
+
+| Module | Responsibility |
+|---|---|
+| `server.py` | HTTP request handler, named re-exports for all `/api/*` routes, module-level globals (caches, locks, `KNOWN_CRITICS`) |
+| `live.py` | Live-progress cache + background refresh, `/api/live-progress` + `/api/live-poll` polling, capture-pill state |
+| `discovery.py` | Skill/agent/hook/ADR filesystem discovery for `/api/pipeline` and the component graph |
+| `health.py` | `check_docs1`–`check_docs10` audit-meta checks + AS-* audit-subagents checks, TTL-cached `/api/health` |
+| `events.py` | Workflow-event log reading (`/api/runs`), byte-cursor incremental poll, session grouping |
+| `workitems.py` | GitHub Issues fetch + `/api/work-items` response |
+| `readme_gen.py` | README regeneration logic (`/api/generate-readme`, `--generate-readme` CLI flag) |
+| `pipeline_spec.py` | Pipeline topology spec (SPEC v2 nodes + edges) for `/api/pipeline` |
+| `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode |
+| `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report |
+
 ## Usage
 
 Run from the **project root**:

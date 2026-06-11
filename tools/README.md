@@ -15,8 +15,7 @@ are advisory/read-only.
 Post-dispatch worktree leak-guard and root ff-sync. **Enforcement tool** — modifies
 repository state (deletes worktrees, local branches, and remote branches). Invoked by
 the `/ship` orchestrator after each isolated `implementer` or `reviewer` dispatch
-(per [ADR-0058](../decisions/0058-worktree-isolation-asserted-interface.md) D3 +
-[ADR-0041](../decisions/0041-origin-main-source-of-truth.md) D1/D3).
+(per ADR-0058 D3 + [ADR-0041](../decisions/0041-origin-main-source-of-truth.md) D1/D3).
 
 ### Subcommands
 

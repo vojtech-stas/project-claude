@@ -1163,21 +1163,6 @@ function renderTopologyGraph(data) {
     });
   }
 
-  function addEdge(from, to, color, dashes, width, label, specId) {
-    const e = {
-      from, to,
-      arrows: 'to',
-      color: { color: color || '#4b5563', highlight: '#9ca3af' },
-      smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.5 },
-      width: width || 1.5,
-      dashes: dashes || false,
-    };
-    if (label) { e.label = label; e.font = { color: '#9ca3af', size: 9, face: 'IBM Plex Mono, monospace' }; }
-    // Store spec edge id as title for later lookup by _paintTopologyStates
-    if (specId) e.title = specId;
-    edges.push(e);
-  }
-
   // =========================================================================
   // DECLARED topology — compact staged tree layout (slice #705).
   // Prototype C level assignment: shortest-path BFS from 'user' over solid
@@ -2573,7 +2558,7 @@ function _renderTrailReport(report, container) {
  * runtime/unmeasurable tier edges are never drift-colored (their state is "not-evaluated").
  * Only called when topoNetwork and a comparison report are both available.
  *
- * Matching: vis edges store their spec id in the `title` field (set in addEdge).
+ * Matching: vis edges store their spec id in the `title` field (set in renderTopologyGraph).
  * We look up each vis edge by title → spec edge id → comparison report state.
  */
 function _paintTopologyStates(report) {

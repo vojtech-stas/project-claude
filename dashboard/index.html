@@ -515,6 +515,24 @@
     cursor: pointer;
     max-width: 340px;
   }
+  /* Filter chips — All / Chat / Tools (slice #707) */
+  .lb-filter-chips {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .lb-chip {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .lb-chip:hover { border-color: var(--muted); color: var(--text); }
+  .lb-chip.active { border-color: var(--blue); color: var(--blue); }
   .collector-pill {
     display: inline-flex;
     align-items: center;
@@ -543,17 +561,37 @@
   }
   .lb-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     padding: 4px 14px;
     border-radius: 0;
+    cursor: pointer;
   }
   .lb-row:hover { background: #1c2128; }
+  /* Tool rows slightly indented (slice #707) */
+  .lb-row.lb-tool-row {
+    padding-left: 28px;
+  }
+  /* User bubble (slice #707) */
+  .lb-row.lb-user-bubble {
+    border-left: 3px solid var(--blue);
+    padding-left: 11px;
+    background: #0d1a2e;
+  }
+  .lb-row.lb-user-bubble:hover { background: #0f1f36; }
+  /* Assistant bubble (slice #707) */
+  .lb-row.lb-assistant-bubble {
+    border-left: 3px solid var(--green);
+    padding-left: 11px;
+    background: #0d1a14;
+  }
+  .lb-row.lb-assistant-bubble:hover { background: #0f2018; }
   .lb-ts {
     color: var(--muted);
     font-size: 10px;
     flex-shrink: 0;
     min-width: 54px;
+    padding-top: 2px;
   }
   .lb-wt {
     font-size: 9px;
@@ -562,12 +600,14 @@
     border: 1px solid var(--border);
     color: var(--muted);
     flex-shrink: 0;
+    margin-top: 2px;
   }
   .lb-event {
     font-size: 11px;
     flex-shrink: 0;
     min-width: 110px;
     color: var(--text);
+    padding-top: 2px;
   }
   .lb-payload {
     font-size: 10px;
@@ -576,6 +616,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+    padding-top: 2px;
   }
   .lb-verdict {
     font-size: 9px;
@@ -584,9 +625,35 @@
     border-radius: 10px;
     flex-shrink: 0;
     white-space: nowrap;
+    margin-top: 2px;
   }
   .lb-verdict-approve { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
   .lb-verdict-block   { background: #2a0d0d; color: var(--red);   border: 1px solid var(--red); }
+  /* Expand-on-click inline detail panel (slice #707) */
+  .lb-expand {
+    display: none;
+    width: 100%;
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .lb-row.lb-open .lb-expand { display: block; }
+  .lb-row-body {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
   .lb-status-bar {
     font-size: 10px;
     color: var(--muted);
@@ -920,13 +987,18 @@
       </table>
     </div>
     <div class="live-status-bar" id="live-status-bar"></div>
-    <!-- Lane B: session feed (slice #682) -->
+    <!-- Lane B: session feed (slice #682); chat transcript (slice #707) -->
     <div class="lane-b" id="lane-b">
       <div class="lane-b-header">
         <h3>Lane B &mdash; session feed</h3>
         <select class="lane-b-session-select" id="lb-session-select" onchange="onLbSessionChange()">
           <option value="">Loading sessions…</option>
         </select>
+        <div class="lb-filter-chips">
+          <button class="lb-chip active" id="lb-chip-all"   onclick="setLbFilter('all')">All</button>
+          <button class="lb-chip"        id="lb-chip-chat"  onclick="setLbFilter('chat')">Chat</button>
+          <button class="lb-chip"        id="lb-chip-tools" onclick="setLbFilter('tools')">Tools</button>
+        </div>
         <span class="collector-pill" id="collector-pill" title="Collector pill: last gh fetch age">—</span>
       </div>
       <div class="lane-b-events" id="lb-events">
@@ -2070,6 +2142,7 @@ let _lbSessionOrder = [];  // sids newest-first
 let _lbSelectedSid = null;
 let _lbTimer = null;
 let _lbTabLoaded = false;
+let _lbFilter = 'all';     // 'all' | 'chat' | 'tools' (slice #707)
 
 // Parse a single agent_complete tail for a VERDICT line.
 // Returns "APPROVE", "BLOCK", or null (ambiguous/absent/conflicting).
@@ -2091,6 +2164,10 @@ function parseTailVerdict(tail) {
 
 function lbEventPayload(ev) {
   switch (ev.event) {
+    case 'user_prompt':
+      return ev.prompt ? ev.prompt.slice(0, 120) : '';
+    case 'session_stop':
+      return ev.assistant_tail ? ev.assistant_tail.slice(0, 120) : '';
     case 'agent_start':
     case 'agent_complete':
       return (ev.subagent_type ? ev.subagent_type.slice(0, 40) + ' ' : '') +
@@ -2104,6 +2181,39 @@ function lbEventPayload(ev) {
     default:
       return '';
   }
+}
+
+// Full payload for the expand-on-click panel (slice #707).
+// Returns a human-readable string of all non-trivial fields.
+function lbFullPayload(ev) {
+  const skip = new Set(['v', 'ts', 'session_id', 'src', 'wt', 'event']);
+  const parts = [];
+  for (const [k, v] of Object.entries(ev)) {
+    if (skip.has(k)) continue;
+    const val = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    parts.push(k + ':\n' + val);
+  }
+  return parts.length ? parts.join('\n\n') : '(no extra fields)';
+}
+
+// Classify event into 'chat' or 'tools' for filter (slice #707).
+// session_stop is 'chat' only when assistant_tail is present (renders as bubble);
+// bare session_stop (no assistant_tail) is classified as 'tools' so it stays
+// invisible under the Chat filter rather than appearing as an unstyled row.
+function lbEventClass(ev) {
+  if (ev.event === 'user_prompt') return 'chat';
+  if (ev.event === 'session_stop') return ev.assistant_tail ? 'chat' : 'tools';
+  return 'tools';
+}
+
+// Set filter chip state and re-render (slice #707).
+function setLbFilter(filter) {
+  _lbFilter = filter;
+  ['all', 'chat', 'tools'].forEach(function(f) {
+    const btn = document.getElementById('lb-chip-' + f);
+    if (btn) btn.className = 'lb-chip' + (f === filter ? ' active' : '');
+  });
+  renderLbEvents();
 }
 
 function lbFormatTime(tsStr) {
@@ -2122,17 +2232,50 @@ function renderLbEvents() {
     el.innerHTML = '<div class="lane-b-empty">No session selected or no events.</div>';
     return;
   }
-  const events = _lbSessions[_lbSelectedSid].events;
-  if (events.length === 0) {
+  const allEvents = _lbSessions[_lbSelectedSid].events;
+  if (allEvents.length === 0) {
     el.innerHTML = '<div class="lane-b-empty">No events for this session yet.</div>';
     return;
   }
-  // newest-first display
-  const rows = events.slice().reverse().map(function(ev) {
+
+  // Anti-yank: remember if we were already at the bottom before re-render (slice #707).
+  // Threshold of 8px handles sub-pixel rounding.
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+
+  // Apply filter; events stored in chronological order (oldest-first).
+  const events = _lbFilter === 'all'
+    ? allEvents
+    : allEvents.filter(function(ev) { return lbEventClass(ev) === _lbFilter; });
+
+  if (events.length === 0) {
+    el.innerHTML = '<div class="lane-b-empty">No events match the current filter.</div>';
+    return;
+  }
+
+  // Build rows oldest-first (slice #707: chronological order, oldest at top).
+  const rows = events.map(function(ev, idx) {
     const ts = lbFormatTime(ev.ts);
     const wt = escHtml(ev.wt || '');
-    const evName = escHtml(ev.event || '');
+    const evCls = lbEventClass(ev);
     const payload = escHtml(lbEventPayload(ev).trim());
+
+    // Determine row class and label (slice #707).
+    let rowClass = 'lb-row';
+    let evLabel = escHtml(ev.event || '');
+    if (ev.event === 'user_prompt') {
+      rowClass += ' lb-user-bubble';
+      evLabel = 'user';
+    } else if (ev.event === 'session_stop') {
+      if (ev.assistant_tail) {
+        rowClass += ' lb-assistant-bubble';
+        evLabel = 'turn end';
+      }
+      // session_stop without assistant_tail stays a plain row (no bubble class)
+    } else {
+      rowClass += ' lb-tool-row';
+    }
+
+    // Verdict badge for agent_complete.
     let verdictHtml = '';
     if (ev.event === 'agent_complete') {
       const v = parseTailVerdict(ev.tail);
@@ -2142,15 +2285,50 @@ function renderLbEvents() {
         verdictHtml = '<span class="lb-verdict lb-verdict-block">BLOCK</span>';
       }
     }
-    return '<div class="lb-row">' +
+
+    // Expand panel — full payload, collapsed by default (slice #707).
+    const fullText = escHtml(lbFullPayload(ev));
+    const expandHtml = '<div class="lb-expand">' + fullText + '</div>';
+
+    // data-idx used by toggle handler to preserve open state across re-renders.
+    return '<div class="' + rowClass + '" data-idx="' + idx + '" onclick="toggleLbRow(this)">' +
       '<span class="lb-ts">' + escHtml(ts) + '</span>' +
-      '<span class="lb-wt">' + wt + '</span>' +
-      '<span class="lb-event">' + evName + '</span>' +
-      '<span class="lb-payload">' + payload + '</span>' +
-      verdictHtml +
+      '<div class="lb-row-body">' +
+        '<span class="lb-wt">' + wt + '</span>' +
+        '<span class="lb-event">' + evLabel + '</span>' +
+        '<span class="lb-payload">' + payload + '</span>' +
+        verdictHtml +
+      '</div>' +
+      expandHtml +
       '</div>';
   });
+
+  // Preserve open indices across re-render.
+  const openIdx = new Set();
+  el.querySelectorAll('.lb-row.lb-open').forEach(function(r) {
+    openIdx.add(r.getAttribute('data-idx'));
+  });
+
   el.innerHTML = rows.join('');
+
+  // Re-apply open state.
+  if (openIdx.size > 0) {
+    el.querySelectorAll('.lb-row').forEach(function(r) {
+      if (openIdx.has(r.getAttribute('data-idx'))) {
+        r.classList.add('lb-open');
+      }
+    });
+  }
+
+  // Auto-scroll to bottom ONLY when the user was already at the bottom (anti-yank).
+  if (atBottom) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+// Toggle expand panel on row click (slice #707).
+function toggleLbRow(rowEl) {
+  rowEl.classList.toggle('lb-open');
 }
 
 function renderLbPicker() {

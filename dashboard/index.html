@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>project-claude dashboard</title>
 <link rel="stylesheet" href="https://unpkg.com/vis-network/styles/vis-network.min.css">
-<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js" onerror="window._visNetworkLoadError=true"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@9/marked.min.js"></script>
 <style>
   :root {
@@ -918,7 +918,7 @@
     <div class="trail-toolbar">
       <div class="trail-picker-group">
         <span class="trail-label">PRD:</span>
-        <select id="trail-prd-select" style="display:none;" onchange="onTrailPickerChange()">
+        <select id="trail-prd-select" style="display:none;">
           <option value="">Loading runs…</option>
         </select>
         <input id="trail-prd-input" type="number" value="640"
@@ -1151,6 +1151,16 @@ function renderTopologyGraph(data) {
   // Remove loading indicator only the first time
   const loadingEl = document.getElementById('topology-loading');
   if (loadingEl) loadingEl.remove();
+
+  // Guard: if vis failed to load (CDN unreachable), show a visible error in the
+  // topology container and bail without creating uncaught ReferenceErrors.
+  if (typeof vis === 'undefined' || window._visNetworkLoadError) {
+    var errP = document.createElement('p');
+    errP.style.cssText = 'color:var(--fail);padding:20px;font-size:12px;';
+    errP.textContent = 'vis-network failed to load (CDN unreachable). Topology graph unavailable.';
+    containerEl.appendChild(errP);
+    return;
+  }
 
   // Rebuild the node→file map fresh on every render.
   topoNodeFileMap = {};
@@ -1838,7 +1848,7 @@ async function viewFile(path, name, type, opts) {
       // Raw mode: shell scripts and other non-markdown files display as plain pre
       bodyHtml += '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
     } else if (typeof marked !== 'undefined') {
-      bodyHtml += marked.parse(raw);
+      bodyHtml += sanitizeMdHtml(marked.parse(raw));
     } else {
       // Fallback: display as plain pre if marked not loaded
       bodyHtml += '<pre style="white-space:pre-wrap;font-size:11px;color:var(--muted);">' + escHtml(raw) + '</pre>';
@@ -1851,6 +1861,33 @@ async function viewFile(path, name, type, opts) {
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/**
+ * Sanitize marked.parse() HTML output using DOMParser — no external deps.
+ * Strips <script>, <object>, <embed>, <iframe> elements; removes all on*
+ * event-handler attributes; rewrites javascript: URLs to '#'.
+ * Returns a safe HTML string for assignment to innerHTML.
+ */
+function sanitizeMdHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  // Remove dangerous element types entirely
+  ['script', 'object', 'embed', 'iframe'].forEach(function(tag) {
+    doc.querySelectorAll(tag).forEach(function(el) { el.remove(); });
+  });
+  // Strip on* event-handler attributes and javascript: URLs from every element
+  doc.body.querySelectorAll('*').forEach(function(el) {
+    for (var i = el.attributes.length - 1; i >= 0; i--) {
+      var attr = el.attributes[i];
+      if (/^on/i.test(attr.name)) {
+        el.removeAttribute(attr.name);
+      } else if (/^(href|src|action)$/i.test(attr.name) &&
+                 /^\s*javascript\s*:/i.test(attr.value)) {
+        el.setAttribute(attr.name, '#');
+      }
+    }
+  });
+  return doc.body.innerHTML;
 }
 
 // --- Health (slice #629: clickable checks + detail panel) ---

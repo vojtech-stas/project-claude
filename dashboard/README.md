@@ -17,7 +17,7 @@ The backend is split into flat sibling modules under `dashboard/`; `server.py` i
 | `readme_gen.py` | README regeneration logic (`--generate-readme` CLI flag) |
 | `pipeline_spec.py` | Pipeline topology spec (SPEC v2 nodes + edges) for `/api/pipeline` |
 | `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode |
-| `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report |
+| `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report; failed/not-found collection returns `run_pass: false` plus an explicit `error` (and `not_found: true`) field — never a vacuous PASS |
 | `runtime_observer.py` | Runtime observation layer (ADR-0055): reads v2 workflow-events.jsonl within a PRD's time window and evaluates all 26 runtime-tier edge predicates (user→skill, critic-dispatch, sequence-ordering, verdict-return, bash-evidence, conditional-advisory classes); returns per-edge states (`runtime-confirmed` / `runtime-unobserved` / `not-observable` / `not-exercised`) + a `coverage_strip` summary; never touches `run_pass` or violations |
 
 ## Usage

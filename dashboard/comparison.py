@@ -591,6 +591,15 @@ def compare(spec: dict, trail: dict) -> dict:
           "unexpected": [],
         }
 
+        On failed/not-found collection the return is an error-sentinel:
+        {
+          "prd_number": N,
+          "run_pass": false,
+          "error": "<human-readable message>",   # present on any collection failure
+          "not_found": true,                      # present when the issue does not exist
+          "edges": {}, "violations": [], "unexpected": [],
+        }
+
     Edge states:
       confirmed / missing / not-reached / not-exercised / not-evaluated / unexpected
       runtime-confirmed / runtime-unobserved / not-observable / unmeasurable
@@ -603,6 +612,28 @@ def compare(spec: dict, trail: dict) -> dict:
     Run PASS := every required:always github-tier edge is "confirmed" AND zero violations.
     Runtime states never affect run_pass (ADR-0055 D2).
     """
+    # --- Guard: failed or nonexistent collection must never render as PASS ---
+    # collector.get_trail() signals failure via a non-empty "error" key and/or
+    # a missing "prd_title" (which is only present after a successful fetch).
+    # "not_found" is set when the issue itself does not exist in GitHub.
+    trail_error = trail.get("error")
+    trail_title = trail.get("prd_title")
+    if trail_error or not trail_title:
+        prd_number = trail.get("prd_number")
+        collector_status = trail.get("collector_status", "")
+        is_not_found = "no_issue" in collector_status or "not found" in (trail_error or "").lower()
+        sentinel: dict = {
+            "prd_number": prd_number,
+            "run_pass": False,
+            "error": trail_error or f"Collection failed: collector_status={collector_status!r}",
+            "edges": {},
+            "violations": [],
+            "unexpected": [],
+        }
+        if is_not_found:
+            sentinel["not_found"] = True
+        return sentinel
+
     edges_result: dict[str, dict] = {}
     spec_edges = spec.get("edges", [])
 
@@ -656,17 +687,30 @@ def compare(spec: dict, trail: dict) -> dict:
     #   not-exercised — condition not triggered / bootstrap-mode; NEVER red
     #   not-reached   — run still in-flight; NEVER red
     # Only "missing" and "unexpected" count against run_pass for required:always edges.
+    #
+    # Non-vacuous guard: run_pass requires at least one required:always github-tier edge
+    # to have actually evaluated to "confirmed". An all() over an empty iterator returns
+    # True, which would produce a spurious PASS for runs with no evaluated edges
+    # (e.g. very early PRDs, test PRDs, or partially-failed collections that slipped
+    # through the sentinel above). The >=1-confirmed check closes that gap without
+    # regressing valid in-flight PRD runs whose non-confirmed edges are "not-reached"
+    # or "not-exercised" (those are excluded from the all() filter already).
     _PASS_EXCLUDING = {"not-evaluated", "not-exercised", "not-reached"}
-    run_pass = (
-        all(
-            edges_result[e["id"]]["state"] == "confirmed"
-            for e in spec_edges
-            if (
-                e.get("required") == "always"
-                and e.get("evidence") == "github"
-                and edges_result[e["id"]]["state"] not in _PASS_EXCLUDING
-            )
+    _github_always_evaluated = [
+        e for e in spec_edges
+        if (
+            e.get("required") == "always"
+            and e.get("evidence") == "github"
+            and edges_result[e["id"]]["state"] not in _PASS_EXCLUDING
         )
+    ]
+    _confirmed_count = sum(
+        1 for e in _github_always_evaluated
+        if edges_result[e["id"]]["state"] == "confirmed"
+    )
+    run_pass = (
+        len(_github_always_evaluated) > 0
+        and _confirmed_count == len(_github_always_evaluated)
         and len(violations) == 0
     )
 

@@ -2575,6 +2575,21 @@ async function loadTrailComparison() {
     const report = await compResp.json();
     _lastComparisonReport = report;
 
+    // Detect collection failure: backend signals error/not_found in the payload.
+    // These states must never render as the green "declared == measured: PASS" banner.
+    if (report.error || report.not_found) {
+      if (bannerEl) {
+        _renderErrorBanner(bannerEl, report, prd);
+        bannerEl.style.display = 'flex';
+      }
+      if (headerEl) headerEl.style.display = 'none';
+      const label = report.not_found ? 'NOT FOUND' : 'ERROR';
+      statusEl.textContent = `PRD #${prd} — ${label}`;
+      statusEl.style.color = 'var(--red)';
+      container.innerHTML = `<span style="color:var(--red);font-size:11px;">${escHtml(report.error || 'Collection failed')}</span>`;
+      return;
+    }
+
     // Render run header
     if (headerEl) {
       _renderRunHeader(headerEl, report, trail);
@@ -2601,6 +2616,19 @@ async function loadTrailComparison() {
     statusEl.style.color = 'var(--red)';
     container.innerHTML = `<span style="color:var(--red);font-size:11px;">${escHtml(e.message)}</span>`;
   }
+}
+
+/**
+ * Render a distinct ERROR / NOT-FOUND banner when collection failed.
+ * This state must never show "declared == measured: PASS".
+ */
+function _renderErrorBanner(el, report, prd) {
+  const label = report.not_found
+    ? `PRD #${prd} NOT FOUND`
+    : `Collection ERROR — PRD #${prd}`;
+  const detail = escHtml(report.error || 'Collection failed');
+  el.className = 'trail-golden-banner fail';
+  el.innerHTML = `<span>${label}</span><span style="font-size:11px;font-weight:400;">${detail}</span>`;
 }
 
 /**

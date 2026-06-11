@@ -281,6 +281,16 @@ def check_docs8_supersession_notes() -> dict:
             adr_text = _read_file(adr_file)
             for match in re.finditer(r'^- \*\*Supersedes:\*\*\s*(.+)$', adr_text, re.MULTILINE):
                 superseded_ref = match.group(1).strip()
+                # Skip "Supersedes: none" — explicitly declares no supersession
+                if re.match(r'none\.?\s', superseded_ref, re.IGNORECASE) or \
+                        superseded_ref.lower().startswith('none'):
+                    continue
+                # Strip negated-prose clauses ("Does NOT supersede X") before
+                # extracting IDs so negation doesn't produce false positives.
+                # Example: "... Does NOT supersede ADR-0001 or ADR-0002 (frozen)"
+                pos = re.search(r'\bdoes\s+not\s+supersede\b', superseded_ref, re.IGNORECASE)
+                if pos:
+                    superseded_ref = superseded_ref[:pos.start()]
                 superseded_ids = re.findall(r'ADR-(\d{4})', superseded_ref)
                 if not superseded_ids:
                     superseded_ids = re.findall(r'\b(\d{4})\b', superseded_ref)
@@ -314,10 +324,11 @@ def check_docs9_glossary_cap() -> dict:
     in_glossary = False
     count = 0
     for line in lines:
-        if re.match(r'^## Glossary', line):
+        # Match the actual H3 heading: "### Glossary (key terms)"
+        if re.match(r'^### Glossary', line):
             in_glossary = True
             continue
-        if in_glossary and re.match(r'^## ', line):
+        if in_glossary and re.match(r'^### ', line):
             break
         if in_glossary and re.match(r'^- \*\*', line):
             count += 1
@@ -408,10 +419,31 @@ def _check_as_crit_2(path: Path) -> dict:
 
 
 def _check_as_crit_3(path: Path) -> dict:
-    """AS-CRIT-3: VERDICT: REASON: ROUND: in body."""
+    """AS-CRIT-3: VERDICT, REASON, ROUND documented in critic body.
+
+    Aligned with tools/ci-checks.sh CHECK 10: bare-string grep (no colon
+    required) so fenced-block examples AND backtick-quoted key names both pass.
+    backlog-critic omits ROUND by design (fires once; no multi-round loop) —
+    its ROUND check is N/A, matching its documented Output format section.
+    """
     text = _read_file(path)
-    ok = "VERDICT:" in text and "REASON:" in text and "ROUND:" in text
-    return {"id": "AS-CRIT-3", "result": "PASS" if ok else "FAIL", "detail": ""}
+    has_verdict = "VERDICT" in text
+    has_reason = "REASON" in text
+    # backlog-critic documents "ROUND: is omitted" by design — N/A for ROUND
+    if path.name == "backlog-critic.md":
+        ok = has_verdict and has_reason
+        if ok:
+            return {"id": "AS-CRIT-3", "result": "PASS",
+                    "detail": "ROUND N/A (single-fire; no multi-round loop)"}
+        missing = [k for k, v in [("VERDICT", has_verdict), ("REASON", has_reason)] if not v]
+        return {"id": "AS-CRIT-3", "result": "FAIL",
+                "detail": f"missing: {', '.join(missing)}"}
+    has_round = "ROUND" in text
+    ok = has_verdict and has_reason and has_round
+    missing = [k for k, v in [("VERDICT", has_verdict), ("REASON", has_reason),
+                               ("ROUND", has_round)] if not v]
+    return {"id": "AS-CRIT-3", "result": "PASS" if ok else "FAIL",
+            "detail": "" if ok else f"missing: {', '.join(missing)}"}
 
 
 def _check_as_crit_4(path: Path) -> dict:

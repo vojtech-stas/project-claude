@@ -13,8 +13,8 @@ The backend is split into flat sibling modules under `dashboard/`; `server.py` i
 | `discovery.py` | Skill/agent/hook/ADR filesystem discovery for `/api/pipeline` and the component graph |
 | `health.py` | `check_docs1`–`check_docs10` audit-meta checks + AS-* audit-subagents checks, TTL-cached `/api/health` |
 | `events.py` | Workflow-event log reading (`/api/runs`), byte-cursor incremental poll, session grouping |
-| `workitems.py` | GitHub Issues fetch + `/api/work-items` response |
-| `readme_gen.py` | README regeneration logic (`/api/generate-readme`, `--generate-readme` CLI flag) |
+| `workitems.py` | GitHub Issues fetch + `/api/workitems` response |
+| `readme_gen.py` | README regeneration logic (`--generate-readme` CLI flag) |
 | `pipeline_spec.py` | Pipeline topology spec (SPEC v2 nodes + edges) for `/api/pipeline` |
 | `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode |
 | `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report |

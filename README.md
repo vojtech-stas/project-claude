@@ -351,6 +351,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`session_start`](.claude/hooks/log-tool-event.sh)** (`SessionStart`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
+- **[`user_prompt`](.claude/hooks/log-tool-event.sh)** (`UserPromptSubmit`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
 - **[`agent_start`](.claude/hooks/log-tool-event.sh)** (`PreToolUse · Agent`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
@@ -384,7 +385,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 7 critic(s) + 3 generator(s), 14 hook(s), 53 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 11 skill(s), 7 critic(s) + 3 generator(s), 15 hook(s), 53 ADR(s).
 
 ## License
 

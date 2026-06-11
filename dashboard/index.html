@@ -2197,9 +2197,13 @@ function lbFullPayload(ev) {
 }
 
 // Classify event into 'chat' or 'tools' for filter (slice #707).
+// session_stop is 'chat' only when assistant_tail is present (renders as bubble);
+// bare session_stop (no assistant_tail) is classified as 'tools' so it stays
+// invisible under the Chat filter rather than appearing as an unstyled row.
 function lbEventClass(ev) {
-  const chat = new Set(['user_prompt', 'session_stop']);
-  return chat.has(ev.event) ? 'chat' : 'tools';
+  if (ev.event === 'user_prompt') return 'chat';
+  if (ev.event === 'session_stop') return ev.assistant_tail ? 'chat' : 'tools';
+  return 'tools';
 }
 
 // Set filter chip state and re-render (slice #707).

@@ -33,7 +33,12 @@
 #   bash_complete:  command (first 200 chars)
 #   skill_invoke:   skill (name extracted from tool_input), source="skill_tool"
 #   grill_qa:       question (first 300 chars), answer (first 300 chars)
-#   session_start, session_stop: no extra payload
+#   user_prompt:    prompt (first 500 chars of .prompt)
+#   session_start:  no extra payload
+#   session_stop:   assistant_tail (last 700 chars of last assistant message, via
+#                   ≤256 KB transcript tail-read; present only when found);
+#                   tail_error (short reason string; present only on failure);
+#                   fail-soft: event always writes even if transcript read fails
 #
 # NO jq IN THIS FILE — python3 only; jq ENOEXEC hazard is structurally irrelevant.
 #

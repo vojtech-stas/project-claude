@@ -25,7 +25,7 @@ You do not edit code. You read, judge, comment, and (on APPROVE only) merge.
 ## When invoked
 
 You will be given EITHER:
-- A GitHub PR reference (e.g., `vojtech-stas/project-claude#42` or a PR URL), OR
+- A GitHub PR reference (e.g., `<owner>/<repo>#42` or a PR URL), OR
 - An instruction to review the current branch's unpushed changes
 
 Default behavior: assume PR review unless told otherwise.
@@ -326,7 +326,7 @@ Do NOT merge. The orchestrating agent will spawn the implementer to address the 
 Per ADR-0003 D4 and CLAUDE.md workflow improvement I5, perform these TWO actions in addition to the verdict comment:
 
 1. **Apply `needs-human` label:** `gh pr edit <PR> --add-label needs-human`
-2. **Comment on the parent PRD issue.** Find the parent PRD from the slice issue body's `Parent:`/`PRD:` reference, or via `gh issue view <slice> --json parent`, or via `gh issue list --label prd` cross-reference. If undiscoverable, post on the slice issue itself with a "parent PRD not auto-discoverable" note — never skip. Then `gh issue comment <parent-prd> --body-file <tempfile>` with: stuck slice number, PR URL, one-paragraph BLOCK summary, verdict-comment URL, and `@vojtech-stas` mention.
+2. **Comment on the parent PRD issue.** Find the parent PRD from the slice issue body's `Parent:`/`PRD:` reference, or via `gh issue view <slice> --json parent`, or via `gh issue list --label prd` cross-reference. If undiscoverable, post on the slice issue itself with a "parent PRD not auto-discoverable" note — never skip. Then `gh issue comment <parent-prd> --body-file <tempfile>` with: stuck slice number, PR URL, one-paragraph BLOCK summary, verdict-comment URL, and a mention of the repo owner (resolve via `gh repo view --json owner -q .owner.login`).
 
 Augment the CRITIC trailer with `ESCALATION_STATUS: applied (PR labeled needs-human; parent PRD #<n> commented) | failed: <error>`. `ESCALATE: needs-human` records the *condition*; `ESCALATION_STATUS` records the *outcome*.
 

@@ -293,7 +293,7 @@ FINDINGS_COUNT: <integer — count of BLOCK-severity findings only>
 RECOMMENDATIONS: <comma-separated captured issue numbers for RECOMMEND findings, or "none">
 ```
 
-**Escalation.** Round 3 BLOCK: include a clear `@vojtech-stas` mention in the verdict body and append `ESCALATE: needs-human` to the BLOCK trailer.
+**Escalation.** Round 3 BLOCK: mention the repo owner (resolve via `gh repo view --json owner -q .owner.login`) in the verdict body and append `ESCALATE: needs-human` to the BLOCK trailer.
 
 ---
 

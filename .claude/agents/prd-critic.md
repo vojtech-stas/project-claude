@@ -19,7 +19,7 @@ Critic-loop convention (matches `slicer-critic`): **max 3 rounds, BLOCK output i
 
 You will be given EITHER:
 - A draft PRD as inline markdown (typical case — invoked by `/to-prd` before the issue is posted), AND optionally one or more draft ADRs alongside; OR
-- A posted PRD issue reference (e.g., `vojtech-stas/project-claude#NN`) — in which case fetch via `gh issue view`.
+- A posted PRD issue reference (e.g., `<owner>/<repo>#NN`) — in which case fetch via `gh issue view`.
 
 You will also be told the **round number** (1, 2, or 3). If not stated, assume round 1.
 
@@ -195,7 +195,7 @@ gh issue comment <PRD-issue-number> --body-file <tempfile>
 ```
 This is your output channel, not an optional courtesy — round counts are recovered from these comments by the PRD #651 collector. If the PRD issue is not yet posted (still a draft), return the verdict inline to the calling agent instead.
 
-The Rubric line items map 1:1 to the 6 criteria above plus the ADR-consistency sub-check. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and include a clear `@vojtech-stas` mention in the verdict body. The calling agent applies the `needs-human` label to the draft (or to the posted PRD issue if already posted) and posts a summary comment on the parent grill-session context per PRD #3 I5.
+The Rubric line items map 1:1 to the 6 criteria above plus the ADR-consistency sub-check. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and mention the repo owner (resolve via `gh repo view --json owner -q .owner.login`) in the verdict body. The calling agent applies the `needs-human` label to the draft (or to the posted PRD issue if already posted) and posts a summary comment on the parent grill-session context per PRD #3 I5.
 
 **Open-question → captured issue** (per ADR-0008 D8 + ADR-0009 D2). When an Open question surfaces during PRD review that warrants future-PRD treatment, you MUST create a `captured`-labeled GitHub Issue to track it and immediately invoke `/promote-to-backlog <N>` per ADR-0008 D3 inline-firing convention. Mandatory per CLAUDE.md rule #11; the autopilot's `backlog-critic` decides quality downstream, not the prd-critic.
 

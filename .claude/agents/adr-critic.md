@@ -161,7 +161,7 @@ gh issue comment <PRD-issue-number> --body-file <tempfile>
 ```
 This is your output channel, not an optional courtesy — round counts are recovered from these comments. If no PRD issue exists (pure draft review), return the verdict inline to the calling agent instead.
 
-The Rubric line items map 1:1 to the 6 criteria above. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and include a clear `@vojtech-stas` mention in the verdict body. The calling agent applies the `needs-human` label to the draft-tracking issue (or to the posted ADR-tracking issue if already posted) and posts a summary comment on the parent grill-session / PRD context.
+The Rubric line items map 1:1 to the 6 criteria above. On round-3 BLOCK, append `ESCALATE: needs-human` to the trailer and mention the repo owner (resolve via `gh repo view --json owner -q .owner.login`) in the verdict body. The calling agent applies the `needs-human` label to the draft-tracking issue (or to the posted ADR-tracking issue if already posted) and posts a summary comment on the parent grill-session / PRD context.
 
 **ADR Open-question → captured issue** (per ADR-0008 D8 + ADR-0009 D2). When ADR Open questions surface during review that warrant future-PRD tracking, you MUST create a `captured`-labeled GitHub Issue and immediately invoke `/promote-to-backlog <N>` per ADR-0008 D3 inline-firing convention. Mandatory per CLAUDE.md rule #11; the autopilot's `backlog-critic` decides quality downstream.
 

@@ -33,6 +33,7 @@ def _gh_list(args: list, timeout: int = 10) -> list:
             ["gh"] + args,
             capture_output=True,
             text=True,
+            encoding='utf-8',
             timeout=timeout,
             cwd=str(_WORKITEMS_REPO_ROOT),
             stdin=subprocess.DEVNULL,

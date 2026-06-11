@@ -2459,12 +2459,16 @@ registerTabHook('live', startLaneB);
 
 // Edge state → display color (also used to paint topology nodes)
 const _EDGE_STATE_COLORS = {
-  'confirmed':     '#3fb950',   // green  — predicate true
-  'missing':       '#ef4444',   // red    — predicate false, run past the stage
-  'not-reached':   '#8b949e',   // muted  — in-flight / ended early; NEVER red
-  'not-exercised': '#8b949e',   // muted  — conditional not triggered; NEVER red
-  'unexpected':    '#f97316',   // orange — no declared edge for this evidence
-  'not-evaluated': '#4b5563',   // dark   — non-github tier (runtime/unmeasurable)
+  'confirmed':          '#3fb950',   // green  — predicate true (github)
+  'missing':            '#ef4444',   // red    — predicate false, run past the stage
+  'not-reached':        '#8b949e',   // muted  — in-flight / ended early; NEVER red
+  'not-exercised':      '#8b949e',   // muted  — conditional not triggered; NEVER red
+  'unexpected':         '#f97316',   // orange — no declared edge for this evidence
+  'not-evaluated':      '#4b5563',   // dark   — non-github tier (legacy fallback)
+  // ADR-0055 D1: runtime-tier second-class states
+  'runtime-confirmed':  '#86efac',   // green-tint  — observed in event log
+  'runtime-unobserved': '#f97316',   // orange      — capture live but event missing
+  'not-observable':     '#4b5563',   // neutral/dark — capture dead in window
 };
 
 // Cached list of closed PRD runs (populated by loadTrailRuns on page load)
@@ -2654,12 +2658,15 @@ function _renderTrailReport(report, container) {
   // Legend
   let html = '<div class="trail-legend">';
   const legendItems = [
-    ['confirmed',     'green'],
-    ['missing',       'red'],
-    ['not-reached',   'muted gray'],
-    ['not-exercised', 'muted gray'],
-    ['unexpected',    'orange'],
-    ['not-evaluated', 'dark (runtime/unmeasurable tier)'],
+    ['confirmed',          'green (github verified)'],
+    ['runtime-confirmed',  'green-tint (runtime observed)'],
+    ['missing',            'red'],
+    ['not-reached',        'muted gray'],
+    ['not-exercised',      'muted gray'],
+    ['unexpected',         'orange'],
+    ['runtime-unobserved', 'orange (capture live, event absent)'],
+    ['not-observable',     'dark (capture dead in window)'],
+    ['not-evaluated',      'dark (unmeasurable tier)'],
   ];
   for (const [state, label] of legendItems) {
     const color = _EDGE_STATE_COLORS[state] || '#8b949e';
@@ -2689,7 +2696,7 @@ function _renderTrailReport(report, container) {
     </thead>
     <tbody>`;
 
-  for (const [tier, label] of [['github', 'github (authoritative — evaluated)'], ['runtime', 'runtime (live enrichment — not compared)'], ['unmeasurable', 'unmeasurable (in-conversation — not compared)']]) {
+  for (const [tier, label] of [['github', 'github (authoritative — evaluated)'], ['runtime', 'runtime (ADR-0055 — second-class observed)'], ['unmeasurable', 'unmeasurable (in-conversation — not compared)']]) {
     const rows = byTier[tier] || [];
     if (rows.length === 0) continue;
     html += `<tr class="trail-tier-header"><td colspan="4">${escHtml(label)} — ${rows.length} edge(s)</td></tr>`;
@@ -2699,8 +2706,8 @@ function _renderTrailReport(report, container) {
       const detail = escHtml(info.detail || '');
       const req = info.required || '';
       const reqColor = req === 'always' ? 'var(--text)' : 'var(--muted)';
-      // Dim not-evaluated rows (non-github tier)
-      const rowOpacity = state === 'not-evaluated' ? 'opacity:0.5;' : '';
+      // Dim not-evaluated rows (unmeasurable tier only); runtime rows get full opacity
+      const rowOpacity = state === 'not-evaluated' && tier === 'unmeasurable' ? 'opacity:0.5;' : '';
       html += `<tr style="border-bottom:1px solid var(--border);${rowOpacity}">
         <td style="padding:4px 8px;font-weight:600;font-size:10px;">${edgeId}</td>
         <td style="padding:4px 8px;font-size:10px;color:${reqColor};">${req}</td>
@@ -2764,18 +2771,22 @@ function _paintTopologyStates(report) {
     const evidence = edgeInfo.evidence || 'github';
     const state    = edgeInfo.state    || 'not-evaluated';
 
-    // Non-github tiers: state is always "not-evaluated"; keep declared neutral color
-    if (evidence !== 'github') continue;
+    // ADR-0055 D1: runtime-tier edges now get second-class observation states.
+    // Paint them with runtime state colors; non-runtime non-github keeps neutral.
+    if (evidence !== 'github' && evidence !== 'runtime') continue;
+    if (evidence !== 'github' && state === 'not-evaluated') continue;
 
     let color, width;
     if (state === 'confirmed') {
-      color = '#3fb950';  width = WIDTH_CONFIRMED;  // green
+      color = '#3fb950';  width = WIDTH_CONFIRMED;  // green (github)
+    } else if (state === 'runtime-confirmed') {
+      color = '#86efac';  width = WIDTH_CONFIRMED;  // green-tint (runtime)
     } else if (state === 'missing') {
       color = '#ef4444';  width = WIDTH_MISSING;    // red
-    } else if (state === 'unexpected') {
+    } else if (state === 'unexpected' || state === 'runtime-unobserved') {
       color = '#f97316';  width = WIDTH_MISSING;    // orange
     } else {
-      // not-reached / not-exercised / not-evaluated: neutral; NEVER drift-red
+      // not-reached / not-exercised / not-evaluated / not-observable: neutral; NEVER red
       color = '#4b5563';  width = WIDTH_DEFAULT;    // dark muted
     }
 

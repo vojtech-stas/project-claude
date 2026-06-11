@@ -173,11 +173,6 @@ query($n:Int!){
 }
 """
 
-# Keep _GQL_QUERY as an alias so any external import expecting the old name
-# continues to resolve (but owner/name remain as __OWNER__/__NAME__ tokens —
-# callers MUST use _gql_query_for_slug() to get a usable query).
-_GQL_QUERY = _GQL_QUERY_TEMPLATE
-
 # ---------------------------------------------------------------------------
 # CRITIC trailer parse helpers
 # ---------------------------------------------------------------------------

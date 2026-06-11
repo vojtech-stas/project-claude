@@ -1817,16 +1817,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_error(500, str(e))
 
         elif path == "/api/comparison":
-            # GET /api/comparison?prd=N — comparison report for a PRD (ADR-0053 D3).
+            # GET /api/comparison?prd=N[&format=download] — comparison report (ADR-0053 D3).
+            # ?format=download serves identical JSON with Content-Disposition attachment.
             prd_raw = query.get("prd", [""])[0]
             if not prd_raw or not prd_raw.isdigit():
                 self._send_error(400, "prd parameter required (integer)")
                 return
+            fmt = query.get("format", [""])[0]
             try:
                 trail = get_trail(int(prd_raw))
                 spec = get_spec_for_compare()
                 report = compare(spec, trail)
-                self._send_json(report)
+                if fmt == "download":
+                    import json as _json
+                    body = _json.dumps(report, indent=2).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header(
+                        "Content-Disposition",
+                        f'attachment; filename="prd-{prd_raw}-comparison.json"',
+                    )
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self._send_json(report)
             except Exception as e:
                 self._send_error(500, str(e))
 

@@ -1,6 +1,6 @@
 # project-claude workflow dashboard
 
-Local web visualizer for the project's autonomous pipeline. Slice 1 of [PRD #345](https://github.com/vojtech-stas/project-claude/issues/345).
+Local web visualizer for the project's autonomous pipeline.
 
 ## Usage
 
@@ -14,8 +14,11 @@ Then open `http://localhost:8765` in any modern browser.
 
 ## Tabs
 
-- **Architecture** — pipeline mermaid diagram with evidence-tier styling (github/runtime/unmeasurable edges) + auto-discovered component graph (skills, agents, hooks, ADRs). Includes a per-run Trail comparison panel: run picker, per-edge states (confirmed/missing/not-reached/not-exercised/unexpected), violation detectors (unreviewed-merge, no-closes-slice, slice-no-pr), and repo rollup (PASS/FAIL per run PASS definition in ADR-0053 D3). Click any node to view its file.
-- **Live** — placeholder; real-time event stream ships in slice 2 of PRD #345.
+- **Architecture** — pipeline mermaid diagram with evidence-tier styling (github/runtime/unmeasurable edges) + auto-discovered component graph (skills, agents, hooks, ADRs). Includes a per-run Trail comparison panel: run picker, per-edge states (confirmed/missing/not-reached/not-exercised/unexpected), violation detectors (unreviewed-merge, no-closes-slice, slice-no-pr), and repo rollup (PASS/FAIL per run PASS definition in ADR-0053 D3). Each comparison view shows a prominent **declared == measured: PASS/FAIL banner** (derived from `run_pass` in the comparison report) plus a **Download report** link serving the full JSON report as an attachment. Click any node to view its file.
+- **Live** — two-lane real-time view of agent work in flight (PRD #680):
+  - **Lane A — run progress (artifact-fed, hook-independent):** polls `/api/live-progress` (backed by `dashboard/collector.py`) to show the most recent open PRD's per-slice stage states (PRD posted, slices open/closed, PR open/merged, reviewer verdict rounds, production-verify) with timestamps. Works even when Claude Code hooks are dead (e.g. resumed sessions never register hooks — a known Claude Code behavior).
+  - **Lane B — session feed (hook-fed, incremental):** polls `/api/runs?since=<cursor>` with a byte-cursor against `.claude/logs/workflow-events.jsonl`. Reads only appended bytes (O(delta)), resets cursor on truncation. Groups events by `session_id`; default selection is the most recent session with ≥1 event. `agent_complete` events whose `tail` field contains a fenced `VERDICT: APPROVE|BLOCK` line render an APPROVE/BLOCK badge (live enrichment only — authoritative verdicts remain GitHub comments per ADR-0053 D1).
+  - **Status pills:** capture pill (`LIVE — last event Ns ago` when fresh; `INACTIVE — this session never registered hooks` when dead) and collector pill (last successful `gh` fetch age / auth-dead warning / `OFFLINE — showing cached trails`). Honest degradation: Lane A runs independently when Lane B is inactive.
 - **Health** — DOCS-1..DOCS-10 audit-meta grid, AS-* audit-subagents grid, cascade-finder status. Click any FAIL row to expand details.
 
 ## Configuration
@@ -51,7 +54,3 @@ Solo developer (you). Observation tool; advisory only. Does not replace `/audit-
 ## Fixtures
 
 `dashboard/fixtures/` contains sample payloads used by `tools/ci-checks.sh` CHECK 8 to mechanically validate Agent-hook jq paths. Regenerate from a real `PostToolUse·Agent` payload if Claude Code's hook schema changes.
-
-## Roadmap
-
-- **Slice 2 of PRD #345** — Live event stream (SSE from `.claude/logs/workflow-events.jsonl`) + SessionStart auto-start hook + ADR-0033.

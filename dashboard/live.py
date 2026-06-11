@@ -64,56 +64,95 @@ def _live_poll_log_path() -> Path:
     return _WORKFLOW_LOG
 
 
+def _encode_cursor(mtime_int: int, byte_offset: int) -> str:
+    """Encode file identity + byte offset as an opaque cursor string.
+
+    Format: "<mtime_int>:<byte_offset>"  (both non-negative integers).
+    Clients treat this as opaque and send it back verbatim.
+    """
+    return f"{mtime_int}:{byte_offset}"
+
+
+def _decode_cursor(cursor_raw: str) -> tuple[int | None, int]:
+    """Decode a cursor string into (mtime_int_or_None, byte_offset).
+
+    Bare-int legacy cursors (from old clients) cannot carry file identity,
+    so they decode to (None, 0) which triggers reset:true on the next poll.
+    Unknown/malformed cursors also decode to (None, 0) → reset:true.
+    """
+    if cursor_raw is None:
+        return (None, 0)
+    s = str(cursor_raw).strip()
+    if ":" in s:
+        parts = s.split(":", 1)
+        try:
+            mtime_int = int(parts[0])
+            byte_offset = int(parts[1])
+            if byte_offset < 0:
+                return (None, 0)
+            return (mtime_int, byte_offset)
+        except (ValueError, IndexError):
+            return (None, 0)
+    # Bare integer — legacy client; cannot verify file identity → reset
+    return (None, 0)
+
+
 def serve_live_poll(cursor_raw: str) -> dict:
     """Stat the log, seek to cursor, parse only appended bytes.
 
-    Returns {cursor: int, events: list, reset: bool, collector_status: dict}.
-    File identity = (size, mtime) tuple — st_ino is unreliable on Windows.
-    Identity change or size < cursor → reset cursor to 0, reset:true.
+    Returns {cursor: str, events: list, reset: bool, collector_status: dict}.
+    File identity = mtime (truncated to integer seconds) — st_ino is unreliable
+    on Windows.  Identity change or size < byte_offset → reset cursor, reset:true.
+    Same-size different-content replacement is detected via mtime change.
+
+    Cursor encoding: "<mtime_int>:<byte_offset>" (opaque to clients).
+    Bare-int legacy cursors (old clients) → (None, 0) → reset:true on first poll.
     collector_status is read from the in-memory live-progress cache (zero
     extra network cost — same data _build_live_progress already computed).
     """
     log_path = _live_poll_log_path()
     if not log_path.exists():
-        return {"cursor": 0, "events": [], "reset": False,
+        return {"cursor": _encode_cursor(0, 0), "events": [], "reset": False,
                 "collector_status": _read_collector_status_from_cache()}
 
-    try:
-        cursor = int(cursor_raw)
-    except (TypeError, ValueError):
-        cursor = 0
+    prev_mtime, byte_offset = _decode_cursor(cursor_raw)
 
     try:
         st = log_path.stat()
         size = st.st_size
-        mtime = st.st_mtime
+        cur_mtime_int = int(st.st_mtime)
     except OSError:
-        return {"cursor": 0, "events": [], "reset": False,
+        return {"cursor": _encode_cursor(0, 0), "events": [], "reset": False,
                 "collector_status": _read_collector_status_from_cache()}
 
-    # File identity encoded in cursor: we embed (mtime_int, byte_offset) as a
-    # single opaque integer only on the server side. Simpler: just use raw byte
-    # offset and detect resets by size < cursor (truncation) or caller passing 0.
     reset = False
-    if cursor < 0 or cursor > size:
-        # Truncation or cursor from a different file lifetime → full re-read
-        cursor = 0
+
+    # File identity check: mtime mismatch means a different file (even same size)
+    if prev_mtime is None or prev_mtime != cur_mtime_int:
+        byte_offset = 0
         reset = True
 
-    if cursor == size:
+    # Truncation/corruption: byte_offset past end of file
+    if byte_offset > size:
+        byte_offset = 0
+        reset = True
+
+    if byte_offset == size:
         # Nothing new
-        return {"cursor": cursor, "events": [], "reset": reset,
+        return {"cursor": _encode_cursor(cur_mtime_int, byte_offset),
+                "events": [], "reset": reset,
                 "collector_status": _read_collector_status_from_cache()}
 
     try:
         with log_path.open("rb") as fh:
-            fh.seek(cursor)
-            chunk = fh.read(size - cursor)
+            fh.seek(byte_offset)
+            chunk = fh.read(size - byte_offset)
     except OSError:
-        return {"cursor": cursor, "events": [], "reset": reset,
+        return {"cursor": _encode_cursor(cur_mtime_int, byte_offset),
+                "events": [], "reset": reset,
                 "collector_status": _read_collector_status_from_cache()}
 
-    new_cursor = cursor + len(chunk)
+    new_offset = byte_offset + len(chunk)
     text = chunk.decode("utf-8", errors="replace")
     events = []
     for line in text.splitlines():
@@ -134,7 +173,8 @@ def serve_live_poll(cursor_raw: str) -> dict:
             continue
         events.append(obj)
 
-    return {"cursor": new_cursor, "events": events, "reset": reset,
+    return {"cursor": _encode_cursor(cur_mtime_int, new_offset),
+            "events": events, "reset": reset,
             "collector_status": _read_collector_status_from_cache()}
 
 
@@ -232,10 +272,17 @@ def _capture_pill_state() -> dict:
                 "last_event_s": None}
 
 
-def _resolve_open_prd() -> int | None:
-    """Return the issue number of the most recent open prd-labeled issue.
+def _resolve_open_prd() -> dict:
+    """Return a typed result for the most recent open prd-labeled issue.
 
-    Uses gh CLI; returns None on any error.
+    Returns a dict with keys:
+        state: "ok" | "empty" | "error"
+        number: int | None   — issue number when state == "ok"
+        label:  str          — human-readable reason (for error/empty)
+
+    "ok"    — gh succeeded and found an open PRD.
+    "empty" — gh succeeded but there is no open PRD.
+    "error" — gh CLI unavailable, timed out, or returned non-zero exit.
     """
     try:
         result = subprocess.run(
@@ -255,13 +302,18 @@ def _resolve_open_prd() -> int | None:
             stdin=subprocess.DEVNULL,
         )
         if result.returncode != 0:
-            return None
+            return {"state": "error", "number": None,
+                    "label": "gh CLI unavailable — check auth/PATH"}
         items = json.loads(result.stdout)
         if not items:
-            return None
-        return items[0]["number"]
-    except Exception:
-        return None
+            return {"state": "empty", "number": None, "label": "No open PRD"}
+        return {"state": "ok", "number": items[0]["number"], "label": ""}
+    except FileNotFoundError:
+        return {"state": "error", "number": None,
+                "label": "gh CLI unavailable — check auth/PATH"}
+    except Exception as exc:
+        return {"state": "error", "number": None,
+                "label": f"gh CLI unavailable — {exc}"}
 
 
 def _build_live_progress() -> dict:
@@ -270,15 +322,30 @@ def _build_live_progress() -> dict:
     Called from the background thread; never from an HTTP handler.
     """
     pill = _capture_pill_state()
-    prd_number = _resolve_open_prd()
-    if prd_number is None:
+    prd_result = _resolve_open_prd()
+
+    if prd_result["state"] == "error":
         return {
             "prd_number": None,
             "prd_title": None,
             "slices": [],
-            "collector_status": {"state": "ok", "label": "No open PRD"},
+            "collector_status": {
+                "state": "error",
+                "label": prd_result["label"],
+            },
             "capture_pill": pill,
         }
+
+    if prd_result["state"] == "empty":
+        return {
+            "prd_number": None,
+            "prd_title": None,
+            "slices": [],
+            "collector_status": {"state": "empty", "label": "No open PRD"},
+            "capture_pill": pill,
+        }
+
+    prd_number = prd_result["number"]
 
     trail = get_trail(prd_number)
     _cs_raw = trail.get("collector_status", "")

@@ -13,7 +13,7 @@ Per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.m
 
 ## When invoked
 
-You will be given EITHER a PRD reference (e.g., `vojtech-stas/project-claude#3` or issue URL) OR the full PRD markdown body inline. Default to GitHub issue reference unless the prompt clearly contains the PRD text inline.
+You will be given EITHER a PRD reference (e.g., `<owner>/<repo>#3` or issue URL) OR the full PRD markdown body inline. Default to GitHub issue reference unless the prompt clearly contains the PRD text inline.
 
 ## Mandatory reading order (do these BEFORE generating)
 

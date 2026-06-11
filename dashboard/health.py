@@ -229,8 +229,8 @@ def check_docs6_glossary_md_refs() -> dict:
     offenders = []
     for md_file in _HEALTH_REPO_ROOT.rglob("*.md"):
         rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
-        # Skip .git, worktrees, tool-results, decisions/
-        if any(skip in rel for skip in [".git/", "worktrees/", "tool-results/", "decisions/"]):
+        # Skip .git, worktrees, tool-results, decisions/, .claude/logs/
+        if any(skip in rel for skip in [".git/", "worktrees/", "tool-results/", "decisions/", ".claude/logs/"]):
             continue
         if rel in allowlist:
             continue
@@ -252,7 +252,7 @@ def check_docs7_adr_citations() -> dict:
     offenders = []
     for md_file in _HEALTH_REPO_ROOT.rglob("*.md"):
         rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
-        if ".git/" in rel or "worktrees/" in rel:
+        if ".git/" in rel or "worktrees/" in rel or ".claude/logs/" in rel:
             continue
         try:
             text = md_file.read_text(encoding="utf-8", errors="replace")

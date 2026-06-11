@@ -1060,8 +1060,9 @@ async function loadArchitecture() {
  *   nodes: { id: { kind, label, stage, path } }
  *   edges: [ { id, from_node, to_node, evidence, required, predicate, label, style } ]
  *
- * BFS-assigns left→right level from 'user' via non-BLOCK forward edges.
- * SS side-workflow nodes not reachable from 'user' are assigned level 10.
+ * Compact staged-tree layout (slice #705): shortest-path BFS from 'user'
+ * over solid always-edges; forward/backward attach to fixpoint; artifact
+ * re-pinning; level compression; spanning-tree edge skeleton overlay.
  *
  * Edge tier styling (ADR-0053 D2):
  *   required:always + solid      → standard gray
@@ -1178,10 +1179,16 @@ function renderTopologyGraph(data) {
   }
 
   // =========================================================================
-  // DECLARED topology — SPEC v2 edges sequential flow layout.
-  // BFS level assignment from 'user' via non-BLOCK forward edges.
-  // BLOCK edges and 'conditional' back-edges excluded from BFS to prevent
-  // level regression (same guard as PR #637 fixed).
+  // DECLARED topology — compact staged tree layout (slice #705).
+  // Prototype C level assignment: shortest-path BFS from 'user' over solid
+  // always-edges only (BLOCK + dashed-conditional excluded from spine).
+  // Forward/backward attach of weakly-connected nodes to fixpoint (5-pass cap).
+  // Artifact nodes re-pinned to min(non-BLOCK predecessor)+1, iterated.
+  // Used levels compressed to consecutive integers; leftovers → maxLevel+1.
+  // NOTE: lv > cur longest-path re-deepening rule is GONE (PR #637 lesson kept).
+  // Prototype D edge split: BFS spanning tree = tier palette + labels;
+  // non-tree edges = faint #374151 overlay, alternating curvedCW/CCW, no labels.
+  // Spec edge ids always kept in title — _paintTopologyStates contract.
   // =========================================================================
 
   // Collect all unique node IDs referenced in SPEC edges.
@@ -1195,40 +1202,81 @@ function renderTopologyGraph(data) {
     allNodeIds.add(nodeId);
   }
 
-  // BFS level assignment: start from 'user'; skip BLOCK back-edges.
-  const bfsLevels = {};
-  const bfsQueue = [];
-  function bfsEnqueue(id, lv) {
-    const cur = bfsLevels[id];
-    // Cap lv at node count to guard against cycles (PR #637 lesson).
-    if ((cur === undefined || lv > cur) && lv < allNodeIds.size) {
-      bfsLevels[id] = lv;
-      bfsQueue.push([id, lv]);
-    }
+  // ---- Helpers ----
+  function _isBlockEdge(e) {
+    return e.style === 'dashed' && (e.label || '').toUpperCase().includes('BLOCK');
   }
-  // Build adjacency excluding BLOCK back-edges
-  const bfsAdj = {};
+
+  // ---- Step 1: shortest-path BFS from 'user' over solid always-edges only ----
+  // Spine adjacency: exclude BLOCK edges AND dashed-conditional edges.
+  const spineAdj = {};
   for (const e of specEdges) {
     if (!e.from_node || !e.to_node) continue;
-    const isDashed = e.style === 'dashed';
-    const isBlock = isDashed && (e.label || '').toUpperCase().includes('BLOCK');
-    if (isBlock) continue;
-    if (!bfsAdj[e.from_node]) bfsAdj[e.from_node] = [];
-    bfsAdj[e.from_node].push(e.to_node);
+    if (_isBlockEdge(e)) continue;
+    if (e.style === 'dashed' && e.required === 'conditional') continue;
+    (spineAdj[e.from_node] = spineAdj[e.from_node] || []).push(e.to_node);
   }
-  bfsEnqueue('user', 0);
+  const bfsLevels = {};
+  bfsLevels['user'] = 0;
+  const bfsQ = ['user'];
   let qi = 0;
-  while (qi < bfsQueue.length) {
-    const [node, lv] = bfsQueue[qi++];
-    for (const nxt of (bfsAdj[node] || [])) {
-      bfsEnqueue(nxt, lv + 1);
+  while (qi < bfsQ.length) {
+    const cur = bfsQ[qi++];
+    for (const nxt of (spineAdj[cur] || [])) {
+      if (bfsLevels[nxt] === undefined) { bfsLevels[nxt] = bfsLevels[cur] + 1; bfsQ.push(nxt); }
     }
   }
-  // Assign level 10 to SS / unreachable nodes (side-workflow lane)
-  for (const nodeId of allNodeIds) {
-    if (bfsLevels[nodeId] === undefined) {
-      bfsLevels[nodeId] = 10;
+
+  // ---- Step 2: forward/backward attach of weakly-connected nodes to fixpoint ----
+  // Forward:  unleveled successor of a leveled node → pred+1
+  // Backward: unleveled source feeding a leveled node → min(succ)-1
+  // 5-pass cap guards against cycles in attach phase.
+  for (let pass = 0; pass < 5; pass++) {
+    let attached = false;
+    for (const e of specEdges) {
+      if (!e.from_node || !e.to_node || _isBlockEdge(e)) continue;
+      if (bfsLevels[e.from_node] !== undefined && bfsLevels[e.to_node] === undefined) {
+        bfsLevels[e.to_node] = bfsLevels[e.from_node] + 1;
+        attached = true;
+      } else if (bfsLevels[e.to_node] !== undefined && bfsLevels[e.from_node] === undefined) {
+        bfsLevels[e.from_node] = Math.max(0, bfsLevels[e.to_node] - 1);
+        attached = true;
+      }
     }
+    if (!attached) break;
+  }
+
+  // ---- Step 3: artifact re-pinning — level = min(non-BLOCK predecessor levels)+1 ----
+  // Build predecessor map (all non-BLOCK edges)
+  const _preds = {};
+  for (const e of specEdges) {
+    if (!e.from_node || !e.to_node) continue;
+    if (_isBlockEdge(e)) continue;
+    (_preds[e.to_node] = _preds[e.to_node] || []).push(e.from_node);
+  }
+  function _isArtifact(id) { return specNodes[id] && specNodes[id].kind === 'artifact'; }
+  for (let pass = 0; pass < 5; pass++) {
+    let changed = false;
+    for (const id of allNodeIds) {
+      if (!_isArtifact(id)) continue;
+      const ps = (_preds[id] || []).map(p => bfsLevels[p]).filter(v => v !== undefined);
+      if (!ps.length) continue;
+      const want = Math.min(...ps) + 1;
+      if (bfsLevels[id] !== want) { bfsLevels[id] = want; changed = true; }
+    }
+    if (!changed) break;
+  }
+
+  // ---- Step 4: compress used levels to consecutive integers ----
+  const _usedLevels = [...new Set(Object.values(bfsLevels))].sort((a, b) => a - b);
+  const _levelRemap = {};
+  _usedLevels.forEach((lv, i) => { _levelRemap[lv] = i; });
+  for (const id of Object.keys(bfsLevels)) bfsLevels[id] = _levelRemap[bfsLevels[id]];
+  const _maxLv = _usedLevels.length - 1;
+
+  // ---- Step 5: unreachable nodes → maxLevel+1 ----
+  for (const nodeId of allNodeIds) {
+    if (bfsLevels[nodeId] === undefined) bfsLevels[nodeId] = _maxLv + 1;
   }
 
   // Render each unique node once.
@@ -1239,33 +1287,67 @@ function renderTopologyGraph(data) {
     addNode(nodeId, label, type, level, type === 'orchestrator' ? { size: 30 } : {});
   }
 
-  // Render edges with tier-aware styling (ADR-0053 D2).
-  // evidence='unmeasurable' → very faint dotted (in-conversation; never drift-colored)
-  // evidence='runtime'      → slightly lighter dashed (live enrichment; not compared)
-  // evidence='github'       → standard color (authoritative; evaluated in comparison)
-  // required='conditional' / style='dashed' → dashed regardless of evidence tier
+  // ---- Edge rendering: spanning-tree skeleton + faint non-tree overlay ----
+  // BFS spanning tree (first-visit edges, BLOCK excluded) → tier palette + labels.
+  // Non-tree edges → faint #374151 overlay, alternating curvedCW/CCW, no labels.
+  // Spec edge ids always in title — _paintTopologyStates contract.
+  const _treeEdgeIds = new Set();
+  const _treeEdgeKeys = new Set();
+  const _adjAll = {};
+  for (const e of specEdges) {
+    if (!e.from_node || !e.to_node || _isBlockEdge(e)) continue;
+    (_adjAll[e.from_node] = _adjAll[e.from_node] || []).push(e);
+  }
+  const _treeVisited = new Set(['user']);
+  const _treeQ = ['user'];
+  let _tqi = 0;
+  while (_tqi < _treeQ.length) {
+    const cur = _treeQ[_tqi++];
+    for (const e of (_adjAll[cur] || [])) {
+      if (!_treeVisited.has(e.to_node)) {
+        _treeVisited.add(e.to_node);
+        _treeEdgeIds.add(e.id || '');
+        _treeEdgeKeys.add(e.from_node + '>' + e.to_node);
+        _treeQ.push(e.to_node);
+      }
+    }
+  }
+
+  let _curveFlip = 0;
   for (const e of specEdges) {
     if (!e.from_node || !e.to_node) continue;
+    const isTree = _treeEdgeIds.has(e.id || '') ||
+                   (!e.id && _treeEdgeKeys.has(e.from_node + '>' + e.to_node));
     const isDashed = e.style === 'dashed';
     const ev = e.evidence || 'github';
-    let edgeColor, dashes, width;
-    if (ev === 'unmeasurable') {
-      edgeColor = '#374151';   // very faint — in-conversation; not compared
-      dashes = [3, 5];
-      width = 1;
-    } else if (ev === 'runtime') {
-      edgeColor = isDashed ? '#6b7280' : '#4b7593';  // blue-gray tint for runtime
-      dashes = isDashed;
-      width = isDashed ? 1 : 1.5;
+    const edgeObj = {
+      from: e.from_node, to: e.to_node, arrows: 'to',
+    };
+    // Spec id always in title — _paintTopologyStates + hover depend on it.
+    if (e.id) edgeObj.title = e.id;
+
+    if (isTree) {
+      // Tree skeleton: tier palette + labels, cubicBezier vertical, width ≥1.5
+      let color, dashes, width;
+      if (ev === 'unmeasurable')      { color = '#374151'; dashes = [3, 5]; width = 1; }
+      else if (ev === 'runtime')      { color = isDashed ? '#6b7280' : '#4b7593'; dashes = isDashed; width = isDashed ? 1 : 1.5; }
+      else                            { color = isDashed ? '#6b7280' : '#4b5563'; dashes = isDashed; width = isDashed ? 1 : 1.5; }
+      edgeObj.color  = { color, highlight: '#9ca3af' };
+      edgeObj.dashes = dashes;
+      edgeObj.width  = Math.max(width, 1.5);
+      edgeObj.smooth = { enabled: true, type: 'cubicBezier', forceDirection: 'vertical', roundness: 0.4 };
+      if (e.label) { edgeObj.label = e.label; edgeObj.font = { color: '#9ca3af', size: 9, face: 'IBM Plex Mono, monospace' }; }
     } else {
-      // github tier: authoritative
-      edgeColor = isDashed ? '#6b7280' : '#4b5563';
-      dashes = isDashed;
-      width = isDashed ? 1 : 1.5;
+      // Non-tree overlay: faint, no label, alternating curve direction
+      const isDashedOvl = ev === 'unmeasurable' ? [2, 5] : (isDashed ? [6, 4] : false);
+      edgeObj.color  = { color: '#374151', highlight: '#9ca3af', opacity: 0.65 };
+      edgeObj.width  = 1;
+      edgeObj.dashes = isDashedOvl;
+      edgeObj.smooth = { enabled: true, type: (_curveFlip++ % 2 === 0) ? 'curvedCW' : 'curvedCCW', roundness: 0.30 };
+      edgeObj.arrows = { to: { enabled: true, scaleFactor: 0.5 } };
+      // label intentionally omitted; hover shows title (spec id)
     }
-    const edgeLabel = e.label || undefined;
-    // Pass spec edge id so _paintTopologyStates can find vis edges by spec id
-    addEdge(e.from_node, e.to_node, edgeColor, dashes, width, edgeLabel, e.id || undefined);
+    edges.push(edgeObj);
   }
 
   // Create the vis-network
@@ -1277,13 +1359,13 @@ function renderTopologyGraph(data) {
       improvedLayout: false,
       hierarchical: {
         enabled: true,
-        direction: 'LR',
+        direction: 'UD',
         sortMethod: 'directed',
-        levelSeparation: 180,
-        nodeSpacing: 60,
-        treeSpacing: 100,
-        blockShifting: false,
-        edgeMinimization: false,
+        levelSeparation: 110,
+        nodeSpacing: 140,
+        treeSpacing: 120,
+        blockShifting: true,
+        edgeMinimization: true,
         parentCentralization: true,
       },
     },
@@ -1297,7 +1379,7 @@ function renderTopologyGraph(data) {
       selectConnectedEdges: true,
     },
     nodes: { borderWidth: 1.5 },
-    edges: { width: 1.5, selectionWidth: 3 },
+    edges: { selectionWidth: 3 },
     configure: { enabled: false },
   };
 

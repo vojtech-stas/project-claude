@@ -697,6 +697,38 @@
   .trail-run-badge-pass { background: var(--pass); color: #fff; }
   .trail-run-badge-fail { background: var(--fail); color: #fff; }
   .trail-run-meta { color: var(--muted); font-size: 11px; }
+  .trail-golden-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    border: 2px solid;
+  }
+  .trail-golden-banner.pass {
+    background: #0d2a0d;
+    border-color: var(--pass);
+    color: var(--green);
+  }
+  .trail-golden-banner.fail {
+    background: #2a0d0d;
+    border-color: var(--fail);
+    color: var(--red);
+  }
+  .trail-golden-banner a {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+  }
+  .trail-golden-banner a:hover { color: var(--text); border-color: var(--muted); }
   .trail-table-container {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -884,8 +916,9 @@
       </div>
     </div>
 
-    <!-- Per-run comparison output: run header + edge table + violations -->
+    <!-- Per-run comparison output: run header + golden-run banner + edge table + violations -->
     <div id="trail-run-header" class="trail-run-header" style="display:none;"></div>
+    <div id="trail-golden-banner" style="display:none;"></div>
     <div id="trail-table-container" class="trail-table-container">
       <span style="color:var(--muted);font-size:11px;">Select a PRD and click Run.</span>
     </div>
@@ -2300,6 +2333,7 @@ async function loadTrailComparison() {
   const statusEl = document.getElementById('trail-status');
   const container = document.getElementById('trail-table-container');
   const headerEl = document.getElementById('trail-run-header');
+  const bannerEl = document.getElementById('trail-golden-banner');
   const prd = parseInt(input.value, 10);
   if (!prd || isNaN(prd)) {
     statusEl.textContent = 'Enter a valid PRD number.';
@@ -2309,6 +2343,7 @@ async function loadTrailComparison() {
   statusEl.style.color = 'var(--muted)';
   container.innerHTML = '<span style="color:var(--muted);font-size:11px;">Loading…</span>';
   if (headerEl) headerEl.style.display = 'none';
+  if (bannerEl) bannerEl.style.display = 'none';
   try {
     // Fetch trail (for wall-time) and comparison report in parallel
     const [trailResp, compResp] = await Promise.all([
@@ -2329,6 +2364,12 @@ async function loadTrailComparison() {
       headerEl.style.display = 'flex';
     }
 
+    // Render golden-run PASS/FAIL banner + download link
+    if (bannerEl) {
+      _renderGoldenBanner(bannerEl, report, prd);
+      bannerEl.style.display = 'flex';
+    }
+
     // Render comparison table
     _renderTrailReport(report, container);
 
@@ -2343,6 +2384,28 @@ async function loadTrailComparison() {
     statusEl.style.color = 'var(--red)';
     container.innerHTML = `<span style="color:var(--red);font-size:11px;">${escHtml(e.message)}</span>`;
   }
+}
+
+/**
+ * Render the prominent PASS/FAIL banner + "Download report" link for the selected run.
+ * The banner derives from report.run_pass (ADR-0053 D3).
+ */
+function _renderGoldenBanner(el, report, prd) {
+  const pass = report.run_pass;
+  const cls = pass ? 'pass' : 'fail';
+  const label = pass
+    ? 'declared == measured: PASS'
+    : 'declared ≠ measured: FAIL';
+  const viols = (report.violations || []).length;
+  const violNote = viols > 0
+    ? `<span style="font-size:11px;font-weight:400;">${viols} violation${viols !== 1 ? 's' : ''}</span>`
+    : '';
+  const downloadHref = `/api/comparison?prd=${prd}&format=download`;
+  el.className = `trail-golden-banner ${cls}`;
+  el.innerHTML =
+    `<span>${label}</span>` +
+    violNote +
+    `<a href="${downloadHref}" download="prd-${prd}-comparison.json">Download report</a>`;
 }
 
 /**

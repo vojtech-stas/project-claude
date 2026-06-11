@@ -521,273 +521,111 @@
     color: var(--muted);
     font-size: 12px;
   }
-  /* Flat event row in run */
-  .tree-row {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .tree-row:hover { background: #1c2128; }
-  .tree-ts { color: var(--muted); font-size: 10px; flex-shrink: 0; min-width: 160px; padding-top: 1px; }
-  .tree-icon { font-size: 10px; flex-shrink: 0; padding-top: 1px; }
-  .tree-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .tree-dur { color: var(--muted); font-size: 10px; flex-shrink: 0; padding-top: 1px; }
-  /* Agent node (collapsible) */
-  .agent-node {
-    margin: 2px 0;
-    border: 1px solid #21262d;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .agent-node-summary {
-    cursor: pointer;
-    padding: 4px 8px;
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    list-style: none;
-    background: #0f1318;
-  }
-  .agent-node-summary::-webkit-details-marker { display: none; }
-  .agent-node-summary::before {
-    content: '▶';
-    font-size: 8px;
-    color: var(--muted);
-    transition: transform 0.15s;
-    flex-shrink: 0;
-    margin-top: 2px;
-  }
-  details[open] > .agent-node-summary::before { transform: rotate(90deg); }
-  .agent-io {
-    padding: 8px 12px;
-    background: #0d1117;
-    border-top: 1px solid #21262d;
-    font-size: 10px;
-  }
-  .agent-io-label { color: var(--muted); margin-bottom: 3px; }
-  .agent-io pre {
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--muted);
-    margin: 0 0 8px 0;
-    font-size: 10px;
-    max-height: 120px;
-    overflow-y: auto;
-  }
-  .agent-children { padding: 4px 8px; background: #0a0e13; border-top: 1px solid #21262d; }
-  .child-row {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    padding: 3px 4px;
-    border-radius: 3px;
-    cursor: pointer;
-    margin-left: 12px;
-    border-left: 2px solid #21262d;
-    padding-left: 8px;
-  }
-  .child-row:hover { background: #1c2128; }
-  .child-detail { display: none; padding: 4px 4px 4px 22px; }
-  .child-detail pre { font-size: 10px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
-  /* Show older button */
-  .show-older-btn {
-    display: block;
-    width: 100%;
-    background: none;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    color: var(--muted);
-    font-family: var(--font);
-    font-size: 11px;
-    padding: 8px;
-    cursor: pointer;
-    margin-top: 8px;
-    text-align: center;
-  }
-  .show-older-btn:hover { color: var(--text); border-color: var(--muted); }
-  /* Context panel — work-items tree (Phase 3, slice #434) */
-  .context-panel {
-    background: var(--surface);
+  /* Lane B — session feed (slice #682) */
+  .lane-b {
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0;
-    font-size: 11px;
+    margin-top: 8px;
   }
-  .context-panel-header {
+  .lane-b-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    user-select: none;
-  }
-  .context-panel-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .context-panel-toggle {
-    color: var(--muted);
-    font-size: 11px;
-    transition: transform 0.15s;
-  }
-  .context-panel.open .context-panel-toggle { transform: rotate(90deg); }
-  .context-panel-body {
-    display: none;
+    gap: 12px;
     padding: 10px 14px;
-    gap: 14px;
-    flex-direction: column;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
   }
-  .context-panel.open .context-panel-body { display: flex; }
-  .workitems-section { display: flex; flex-direction: column; gap: 6px; }
-  .workitems-label {
-    color: var(--muted);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 2px;
+  .lane-b-header h3 { margin: 0; color: var(--text); font-size: 12px; font-weight: 600; }
+  .lane-b-session-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    max-width: 340px;
   }
-  .workitems-list { display: flex; flex-direction: column; gap: 3px; }
-  .workitem-row {
-    display: flex;
+  .collector-pill {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: #0a0e13;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    cursor: default;
+    margin-left: auto;
   }
-  .workitem-badge {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+  .collector-pill.ok   { border-color: var(--blue); color: var(--blue); }
+  .collector-pill.warn { border-color: var(--amber); color: var(--amber); }
+  .collector-pill.dead { border-color: var(--red); color: var(--red); }
+  .lane-b-events {
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 6px 0;
   }
-  .workitem-num {
+  .lane-b-empty {
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+    padding: 20px;
+  }
+  .lb-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 14px;
+    border-radius: 0;
+  }
+  .lb-row:hover { background: #1c2128; }
+  .lb-ts {
     color: var(--muted);
     font-size: 10px;
     flex-shrink: 0;
+    min-width: 54px;
   }
-  .workitem-title {
+  .lb-wt {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  .lb-event {
+    font-size: 11px;
+    flex-shrink: 0;
+    min-width: 110px;
     color: var(--text);
+  }
+  .lb-payload {
     font-size: 10px;
+    color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
   }
-  .workitems-unavail {
-    color: var(--muted);
-    font-style: italic;
-    font-size: 11px;
-    padding: 4px 0;
-  }
-  /* Critic verdicts + Run stats sections (Phase 3, slice #435) */
-  .cp-section { display: flex; flex-direction: column; gap: 6px; }
-  .cp-section-label {
-    color: var(--muted);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 2px;
-  }
-  .cp-none {
-    color: var(--muted);
-    font-style: italic;
-    font-size: 11px;
-    padding: 2px 0;
-  }
-  .verdicts-list { display: flex; flex-direction: column; gap: 3px; }
-  .verdict-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: #0a0e13;
-  }
-  .verdict-badge {
+  .lb-verdict {
     font-size: 9px;
     font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 1px 6px;
+    border-radius: 10px;
     flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    white-space: nowrap;
   }
-  .verdict-agent {
-    color: var(--text);
+  .lb-verdict-approve { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
+  .lb-verdict-block   { background: #2a0d0d; color: var(--red);   border: 1px solid var(--red); }
+  .lb-status-bar {
     font-size: 10px;
-    flex-shrink: 0;
-  }
-  .verdict-round {
     color: var(--muted);
-    font-size: 10px;
+    padding: 4px 14px 6px;
+    border-top: 1px solid var(--border);
   }
-  .stats-list { display: flex; flex-direction: column; gap: 3px; }
-  .stats-row {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    background: #0a0e13;
-  }
-  .stats-key {
-    color: var(--muted);
-    font-size: 10px;
-    flex-shrink: 0;
-    min-width: 80px;
-  }
-  .stats-val {
-    color: var(--text);
-    font-size: 10px;
-  }
-  /* Failures/escalations + Deferred captures sections (Phase 3, slice #436) */
-  .failures-list { display: flex; flex-direction: column; gap: 3px; }
-  .failure-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: #0a0e13;
-  }
-  .failure-badge {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-  .captures-list { display: flex; flex-direction: column; gap: 3px; }
-  .capture-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    background: #0a0e13;
-  }
-  .capture-badge {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 1px 5px;
-    border-radius: 3px;
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-  .capture-badge-backlog  { background: #2563eb; color: #fff; }
-  .capture-badge-captured { background: #4b5563; color: #d1d5db; }
 
   /* ---- Comparison view v2 (slice #654) ------------------------------------ */
   .trail-toolbar {
@@ -1082,10 +920,19 @@
       </table>
     </div>
     <div class="live-status-bar" id="live-status-bar"></div>
-    <!-- Lane B scaffold (ships in slice #682) -->
-    <div class="lane-b-scaffold">
-      <strong style="color:var(--text);">Lane B — session feed</strong>
-      <span style="margin-left:8px;color:var(--muted);">(ships in slice #682)</span>
+    <!-- Lane B: session feed (slice #682) -->
+    <div class="lane-b" id="lane-b">
+      <div class="lane-b-header">
+        <h3>Lane B &mdash; session feed</h3>
+        <select class="lane-b-session-select" id="lb-session-select" onchange="onLbSessionChange()">
+          <option value="">Loading sessions…</option>
+        </select>
+        <span class="collector-pill" id="collector-pill" title="Collector pill: last gh fetch age">—</span>
+      </div>
+      <div class="lane-b-events" id="lb-events">
+        <div class="lane-b-empty">Waiting for poll…</div>
+      </div>
+      <div class="lb-status-bar" id="lb-status-bar"></div>
     </div>
   </div>
 </div>
@@ -2006,8 +1853,6 @@ function renderCascade(cf) {
   el.innerHTML = `<p style="color:var(--muted);font-size:12px;">Available: ${cf.available ? '<span style="color:var(--pass)">yes</span>' : '<span style="color:var(--fail)">no</span>'}</p><p style="color:var(--muted);font-size:11px;margin-top:6px;">${escHtml(cf.detail||'')}</p>`;
 }
 
-// (toggleDetail defined in live-stream section below — handles both table-row and block)
-
 // Auto-load architecture tab on start; also kick off trail run picker
 window.addEventListener('load', () => {
   loadArchitecture().then(() => loadTrailRuns());
@@ -2131,12 +1976,234 @@ function startLiveProgress() {
   }, 25000);
 }
 
-// Patch switchTab to start Lane A when Live tab is first opened
+// Patch switchTab to start Lane A + Lane B when Live tab is first opened
 const _origSwitchTab = switchTab;
 window.switchTab = function(name, btn) {
   _origSwitchTab(name, btn);
-  if (name === 'live') startLiveProgress();
+  if (name === 'live') {
+    startLiveProgress();
+    startLaneB();
+  }
 };
+
+// ---------------------------------------------------------------------------
+// Lane B — byte-cursor session feed (slice #682)
+// ---------------------------------------------------------------------------
+// Polls /api/live-poll?cursor=N every ~4s while visible; pauses when hidden.
+// Strict session_id group-by (full window, no contiguity assumption).
+// Session picker defaults to most-recent session WITH ≥1 event.
+// agent_complete rows: VERDICT badge from tail (APPROVE/BLOCK); no badge if ambiguous.
+// wt field rendered as a small lane badge per row.
+// Collector pill sourced from /api/live-progress collector_status field.
+
+let _lbCursor = 0;
+let _lbSessions = {};      // sid -> {events: [], first_ts, last_ts}
+let _lbSessionOrder = [];  // sids newest-first
+let _lbSelectedSid = null;
+let _lbTimer = null;
+let _lbTabLoaded = false;
+
+// Parse a single agent_complete tail for a VERDICT line.
+// Returns "APPROVE", "BLOCK", or null (ambiguous/absent/conflicting).
+function parseTailVerdict(tail) {
+  if (!tail) return null;
+  // Match fenced trailer lines: VERDICT: APPROVE or VERDICT: BLOCK
+  const matches = [];
+  const re = /VERDICT\s*:\s*(APPROVE|BLOCK)\b/gi;
+  let m;
+  while ((m = re.exec(tail)) !== null) {
+    matches.push(m[1].toUpperCase());
+  }
+  if (matches.length === 0) return null;
+  // Multiple conflicting verdicts → no badge (ambiguous)
+  const unique = [...new Set(matches)];
+  if (unique.length > 1) return null;
+  return unique[0];
+}
+
+function lbEventPayload(ev) {
+  switch (ev.event) {
+    case 'agent_start':
+    case 'agent_complete':
+      return (ev.subagent_type ? ev.subagent_type.slice(0, 40) + ' ' : '') +
+             (ev.input ? ev.input.slice(0, 60) : '');
+    case 'bash_complete':
+      return ev.command ? ev.command.slice(0, 80) : '';
+    case 'skill_invoke':
+      return ev.skill ? ev.skill.slice(0, 60) : '';
+    case 'grill_qa':
+      return ev.question ? ev.question.slice(0, 60) : '';
+    default:
+      return '';
+  }
+}
+
+function lbFormatTime(tsStr) {
+  try {
+    const d = new Date(tsStr);
+    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  } catch(e) {
+    return tsStr || '';
+  }
+}
+
+function renderLbEvents() {
+  const el = document.getElementById('lb-events');
+  if (!el) return;
+  if (!_lbSelectedSid || !_lbSessions[_lbSelectedSid]) {
+    el.innerHTML = '<div class="lane-b-empty">No session selected or no events.</div>';
+    return;
+  }
+  const events = _lbSessions[_lbSelectedSid].events;
+  if (events.length === 0) {
+    el.innerHTML = '<div class="lane-b-empty">No events for this session yet.</div>';
+    return;
+  }
+  // newest-first display
+  const rows = events.slice().reverse().map(function(ev) {
+    const ts = lbFormatTime(ev.ts);
+    const wt = escHtml(ev.wt || '');
+    const evName = escHtml(ev.event || '');
+    const payload = escHtml(lbEventPayload(ev).trim());
+    let verdictHtml = '';
+    if (ev.event === 'agent_complete') {
+      const v = parseTailVerdict(ev.tail);
+      if (v === 'APPROVE') {
+        verdictHtml = '<span class="lb-verdict lb-verdict-approve">APPROVE</span>';
+      } else if (v === 'BLOCK') {
+        verdictHtml = '<span class="lb-verdict lb-verdict-block">BLOCK</span>';
+      }
+    }
+    return '<div class="lb-row">' +
+      '<span class="lb-ts">' + escHtml(ts) + '</span>' +
+      '<span class="lb-wt">' + wt + '</span>' +
+      '<span class="lb-event">' + evName + '</span>' +
+      '<span class="lb-payload">' + payload + '</span>' +
+      verdictHtml +
+      '</div>';
+  });
+  el.innerHTML = rows.join('');
+}
+
+function renderLbPicker() {
+  const sel = document.getElementById('lb-session-select');
+  if (!sel) return;
+  if (_lbSessionOrder.length === 0) {
+    sel.innerHTML = '<option value="">No sessions in log</option>';
+    return;
+  }
+  sel.innerHTML = _lbSessionOrder.map(function(sid) {
+    const info = _lbSessions[sid];
+    const shortSid = sid.slice(0, 8) + '…';
+    const count = info ? info.events.length : 0;
+    const ts = info && info.first_ts ? lbFormatTime(info.first_ts) : '';
+    const label = shortSid + (ts ? '  ' + ts : '') + '  (' + count + ' events)';
+    return '<option value="' + escHtml(sid) + '"' +
+      (sid === _lbSelectedSid ? ' selected' : '') +
+      '>' + escHtml(label) + '</option>';
+  }).join('');
+}
+
+function onLbSessionChange() {
+  const sel = document.getElementById('lb-session-select');
+  if (!sel) return;
+  _lbSelectedSid = sel.value || null;
+  renderLbEvents();
+}
+
+function updateLbCollectorPill(liveProgressData) {
+  // Collector pill reads from /api/live-progress collector_status field.
+  const pill = document.getElementById('collector-pill');
+  if (!pill) return;
+  if (!liveProgressData || !liveProgressData.collector_status) {
+    pill.textContent = '— collector';
+    pill.className = 'collector-pill';
+    return;
+  }
+  const cs = liveProgressData.collector_status;
+  pill.textContent = cs.label || cs.state || '—';
+  const state = (cs.state || '').toLowerCase();
+  if (state === 'ok' || state === 'live') {
+    pill.className = 'collector-pill ok';
+  } else if (state === 'auth_dead') {
+    pill.className = 'collector-pill dead';
+  } else if (state === 'offline') {
+    pill.className = 'collector-pill warn';
+  } else {
+    pill.className = 'collector-pill';
+  }
+}
+
+async function pollLaneB() {
+  const statusEl = document.getElementById('lb-status-bar');
+  try {
+    const resp = await fetch('/api/live-poll?cursor=' + _lbCursor);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+
+    if (data.reset) {
+      // File was truncated/rotated — reset full session state
+      _lbCursor = 0;
+      _lbSessions = {};
+      _lbSessionOrder = [];
+      _lbSelectedSid = null;
+    }
+
+    _lbCursor = data.cursor || 0;
+
+    let newEvents = 0;
+    (data.events || []).forEach(function(ev) {
+      const sid = ev.session_id;
+      if (!sid) return;
+      if (!_lbSessions[sid]) {
+        _lbSessions[sid] = {events: [], first_ts: ev.ts, last_ts: ev.ts};
+        // Insert newest-first: unshift since new sessions appear at end of file
+        _lbSessionOrder.unshift(sid);
+      }
+      _lbSessions[sid].events.push(ev);
+      _lbSessions[sid].last_ts = ev.ts;
+      newEvents++;
+    });
+
+    // Default selection: most recent session with ≥1 event
+    if (!_lbSelectedSid && _lbSessionOrder.length > 0) {
+      _lbSelectedSid = _lbSessionOrder[0];
+    }
+
+    if (newEvents > 0 || data.reset) {
+      renderLbPicker();
+      renderLbEvents();
+    }
+
+    if (statusEl) {
+      const ts = new Date().toLocaleTimeString();
+      const resetNote = data.reset ? ' (log reset)' : '';
+      statusEl.textContent = 'Last poll: ' + ts + resetNote +
+        ' — cursor ' + _lbCursor +
+        (newEvents > 0 ? ' — +' + newEvents + ' event(s)' : '');
+    }
+
+    // Also refresh collector pill from live-progress cache (no extra network cost:
+    // just use the cached value the server already has)
+    try {
+      const lp = await (await fetch('/api/live-progress')).json();
+      updateLbCollectorPill(lp);
+    } catch (_) {}
+
+  } catch (err) {
+    if (statusEl) statusEl.textContent = 'Poll error: ' + err.message;
+  }
+}
+
+function startLaneB() {
+  if (_lbTabLoaded) return;
+  _lbTabLoaded = true;
+  pollLaneB();
+  _lbTimer = setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    pollLaneB();
+  }, 4000);
+}
 
 // ---------------------------------------------------------------------------
 // Trail (PRD-run comparison) bare panel — slice 1 walking skeleton (ADR-0053)

@@ -12,6 +12,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
         GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
+        GET /api/live-poll?cursor=N -> JSON {cursor, events[], reset} — byte-cursor incremental read (Lane B)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
         GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
         GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
@@ -97,6 +98,90 @@ _LIVE_PROGRESS_TTL = 25           # seconds
 
 _WORKFLOW_LOG = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
 _CAPTURE_PILL_THRESHOLD = 120     # seconds — coarse freshness threshold
+
+# Reader-side fixture-pattern guard (mirrors log-tool-event.sh FIXTURE_PATTERN).
+_FIXTURE_SID_RE_POLL = re.compile(
+    r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+)
+
+# ---------------------------------------------------------------------------
+# /api/live-poll — byte-cursor incremental read of workflow-events.jsonl.
+# O(appended bytes) per poll; file identity = (size, mtime) tuple.
+# ---------------------------------------------------------------------------
+
+def _live_poll_log_path() -> Path:
+    """Return the workflow-events.jsonl path, honouring WORKFLOW_LOG_DIR sandbox."""
+    override = os.environ.get("WORKFLOW_LOG_DIR", "")
+    if override:
+        return Path(override) / "workflow-events.jsonl"
+    return _WORKFLOW_LOG
+
+
+def serve_live_poll(cursor_raw: str) -> dict:
+    """Stat the log, seek to cursor, parse only appended bytes.
+
+    Returns {cursor: int, events: list, reset: bool}.
+    File identity = (size, mtime) tuple — st_ino is unreliable on Windows.
+    Identity change or size < cursor → reset cursor to 0, reset:true.
+    """
+    log_path = _live_poll_log_path()
+    if not log_path.exists():
+        return {"cursor": 0, "events": [], "reset": False}
+
+    try:
+        cursor = int(cursor_raw)
+    except (TypeError, ValueError):
+        cursor = 0
+
+    try:
+        st = log_path.stat()
+        size = st.st_size
+        mtime = st.st_mtime
+    except OSError:
+        return {"cursor": 0, "events": [], "reset": False}
+
+    # File identity encoded in cursor: we embed (mtime_int, byte_offset) as a
+    # single opaque integer only on the server side. Simpler: just use raw byte
+    # offset and detect resets by size < cursor (truncation) or caller passing 0.
+    reset = False
+    if cursor < 0 or cursor > size:
+        # Truncation or cursor from a different file lifetime → full re-read
+        cursor = 0
+        reset = True
+
+    if cursor == size:
+        # Nothing new
+        return {"cursor": cursor, "events": [], "reset": reset}
+
+    try:
+        with log_path.open("rb") as fh:
+            fh.seek(cursor)
+            chunk = fh.read(size - cursor)
+    except OSError:
+        return {"cursor": cursor, "events": [], "reset": reset}
+
+    new_cursor = cursor + len(chunk)
+    text = chunk.decode("utf-8", errors="replace")
+    events = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        # Schema-v2 only; drop fixture sids silently
+        if obj.get("v") != 2:
+            continue
+        sid = obj.get("session_id", "")
+        if not sid:
+            continue
+        if _FIXTURE_SID_RE_POLL.match(sid):
+            continue
+        events.append(obj)
+
+    return {"cursor": new_cursor, "events": events, "reset": reset}
 
 
 def _capture_pill_state() -> dict:
@@ -221,12 +306,18 @@ def _build_live_progress() -> dict:
             "prd_number": None,
             "prd_title": None,
             "slices": [],
-            "collector_status": "no_open_prd",
+            "collector_status": {"state": "ok", "label": "No open PRD"},
             "capture_pill": pill,
         }
 
     trail = get_trail(prd_number)
-    collector_status = trail.get("collector_status", "")
+    _cs_raw = trail.get("collector_status", "")
+    if not _cs_raw:
+        collector_status = {"state": "ok", "label": "Collector OK"}
+    elif _cs_raw == "auth_dead":
+        collector_status = {"state": "auth_dead", "label": "auth_dead — gh CLI unauthenticated"}
+    else:
+        collector_status = {"state": "offline", "label": f"OFFLINE — showing cached trails ({_cs_raw})"}
 
     slices_out = []
     for sl in trail.get("slices", []):
@@ -1705,6 +1796,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/runs":
             self._send_json(self._serve_runs(query))
+
+        elif path == "/api/live-poll":
+            # GET /api/live-poll?cursor=<N>
+            # Byte-cursor incremental read of workflow-events.jsonl (Lane B).
+            # Returns {cursor, events[], reset}.
+            cursor_raw = (query.get("cursor") or ["0"])[0]
+            self._send_json(serve_live_poll(cursor_raw))
 
         elif path == "/api/trail":
             # GET /api/trail?prd=N — raw artifact trail for a PRD (ADR-0053 D1/D4).

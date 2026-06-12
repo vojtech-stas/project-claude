@@ -129,7 +129,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | README generator | `dashboard/server.py --generate-readme` | reads template + filesystem → writes `README.md`; reuses dashboard's `discover_*` engine; no LLM calls; per [ADR-0034](decisions/0034-build-orchestrator-and-generated-docs.md) D7 |
 | `/qa-review` skill | `.claude/skills/qa-review/SKILL.md` | clears `needs-human-check` QA residual queue: lists open issues, presents each via `AskUserQuestion`, accept→close / reject→relabel+capture; per [ADR-0040](decisions/0040-qa-human-residual-model.md) D4 |
 | CI gate workflow | `.github/workflows/ci.yml` | GitHub Actions workflow; fires on pull_request; runs `tools/ci-checks.sh`; job name `ci` is the R4 required-status-check context; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
-| CI check script | `tools/ci-checks.sh` | deterministic CLI-runnable checks (settings.json validity, README regen-clean, ≤72-char commit subjects, dangling ADR links, decisions/README.md index); run locally before pushing; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
+| CI check script | `tools/ci-checks.sh` | deterministic CLI-runnable checks (settings.json validity, README regen-clean, ≤72-char commit subjects, CHECK 4 dangling ADR links via registry delegation `python3 dashboard/health.py --check DOCS-7`, CHECK 5 decisions/README.md index via `--check DOCS-1`/`DOCS-2`); run locally before pushing; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1, [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
+| Health check registry CLI | `python dashboard/health.py --check <id>` / `--list` | run any registered DOCS-*/AS-* check headlessly; exit 0 on PASS/WARN, 1 on FAIL; `--list` prints all IDs; consumed by ci-checks.sh CHECK 4/5; per [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
 
 ---
 

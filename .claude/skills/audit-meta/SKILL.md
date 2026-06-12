@@ -161,6 +161,12 @@ The DOCS-1 through DOCS-11 checks are implemented in the **check registry** (`da
 
 **Rationale:** The captured-vs-backlog two-tier surfacing convention from [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../../decisions/0009-discipline-tightening.md) D2 applies to every agent and skill that instructs deferred-work capture. If any skill body says "capture as `backlog`-labeled", it tells agents to skip the `backlog-critic` gate — the exact #105/#107 regression. DOCS-10 extends the AS-ALL-4 subagent-only check to the full skill layer, completing the coverage. Scope is `.claude/agents/` AND `.claude/skills/` — a strict superset of AS-ALL-4.
 
+### DOCS-11 — no dead citations of fully-superseded ADRs in `.claude/` runtime prompts
+
+**Registry:** `python dashboard/health.py --check DOCS-11`
+
+**Rationale:** Runtime prompts (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/settings.json`) that cite a fully-superseded ADR without naming its superseder send agents toward retired decisions. DOCS-11 scans those files for citations of ADRs whose `decisions/README.md` Status is "superseded entirely by ADR-NNNN", reporting each line that names the dead ADR without the live one. An allowlist (`_DOCS11_ALLOWLIST` in `dashboard/health.py`) covers intentional historical references. Per [ADR-0064](../../../decisions/0064-rule-layer-integrity.md) D2.
+
 ---
 
 ## Report shape

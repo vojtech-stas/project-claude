@@ -21,6 +21,7 @@ Exports:
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
+    check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
     check_blind_dispatch_rate() -> dict  (slice #783/ADR-0060 D1: BLIND-REVIEW prefix rate)
     check_proof_presence() -> dict       (slice #783/ADR-0061 D1: route+proof-token per merged PR)
     check_merge_integrity() -> dict      (slice #783/ADR-0062 D1: BEHIND encountered/recovered)
@@ -1131,6 +1132,172 @@ def check_rule_coverage() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Spec-coverage check (slice #798 / ADR-0066 D2: SC-COVERAGE dashboard row)
+# ---------------------------------------------------------------------------
+
+def check_spec_coverage() -> dict:
+    """SPEC-COVERAGE: per-PRD criterion coverage from Covers: §2 #n lines in slice bodies.
+
+    Algorithm (per ADR-0066 D2):
+    - For each open+closed PRD-labeled issue, parse the numbered criteria in §2.
+    - Find all slice sub-issues (label: slice, body containing "PRD #<N>") and parse
+      their "Covers: §2 #n[, #m]" lines.
+    - Per-PRD coverage = |cited ∩ §2| / |§2|, with orphan/phantom counts.
+    - PRDs with no Covers: lines on any slice (predating the convention) are placed
+      in a grandfathered/no-data bucket per ADR-0004 D2 (bind-forward), NOT scored 0%.
+    - API-unavailable: honest WARN rather than a silent failure.
+
+    PASS when every post-convention PRD with ≥1 criteria has full coverage (ratio = 1.0).
+    WARN when any post-convention PRD is partially covered, or when no PRDs are available.
+    FAIL when any post-convention PRD has orphan criteria (criteria with no covering slice).
+    """
+    import json as _json
+    import subprocess as _sp
+
+    def _gh_issue_list(label: str, limit: int = 100) -> list:
+        try:
+            r = _sp.run(
+                ["gh", "issue", "list", "--label", label,
+                 "--state", "all", "--limit", str(limit),
+                 "--json", "number,title,body"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode == 0:
+                return _json.loads(r.stdout)
+        except Exception:
+            pass
+        return None  # None signals API failure; [] would mean empty list
+
+    # --- 1. Fetch PRD issues ---
+    prd_issues = _gh_issue_list("prd", limit=50)
+    if prd_issues is None:
+        return {"id": "SPEC-COVERAGE", "result": "WARN",
+                "detail": "gh API unavailable — cannot compute coverage"}
+
+    if not prd_issues:
+        return {"id": "SPEC-COVERAGE", "result": "WARN",
+                "detail": "no PRD-labeled issues found"}
+
+    # --- 2. Fetch slice issues ---
+    slice_issues = _gh_issue_list("slice", limit=200)
+    if slice_issues is None:
+        return {"id": "SPEC-COVERAGE", "result": "WARN",
+                "detail": "gh API unavailable for slice issues"}
+
+    # --- 3. Parse §2 criteria from each PRD ---
+    _sec2_start = re.compile(r'^## 2\.', re.MULTILINE)
+    _next_h2 = re.compile(r'^## [^2]', re.MULTILINE)
+    _crit_num = re.compile(r'^(\d+)\.\s+\S', re.MULTILINE)
+
+    def _parse_sec2_criteria(body: str) -> set:
+        """Return the set of numbered criterion IDs from PRD §2."""
+        if not body:
+            return set()
+        m = _sec2_start.search(body)
+        if not m:
+            return set()
+        nh2 = _next_h2.search(body, m.end())
+        end = m.end() + nh2.start() if nh2 else len(body)
+        sec2 = body[m.start():end]
+        return {int(n) for n in _crit_num.findall(sec2)}
+
+    # --- 4. Build PRD → criteria map ---
+    prd_criteria = {}
+    for issue in prd_issues:
+        n = issue["number"]
+        criteria = _parse_sec2_criteria(issue.get("body") or "")
+        prd_criteria[n] = criteria
+
+    # --- 5. Build PRD → cited union from slice Covers: lines ---
+    _parent_prd = re.compile(r'PRD\s+#(\d+)')
+    _covers_line = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
+    _covers_num = re.compile(r'#(\d+)')
+
+    prd_cited = {n: set() for n in prd_criteria}
+    prd_has_covers = {n: False for n in prd_criteria}
+
+    for issue in slice_issues:
+        body = issue.get("body") or ""
+        # Find parent PRD
+        pm = _parent_prd.search(body)
+        if not pm:
+            continue
+        prd_num = int(pm.group(1))
+        if prd_num not in prd_criteria:
+            continue
+        # Find Covers: line
+        cm = _covers_line.search(body)
+        if cm:
+            prd_has_covers[prd_num] = True
+            cited_nums = {int(x) for x in _covers_num.findall(cm.group(1))}
+            prd_cited[prd_num] |= cited_nums
+
+    # --- 6. Compute per-PRD coverage ---
+    fully_covered = []
+    partial = []     # (prd_num, orphans, phantoms)
+    grandfathered = []
+
+    for prd_num, criteria in prd_criteria.items():
+        if not criteria:
+            # PRD has no numbered §2 criteria — trivially covered
+            fully_covered.append(prd_num)
+            continue
+        if not prd_has_covers[prd_num]:
+            # No slice carries a Covers: line → grandfathered/no-data bucket
+            grandfathered.append(prd_num)
+            continue
+        cited = prd_cited[prd_num]
+        orphans = criteria - cited        # criteria with no covering slice
+        phantoms = cited - criteria       # citations to nonexistent criteria
+        if not orphans and not phantoms:
+            fully_covered.append(prd_num)
+        else:
+            partial.append((prd_num, sorted(orphans), sorted(phantoms)))
+
+    # --- 7. Build summary detail ---
+    total_post_conv = len(fully_covered) + len(partial)
+    parts = []
+    if total_post_conv == 0 and grandfathered:
+        parts.append(
+            f"all {len(grandfathered)} PRDs grandfathered (no Covers: lines yet)"
+        )
+    else:
+        parts.append(f"{len(fully_covered)}/{total_post_conv} fully covered")
+    if partial:
+        gap_descs = []
+        for prd_num, orphans, phantoms in partial:
+            desc = f"PRD#{prd_num}"
+            if orphans:
+                desc += f" orphans={orphans}"
+            if phantoms:
+                desc += f" phantoms={phantoms}"
+            gap_descs.append(desc)
+        parts.append("gaps: " + "; ".join(gap_descs))
+    if grandfathered:
+        parts.append(f"grandfathered (pre-convention): {sorted(grandfathered)}")
+
+    detail = " | ".join(parts)
+
+    if partial:
+        result = "FAIL"
+    elif total_post_conv == 0:
+        result = "WARN"
+    else:
+        result = "PASS"
+
+    return {
+        "id": "SPEC-COVERAGE",
+        "result": result,
+        "detail": detail,
+        "fully_covered": sorted(fully_covered),
+        "partial": partial,
+        "grandfathered": sorted(grandfathered),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Critic-health check (slice #779 / ADR-0059 D1 / ADR-0060 D4)
 # ---------------------------------------------------------------------------
 
@@ -1753,6 +1920,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "HOOK-INTEGRITY":  check_hook_integrity,
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
+    "SPEC-COVERAGE":   check_spec_coverage,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "MERGE-INTEGRITY": check_merge_integrity,
@@ -1864,6 +2032,7 @@ def _build_health_data() -> dict:
                 check_hook_integrity(),
                 check_isolation_group(),
                 check_rule_coverage(),
+                check_spec_coverage(),
                 check_critic_health(),
             ]
         },

@@ -193,6 +193,25 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **Examples:** PRD adds a dashboard view consuming hook-fires.jsonl (emitted by PRD #644); slice 1 declares "verify at least one hook beacon in hook-fires.jsonl and render it in the dashboard" → PASS. Same PRD; slice 1 only ships the dashboard route with no assertion that hook-fires.jsonl has real data → FAIL. PRD ships a pure docs update with no upstream dependency → not applicable, PASS.
 
+### SC-COVERAGE — Every PRD §2 criterion is covered by at least one slice; no phantom citations
+
+**Mechanic:** The union of `Covers: §2 #n[, #m]` lines across all slices in the decomposition must equal the full set of numbered criteria in the PRD's §2. BLOCK on: (a) orphan criteria — a §2 number that appears in no slice's `Covers:` line; (b) phantom citations — a `#n` in a `Covers:` line that does not correspond to a numbered item in §2. Per [ADR-0066](../../decisions/0066-upstream-spec-contract.md) D2. Binds forward per ADR-0004 D2 — decompositions produced before this rule merged are grandfathered (no retroactive re-gate).
+
+**Check:**
+1. Parse the PRD's §2 section (between `## 2.` and the next `## ` heading); extract the set of numbered criterion IDs (e.g. `{1, 2, 3, 4, 5, 6}`).
+2. For each slice in the decomposition, grep its body for `^Covers: §2 #...` and parse the cited numbers into a set.
+3. Compute `cited_union` = union across all slices; `orphans` = §2 set − cited_union; `phantoms` = cited_union − §2 set.
+4. `orphans` non-empty → FAIL naming each uncovered criterion number.
+5. `phantoms` non-empty → FAIL naming each phantom citation and the slice that made it.
+6. If the decomposition has no `Covers:` lines at all → FAIL with message `"SC-COVERAGE: no slice carries a Covers: §2 line; all slices must include Covers: per ADR-0066 D2"`.
+7. Missing `Covers:` line on one or more (but not all) slices → FAIL naming the incomplete slices.
+
+**Not applicable:** Decompositions produced before this rule's merge into `origin/main` — these are grandfathered; do not retroactively BLOCK them. A PRD with no numbered §2 criteria (e.g. a pure process-change PRD) → PASS (empty set trivially covered; note the exemption in the verdict).
+
+**Examples:** §2 has criteria {1, 2, 3}; slices carry `Covers: §2 #1`, `Covers: §2 #2, #3` → union = {1,2,3} = §2 set → PASS. §2 has {1, 2, 3}; no slice covers #3 → FAIL (orphan #3). Slice carries `Covers: §2 #4` but §2 only has {1, 2, 3} → FAIL (phantom #4).
+
+**Rationale:** Coverage gaps surface only at post-merge QA when a slice was decomposed without mapping to a criterion — fixing them costs a re-ship loop. Checking coverage at slicing time costs one revision round before any code is written. Phantom citations (slice claims to cover a criterion that doesn't exist in §2) are equally harmful: they pad the union count without closing any real gap. This rule absorbs spec-kit's /analyze gate into the critic already sitting at this position per parsimony (ADR-0046 D1); no new agent is added.
+
 A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ---
@@ -216,7 +235,7 @@ A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ## Output format
 
-Five body sections: Header → Subject of review → Rubric findings → Summary → then the CRITIC trailer. The header includes `(round N/3)` — the current round number out of 3 maximum. The Rubric findings map 1:1 to the 10 SC-* criteria above (PASS / FAIL / WARN per criterion). On APPROVE, include the **Final approved decomposition** section reproducing the decomposition's slice table verbatim (with any revision applied) — this is the artifact the calling agent (`/to-issues` or `/ship`) posts to GitHub.
+Five body sections: Header → Subject of review → Rubric findings → Summary → then the CRITIC trailer. The header includes `(round N/3)` — the current round number out of 3 maximum. The Rubric findings map 1:1 to the 11 SC-* criteria above (PASS / FAIL / WARN per criterion). On APPROVE, include the **Final approved decomposition** section reproducing the decomposition's slice table verbatim (with any revision applied) — this is the artifact the calling agent (`/to-issues` or `/ship`) posts to GitHub.
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
 

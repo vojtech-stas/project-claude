@@ -25,7 +25,7 @@ If the PRD is missing §2, §3, §4, or §5 — STOP and return `INVALID_PRD: <r
 
 ## What "decomposition" means
 
-A decomposition is an ordered list of slices that together deliver the PRD's success criteria. Per-slice fields: **Title** (imperative, conventional-commits-flavored), **What ships** (1–3 sentences, end-to-end), **INVEST tags** (one per letter; see INVEST in CLAUDE.md glossary), **Walking-skeleton slice 1?** (exactly ONE per decomposition; thinnest end-to-end pass exercising every pipeline stage, however crudely — see walking-skeleton pattern + CLAUDE.md rule #2), **Depends on** (slice numbers in THIS decomposition, or `None`), **LoC estimate** (runtime-artifact integer ≤ §4 cap), **Risk** (single biggest risk, one sentence).
+A decomposition is an ordered list of slices that together deliver the PRD's success criteria. Per-slice fields: **Title** (imperative, conventional-commits-flavored), **What ships** (1–3 sentences, end-to-end), **INVEST tags** (one per letter; see INVEST in CLAUDE.md glossary), **Walking-skeleton slice 1?** (exactly ONE per decomposition; thinnest end-to-end pass exercising every pipeline stage, however crudely — see walking-skeleton pattern + CLAUDE.md rule #2), **Depends on** (slice numbers in THIS decomposition, or `None`), **LoC estimate** (runtime-artifact integer ≤ §4 cap), **Risk** (single biggest risk, one sentence), **Covers** (mandatory: `Covers: §2 #n[, #m]` — the PRD §2 criterion numbers this slice satisfies; every slice must have this line; union across slices must equal the full §2 set per SC-COVERAGE / [ADR-0066](../../decisions/0066-upstream-spec-contract.md) D2), **References** (optional: `References:` followed by 2–5 file paths — the seam file, the closest existing pattern to imitate, the constraining ADR — pointers only, never embedded prose; advisory per [ADR-0066](../../decisions/0066-upstream-spec-contract.md) D4).
 
 ## Generating the decomposition
 
@@ -77,6 +77,8 @@ Print the following structure literally. The downstream critic parses by header 
   - E: <…>
   - S: <…>
   - T: <…>
+- **Covers:** `§2 #n[, #m]` — criteria from PRD §2 this slice satisfies (mandatory; every slice must have this)
+- **References:** `<seam-file>`, `<closest-pattern>`, `<constraining-ADR>` (optional; 2–5 pointers; advisory per ADR-0066 D4)
 
 #### Slice 2 — <title>
 … (same shape)

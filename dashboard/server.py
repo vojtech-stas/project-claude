@@ -76,6 +76,7 @@ from health import (  # noqa: E402
     check_docs10_backlog_surfacing,
     audit_subagents, audit_meta, cascade_finder_summary,
     serve_health as _serve_health_cached,
+    _discover_dora_metrics,
 )
 from events import serve_runs as _serve_runs_fn  # noqa: E402
 from workitems import fetch_workitems  # noqa: E402
@@ -406,6 +407,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "started_at": _SERVER_STARTED_AT,
                 "stale": stale,
             })
+
+        elif path == "/api/dora":
+            # GET /api/dora[?window=N] — DORA-style instability metrics (ADR-0069 D4).
+            # window: lookback days (default 7; max 90).  Every cell names its data
+            # source with real PR/issue ids; empty windows render honestly.
+            window_raw = query.get("window", ["7"])[0]
+            try:
+                window_days = max(1, min(90, int(window_raw)))
+            except (ValueError, AttributeError):
+                window_days = 7
+            try:
+                metrics = _discover_dora_metrics(window_days=window_days)
+                self._send_json(metrics)
+            except Exception as e:
+                self._send_error(500, str(e))
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

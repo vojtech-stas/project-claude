@@ -390,6 +390,25 @@ FIX_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --
 
 **Rationale:** Bias isolation: when the test is written after the fix, the author already knows the answer — the test is not an independent signal. Writing the test first (it fails), then fixing (it passes) produces an unforgeable before/after proof. The commit ordering in git history is the mechanical proxy for this discipline, checkable without re-running the suite. This prevents the named anti-pattern (tests written post-hoc to justify an already-merged fix) and closes the loop on ADR-0067 D2's "bias isolation as git-history sequencing" design. Per [ADR-0067](../../decisions/0067-regression-memory.md) D2 (bootstrap-mode: binds forward from the PR that lands R-PROVE in this file). Exemption: non-code fixes (docs, prompt wording) need no test; they must declare the exemption explicitly.
 
+### R-TIERING — critic tier-change PR without recorded eval delta
+
+**Mechanic:** Fires ONLY on PRs that re-assign the `model:` frontmatter value of a critic agent file (`.claude/agents/<name>.md` where name ∈ `{reviewer, prd-critic, adr-critic, slicer-critic, glossary-critic, backlog-critic, codebase-critic}`). For such PRs, the PR body MUST include a `before/after eval pass rates` section recording the golden-eval pass rate for the affected critic BEFORE and AFTER the proposed tier change.
+
+**Check:**
+```bash
+# Detect critic model: changes
+gh pr diff <PR> --patch | grep -E '^\+model:' | head -5
+gh pr diff <PR> --name-only | grep -E '^\.claude/agents/(reviewer|prd-critic|adr-critic|slicer-critic|glossary-critic|backlog-critic|codebase-critic)\.md$'
+# Check PR body for eval delta
+gh pr view <PR> --json body --jq '.body' | grep -i 'before.*eval\|after.*eval\|eval.*pass.*rate\|eval.*delta'
+```
+
+**BLOCK paths:**
+- PR diff changes `model:` in a critic agent file AND PR body lacks a `before/after eval pass rates` record → BLOCK
+- `R-TIERING: tier-change PR for <critic> lacks recorded before/after eval pass rates (ADR-0069 D3); add an "eval delta" section to the PR body`
+
+**Rationale:** Silent model downgrades are this repo's measured quality-regression failure mode. ADR-0027 D1 mandates explicit frontmatter; ADR-0069 D3 adds change-control: a tier change without a recorded eval delta is how silent judgment regression ships. Exemption: non-critic agent files (implementer, qa-tester, slicer, current-state-reader) are exempt — their model assignment is an efficiency knob, not a judgment-quality gate. Per [ADR-0069](../../decisions/0069-fleet-economics.md) D3 (bootstrap-mode: binds forward from this reviewer-rule merge; tier changes predating it are grandfathered).
+
 ---
 
 ## Recommend-only criteria

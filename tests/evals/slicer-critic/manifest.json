@@ -1,0 +1,65 @@
+[
+  {
+    "id": "sc-block-walking-skeleton",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-walking-skeleton.md",
+    "notes": "Slice 1 is not a walking-skeleton — SC-WALKING-SKELETON"
+  },
+  {
+    "id": "sc-block-dep-cycle",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-dep-cycle.md",
+    "notes": "Slices have a circular dependency — SC-DEP-ORDERING"
+  },
+  {
+    "id": "sc-block-no-covers",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-no-covers.md",
+    "notes": "No Covers: lines tracing slices to success criteria — SC-COVERAGE"
+  },
+  {
+    "id": "sc-block-no-non-goals",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-no-non-goals.md",
+    "notes": "Slice body has no Out-of-scope section — SC-NO-NON-GOALS"
+  },
+  {
+    "id": "sc-block-slice-count-loc",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-slice-count-loc.md",
+    "notes": "Single slice claims >600 LoC — SC-SLICE-COUNT-LOC"
+  },
+  {
+    "id": "sc-block-cascade-docs",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "sc-block-cascade-docs.md",
+    "notes": "PRD introduces new workflow concept but no cascade doc slice — SC-CASCADE-DOCS-COVERED"
+  },
+  {
+    "id": "sc-approve-clean-three-slice",
+    "expected_verdict": "APPROVE",
+    "holdout": false,
+    "artifact": "sc-approve-clean-three-slice.md",
+    "notes": "Clean 3-slice decomposition with walking-skeleton slice 1"
+  },
+  {
+    "id": "sc-approve-single-trivial",
+    "expected_verdict": "APPROVE",
+    "holdout": true,
+    "artifact": "sc-approve-single-trivial.md",
+    "notes": "HOLDOUT: Trivial single-slice PRD with clear walking-skeleton"
+  },
+  {
+    "id": "sc-approve-two-slice-parallel",
+    "expected_verdict": "APPROVE",
+    "holdout": true,
+    "artifact": "sc-approve-two-slice-parallel.md",
+    "notes": "HOLDOUT: Two independent parallel slices — valid decomposition"
+  }
+]

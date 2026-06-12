@@ -1,0 +1,65 @@
+[
+  {
+    "id": "rev-block-scope-drift",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "rev-block-scope-drift.md",
+    "notes": "PR edits files not in slice What-ships list — R-SCOPE violation"
+  },
+  {
+    "id": "rev-block-missing-closes",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "rev-block-missing-closes.md",
+    "notes": "PR body has no Closes #N — R-CLOSES violation"
+  },
+  {
+    "id": "rev-block-commit-subject-over-cap",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "rev-block-commit-subject-over-cap.md",
+    "notes": "Commit subject is 80 chars — over the 72-char cap rule #5"
+  },
+  {
+    "id": "rev-block-missing-tests",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "rev-block-missing-tests.md",
+    "notes": "Slice adds new behaviour with no test — R-TEST-BEHAVIOR violation"
+  },
+  {
+    "id": "rev-block-pr-body-missing-sections",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "rev-block-pr-body-missing-sections.md",
+    "notes": "PR body has no Scope / Out-of-scope / Verification sections"
+  },
+  {
+    "id": "rev-approve-clean-docs-slice",
+    "expected_verdict": "APPROVE",
+    "holdout": false,
+    "artifact": "rev-approve-clean-docs-slice.md",
+    "notes": "Well-formed docs-only slice: correct branch, body sections, Closes, no behaviour change"
+  },
+  {
+    "id": "rev-approve-trivial-lane",
+    "expected_verdict": "APPROVE",
+    "holdout": false,
+    "artifact": "rev-approve-trivial-lane.md",
+    "notes": "Trivial-lane PR: hotfix branch, trivial label, <=10 LoC, no behavior change"
+  },
+  {
+    "id": "rev-block-yagni",
+    "expected_verdict": "BLOCK",
+    "holdout": true,
+    "artifact": "rev-block-yagni.md",
+    "notes": "HOLDOUT: Slice adds unscoped helper utility not mentioned in What ships"
+  },
+  {
+    "id": "rev-approve-test-behavior-paired",
+    "expected_verdict": "APPROVE",
+    "holdout": true,
+    "artifact": "rev-approve-test-behavior-paired.md",
+    "notes": "HOLDOUT: New behavior + matching test in same PR — should APPROVE on R-TEST-BEHAVIOR"
+  }
+]

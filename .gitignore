@@ -62,3 +62,6 @@ logs/
 
 # Local Claude Code hook output (per ADR-0015 D4)
 .claude/logs/
+
+# Eval runner output (runtime-generated, on-demand only — ADR-0067 D5)
+tests/evals/results.json

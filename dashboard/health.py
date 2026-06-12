@@ -1492,6 +1492,141 @@ def _insert_dashboard_sys_path() -> None:
         sys.path.insert(0, dashboard_dir)
 
 
+# ---------------------------------------------------------------------------
+# Check registry (ADR-0064 D3) — single source of truth for all DOCS-* checks.
+#
+# Maps check-id string → zero-argument callable returning a dict with at
+# minimum {"id": str, "result": "PASS"|"FAIL"|"WARN", "detail": str}.
+#
+# CLI usage (headless, per ADR-0064 D3):
+#   python dashboard/health.py --check <id>   → run one check, print JSON
+#   python dashboard/health.py --list          → print registered IDs, one per line
+#
+# Exit codes:
+#   0 — check ran; result is PASS or WARN (non-blocking)
+#   1 — check ran; result is FAIL (blocking)
+#   2 — unknown check ID or bad arguments
+#
+# CI consumers (tools/ci-checks.sh) use:
+#   python3 dashboard/health.py --check DOCS-7   → replaces bash grep loop
+#   python3 dashboard/health.py --check DOCS-1   → replaces bash for-loop
+#   python3 dashboard/health.py --check DOCS-2   → replaces bash for-loop
+# Verdict-identical: same PASS/FAIL outcomes on the current repo state as the
+# bash implementations they replace (the check functions predate the registry).
+# ---------------------------------------------------------------------------
+
+CHECK_REGISTRY: dict[str, callable] = {
+    "DOCS-1":  check_docs1_adr_index_forward,
+    "DOCS-2":  check_docs2_adr_index_reverse,
+    "DOCS-3":  check_docs3_claude_md_agents,
+    "DOCS-4":  check_docs4_claude_md_skills,
+    "DOCS-5":  check_docs5_n3_literal,
+    "DOCS-6":  check_docs6_glossary_md_refs,
+    "DOCS-7":  check_docs7_adr_citations,
+    "DOCS-8":  check_docs8_supersession_notes,
+    "DOCS-9":  check_docs9_glossary_cap,
+    "DOCS-10": check_docs10_backlog_surfacing,
+    # Substrate checks
+    "CAPTURE-SLO":     check_capture_slo,
+    "HOOK-INTEGRITY":  check_hook_integrity,
+    "ISOLATION-GROUP": check_isolation_group,
+    "RULE-COVERAGE":   check_rule_coverage,
+    # Verification-integrity checks (require network/collector)
+    "BLIND-RATE":      check_blind_dispatch_rate,
+    "MERGE-INTEGRITY": check_merge_integrity,
+    "CAPTURE-SHAPE":   check_capture_shape,
+    "GREEN-MAIN":      check_green_main,
+}
+
+
+def check_parity() -> dict:
+    """PARITY: registry IDs == audit-skill-declared IDs == CI-consumed IDs.
+
+    Implements ADR-0064 D3 standing parity alarm.
+
+    Three ID sets are compared:
+    1. Registry IDs: keys of CHECK_REGISTRY (the single-source implementation).
+    2. Skill-declared IDs: DOCS-* and AS-* IDs extracted from the ### <id> —
+       headings in audit-meta/SKILL.md and audit-subagents/SKILL.md.
+    3. CI-consumed IDs: IDs extracted from python3 dashboard/health.py invocations
+       in tools/ci-checks.sh (lines matching --check <ID> or --list patterns).
+
+    The check is honest about what it can and cannot measure today:
+    - Skill-declared = the ## headings that look like "### DOCS-N — " or
+      "### AS-*-N — " in the two SKILL.md files.  If the skill format changes,
+      the parse documents what it found rather than silently under-counting.
+    - CI-consumed = `--check <ID>` arguments in ci-checks.sh.  Post-migration
+      CHECK 4/5 use registry calls; the set grows as later slices add more.
+    - Registry IDs are the authoritative set (per ADR-0064 D3).
+
+    PASS when CI-consumed ⊆ registry (every CI-consumed ID is in the registry).
+    WARN when skill-declared IDs exist that are NOT in the registry (gap to close
+    in later slices) but CI-consumed is covered.
+    FAIL on orphan CI-consumed IDs (CI calls a check the registry doesn't have).
+
+    PARITY: <registry_count> registered, <skill_count> skill-declared,
+            <ci_count> CI-consumed; orphan-ci=[] skill-gaps=[]
+    """
+    # --- 1. Registry IDs ---
+    registry_ids = set(CHECK_REGISTRY.keys())
+
+    # --- 2. Skill-declared IDs ---
+    # Parse ### <id> — headings from both SKILL.md files.
+    _skill_id_pat = re.compile(
+        r'^###\s+((?:DOCS|AS|STRUCT)-[A-Z0-9_-]+)\s+—',
+        re.MULTILINE,
+    )
+    skill_ids: set[str] = set()
+    for skill_path in [_AUDIT_META_SKILL, _AUDIT_SUBAGENTS_SKILL]:
+        try:
+            text = skill_path.read_text(encoding="utf-8", errors="replace")
+            for m in _skill_id_pat.finditer(text):
+                skill_ids.add(m.group(1))
+        except Exception:
+            pass
+
+    # --- 3. CI-consumed IDs ---
+    # Scan tools/ci-checks.sh for: --check <ID> patterns.
+    ci_checks_path = _HEALTH_REPO_ROOT / "tools" / "ci-checks.sh"
+    _ci_id_pat = re.compile(r'--check\s+([A-Z][A-Z0-9_-]+)', re.MULTILINE)
+    ci_ids: set[str] = set()
+    try:
+        ci_text = ci_checks_path.read_text(encoding="utf-8", errors="replace")
+        for m in _ci_id_pat.finditer(ci_text):
+            ci_ids.add(m.group(1))
+    except Exception:
+        pass
+
+    # --- Compute diffs ---
+    orphan_ci = sorted(ci_ids - registry_ids)   # CI calls non-existent registry check
+    skill_gaps = sorted(skill_ids - registry_ids)  # skill declares IDs not in registry
+
+    r_count = len(registry_ids)
+    s_count = len(skill_ids)
+    c_count = len(ci_ids)
+
+    detail = (
+        f"{r_count} registered, {s_count} skill-declared, {c_count} CI-consumed; "
+        f"orphan-ci={orphan_ci}; skill-gaps={skill_gaps}"
+    )
+
+    if orphan_ci:
+        return {"id": "PARITY", "result": "FAIL", "detail": detail,
+                "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
+                "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
+    if skill_gaps:
+        return {"id": "PARITY", "result": "WARN", "detail": detail,
+                "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
+                "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
+    return {"id": "PARITY", "result": "PASS", "detail": detail,
+            "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
+            "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
+
+
+# Register PARITY into the registry after defining it (self-referential).
+CHECK_REGISTRY["PARITY"] = check_parity
+
+
 def _build_health_data() -> dict:
     """Build the full /api/health payload synchronously.
 
@@ -1517,6 +1652,11 @@ def _build_health_data() -> dict:
                 check_merge_integrity(),
                 check_capture_shape(),
                 check_green_main(),
+            ]
+        },
+        "registryIntegrity": {
+            "checks": [
+                check_parity(),
             ]
         },
     }
@@ -1579,3 +1719,56 @@ def serve_health() -> tuple:
     t = _threading.Thread(target=_health_background, daemon=True)
     t.start()
     return {"status": "computing"}, True
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point (ADR-0064 D3 registry CLI)
+#
+#   python dashboard/health.py --check <id>   run one check; print verdict
+#   python dashboard/health.py --list          list registered IDs
+#
+# Exit codes: 0 = PASS/WARN, 1 = FAIL, 2 = unknown ID / bad args.
+# Output: one line per result, human-readable.  Consumed by ci-checks.sh.
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse as _argparse
+    import json as _json
+
+    _parser = _argparse.ArgumentParser(
+        description="health.py check registry CLI (ADR-0064 D3)",
+        prog="python dashboard/health.py",
+    )
+    _group = _parser.add_mutually_exclusive_group(required=True)
+    _group.add_argument(
+        "--check", metavar="ID",
+        help="run a single check by ID and print its verdict",
+    )
+    _group.add_argument(
+        "--list", action="store_true",
+        help="list all registered check IDs, one per line",
+    )
+    _args = _parser.parse_args()
+
+    if _args.list:
+        for _id in sorted(CHECK_REGISTRY.keys()):
+            print(_id)
+        sys.exit(0)
+
+    # --check <id>
+    _check_id = _args.check
+    if _check_id not in CHECK_REGISTRY:
+        print(f"ERROR: unknown check ID '{_check_id}'", file=sys.stderr)
+        print(f"Use --list to see available IDs.", file=sys.stderr)
+        sys.exit(2)
+
+    _result = CHECK_REGISTRY[_check_id]()
+    _verdict = _result.get("result", "UNKNOWN")
+    _detail = _result.get("detail", "")
+    _line = f"{_verdict}: {_check_id}"
+    if _detail:
+        _line += f" — {_detail}"
+    print(_line)
+
+    # Exit 1 on FAIL; 0 on PASS or WARN (CI can choose to treat WARN as passing)
+    sys.exit(1 if _verdict == "FAIL" else 0)

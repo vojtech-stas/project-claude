@@ -94,61 +94,47 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK 4: Dangling ADR links (DOCS-7 mechanic)
+# CHECK 4: Dangling ADR links — delegated to health.py registry (DOCS-7)
+# ADR-0064 D3: single-source implementation; verdict-identical to prior bash.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 4: dangling decisions/NNNN-*.md links in tracked .md files ---"
-# Fake/pedagogical slugs to ignore (mirrors audit-meta DOCS-7 allowlist).
-FAKE_SLUG_RE='decisions/00[0-9]{2}-(old-name|fictional|fictional-adr|new-adr|new-decision)\.md'
-
-CHECK4_FAIL=0
-# Find all tracked .md files (excluding .git).
-while IFS= read -r mdfile; do
-    [ -f "$mdfile" ] || continue
-    # Extract all decisions/NNNN-*.md targets from this file.
-    while IFS= read -r target; do
-        [ -z "$target" ] && continue
-        # Skip fake/example slugs.
-        if printf '%s' "$target" | grep -qE "$FAKE_SLUG_RE"; then
-            continue
-        fi
-        if [ ! -f "$target" ]; then
-            fail "dangling ADR link '$target' in $mdfile"
-            CHECK4_FAIL=1
-        fi
-    done < <(grep -oE 'decisions/[0-9]{4}-[a-z0-9-]+\.md' "$mdfile" 2>/dev/null | sort -u || true)
-done < <(git ls-files '*.md' 2>/dev/null)
-
-if [ "$CHECK4_FAIL" -eq 0 ]; then
-    pass "no dangling decisions/NNNN-*.md links found"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 4 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK4_OUTPUT=$(python3 dashboard/health.py --check DOCS-7 2>&1)
+    CHECK4_EXIT=$?
+    if [ "$CHECK4_EXIT" -eq 0 ]; then
+        pass "CHECK 4 (DOCS-7): $CHECK4_OUTPUT"
+    else
+        fail "CHECK 4 (DOCS-7): $CHECK4_OUTPUT"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK 5: decisions/README.md <-> decisions/[0-9]*.md index consistency
+# CHECK 5: decisions/README.md index consistency — delegated to registry
+# ADR-0064 D3: DOCS-1 (forward: index→file) + DOCS-2 (reverse: file→index).
+# Verdict-identical to prior bash loop pair.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 5: decisions/README.md <-> decisions/*.md index consistency ---"
-CHECK5_FAIL=0
-
-# DOCS-1: every index row resolves to an existing file.
-while IFS= read -r target; do
-    [ -z "$target" ] && continue
-    if [ ! -f "decisions/$target" ]; then
-        fail "decisions/README.md row references missing file: decisions/$target"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 5 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK5_FAIL=0
+    CHECK5_1=$(python3 dashboard/health.py --check DOCS-1 2>&1)
+    CHECK5_1_EXIT=$?
+    CHECK5_2=$(python3 dashboard/health.py --check DOCS-2 2>&1)
+    CHECK5_2_EXIT=$?
+    if [ "$CHECK5_1_EXIT" -ne 0 ]; then
+        fail "CHECK 5 (DOCS-1): $CHECK5_1"
         CHECK5_FAIL=1
     fi
-done < <(grep -oE '[0-9]{4}-[a-z0-9-]+\.md' decisions/README.md 2>/dev/null || true)
-
-# DOCS-2: every ADR file on disk has a row in decisions/README.md.
-for adrfile in decisions/[0-9]*.md; do
-    [ -f "$adrfile" ] || continue
-    basename_adr=$(basename "$adrfile")
-    if ! grep -qF "$basename_adr" decisions/README.md 2>/dev/null; then
-        fail "decisions/README.md missing index row for: $adrfile"
+    if [ "$CHECK5_2_EXIT" -ne 0 ]; then
+        fail "CHECK 5 (DOCS-2): $CHECK5_2"
         CHECK5_FAIL=1
     fi
-done
-
-if [ "$CHECK5_FAIL" -eq 0 ]; then
-    pass "decisions/README.md index is consistent with decisions/*.md on disk"
+    if [ "$CHECK5_FAIL" -eq 0 ]; then
+        pass "CHECK 5 (DOCS-1/2): decisions/README.md index is consistent with decisions/*.md on disk"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

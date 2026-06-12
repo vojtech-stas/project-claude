@@ -1075,6 +1075,11 @@
     <div class="card-title">verification integrity (blind-rate, proof-presence, merge-integrity, capture-shape, green-main)</div>
     <div id="verification-integrity-grid"><div class="loading">Loading...</div></div>
   </div>
+  <!-- registry-integrity card (slice #795 / ADR-0064 D3: PARITY row) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">registry integrity (PARITY: registry == skill-declared == CI-consumed)</div>
+    <div id="registry-integrity-grid"><div class="loading">Loading...</div></div>
+  </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
@@ -1935,6 +1940,7 @@ async function loadHealth() {
     renderSubstrateGrid(data.substrateMeta);
     renderCriticHealth(data.substrateMeta);
     renderVerificationIntegrity(data.verificationIntegrity);
+    renderRegistryIntegrity(data.registryIntegrity);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
@@ -2032,6 +2038,32 @@ function renderVerificationIntegrity(vi) {
   }
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
   for (const c of vi.checks) {
+    const det = c.detail || '';
+    const detSnippet = det.length > 0
+      ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
+      : '';
+    html += `<tr>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
+}
+
+/**
+ * Render registry-integrity card (slice #795 / ADR-0064 D3: PARITY row).
+ * Shows PARITY check verdict + detail (registry IDs == skill-declared == CI-consumed).
+ */
+function renderRegistryIntegrity(ri) {
+  const grid = document.getElementById('registry-integrity-grid');
+  if (!grid) return;
+  if (!ri || !ri.checks || !ri.checks.length) {
+    grid.innerHTML = '<span style="color:var(--muted)">No registry-integrity data</span>';
+    return;
+  }
+  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  for (const c of ri.checks) {
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')

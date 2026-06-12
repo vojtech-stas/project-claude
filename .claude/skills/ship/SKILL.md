@@ -161,7 +161,26 @@ evidence for this run; note it explicitly in the step 7 final report.
    **Result handling (loop per ADR-0037 D5):** up to 3 rounds.
 
    **PASS** (`PRODUCTION_VERIFY: PASS`):
-   - Extract `PROOF:` and `ROUTE:` from qa-tester's trailer.
+   - Extract `PROOF:`, `ROUTE:`, `ARTIFACTS:`, `PROOF_SOURCE:`, and `ENV:` from qa-tester's trailer.
+   - **Artifact-existence assertion (ADR-0061 D5 — orchestrator-enforced):** for each path in `ARTIFACTS:`, stat the file before accepting PASS:
+     ```bash
+     for artifact_path in <paths from ARTIFACTS: field>; do
+       if [ ! -f "$artifact_path" ]; then
+         echo "GATE FAIL: ARTIFACTS path does not exist: $artifact_path — verdict invalid"
+         # treat as FAIL, re-dispatch (up to 3 rounds)
+       fi
+     done
+     ```
+     A `PRODUCTION_VERIFY: PASS` with a missing ARTIFACTS path is **verdict-invalid** — treat as a FAIL and loop (re-dispatch qa-tester). A missing artifact means the proof cannot be verified, per ADR-0061 D5 (issue #777 class).
+   - **PROOF_SOURCE validation (ADR-0061 D2):** validate `PROOF_SOURCE: <sid>@<ts>` before accepting PASS:
+     1. Extract `sid` from `PROOF_SOURCE:` field.
+     2. Assert `sid` exists in `.claude/logs/workflow-events.jsonl` (grep for the sid in the event window).
+     3. Assert `sid` is NOT fixture-patterned: must not match `sess-test-*`, `fixture-*`, or `synthetic-*`.
+     4. If validation fails → verdict invalid → treat as FAIL, re-dispatch.
+   - **ENV validation for browser routes (ADR-0061 D2):** when `ROUTE: browser`, validate `ENV: <sha>@<started_at>`:
+     1. Extract `sha` from `ENV:` field.
+     2. Fetch `/api/meta` and assert `sha` matches the dashboard's reported sha.
+     3. If `sha` mismatches or `/api/meta` reports `stale: true` → verdict invalid → treat as FAIL, re-dispatch.
    - **Block-on-missing-proof check (per ADR-0037 D3 — orchestrator-enforced blocking):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
      - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A UI/browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
      - `hook-fire` route: `PROOF:` MUST contain `exit=` AND `log:` (or "log: N/A" if not declared). A hook change with no log-line proof is not 'done'.

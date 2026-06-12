@@ -12,6 +12,8 @@ Exports:
     check_docs8_supersession_notes() -> dict
     check_docs9_glossary_cap() -> dict
     check_docs10_backlog_surfacing() -> dict
+    check_docs11_dead_citations() -> dict  (slice #796/ADR-0064 D2: dead-citation check)
+    check_r_sensitive_detector() -> dict   (slice #796/ADR-0064 D4: enforcement-path PR advisory)
     audit_subagents() -> dict
     audit_meta() -> dict
     cascade_finder_summary() -> dict
@@ -371,6 +373,222 @@ def check_docs10_backlog_surfacing() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# DOCS-11 — dead-citation check (ADR-0064 D2)
+# ---------------------------------------------------------------------------
+
+# Seeded allowlist: frozenset of (relative_path_posix, adr_number_str) pairs
+# that are intentional/historical citations; the superseder need not appear
+# on the same line.  Each entry is documented below with a one-line reason.
+_DOCS11_ALLOWLIST: frozenset = frozenset({
+    # prd-critic.md: "per ADR-0031 D10" appears inside a rubric example string
+    # demonstrating how a PRD author would cite an ADR in a non-goal entry.
+    # This is illustrative/historical text, not live authority governing behavior.
+    (".claude/agents/prd-critic.md", "0031"),
+    # slicer-critic.md: "ADR-0031 — T3 thin-prompt migration" in the References
+    # section is a historical migration provenance note.  slicer-critic is owned
+    # by slices 3–5 of PRD #794; edits are deferred to avoid cross-slice conflicts.
+    (".claude/agents/slicer-critic.md", "0031"),
+})
+
+
+def _fully_superseded_adrs() -> dict:
+    """Return {adr_number_str: superseding_adr_str} for fully-superseded ADRs.
+
+    Parses decisions/README.md index table rows.  An ADR qualifies when its
+    Status column contains "superseded entirely" or "Superseded in full"
+    (case-insensitive), indicating the entire ADR (all Decisions) is superseded.
+    Returns an empty dict if the file is missing or unparseable.
+    """
+    readme = _HEALTH_REPO_ROOT / "decisions" / "README.md"
+    result: dict = {}
+    try:
+        text = readme.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return result
+    row_pat = re.compile(
+        r'^\|\s*\[?(\d{4})\]?[^|]*\|[^|]+\|\s*(.*?)\s*\|?\s*$',
+        re.MULTILINE,
+    )
+    superseded_pat = re.compile(
+        r'(?:superseded entirely|Superseded in full)\s+by\s+\[?ADR-(0\d{3})\]?',
+        re.IGNORECASE,
+    )
+    for m in row_pat.finditer(text):
+        adr_num = m.group(1)
+        status = m.group(2)
+        sm = superseded_pat.search(status)
+        if sm:
+            result[adr_num] = sm.group(1)  # superseding ADR number (4-digit str)
+    return result
+
+
+_SUPERSEDED_ADRS: dict = _fully_superseded_adrs()
+
+
+def check_docs11_dead_citations() -> dict:
+    """DOCS-11: no dead citations of fully-superseded ADRs in .claude/ runtime prompts.
+
+    Implements ADR-0064 D2.
+
+    Scans .claude/agents/*.md, .claude/skills/*/SKILL.md, and .claude/settings.json
+    for citations of ADR numbers that are fully superseded in decisions/README.md
+    (status contains "superseded entirely" or "Superseded in full"), unless:
+      (a) the citing line also names the superseding ADR, OR
+      (b) the (file, adr_number) pair appears in _DOCS11_ALLOWLIST.
+
+    Reports offenders as "file:line cites ADR-NNNN (superseded by ADR-MMMM)".
+    PASS when offender list is empty.
+    """
+    if not _SUPERSEDED_ADRS:
+        return {
+            "id": "DOCS-11",
+            "result": "WARN",
+            "detail": "could not parse superseded ADRs from decisions/README.md",
+        }
+
+    offenders = []
+    search_roots = [
+        _HEALTH_REPO_ROOT / ".claude" / "agents",
+        _HEALTH_REPO_ROOT / ".claude" / "skills",
+    ]
+    settings_file = _HEALTH_REPO_ROOT / ".claude" / "settings.json"
+    files_to_scan: list = []
+    for root in search_roots:
+        if root.exists():
+            files_to_scan.extend(sorted(root.rglob("*.md")))
+    if settings_file.exists():
+        files_to_scan.append(settings_file)
+
+    for file_path in files_to_scan:
+        rel = str(file_path.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            all_adrs_on_line = set(re.findall(r'ADR-(\d{4})', line))
+            for dead_num, superseder_num in _SUPERSEDED_ADRS.items():
+                if dead_num not in all_adrs_on_line:
+                    continue
+                if (rel, dead_num) in _DOCS11_ALLOWLIST:
+                    continue
+                if superseder_num in all_adrs_on_line:
+                    continue
+                offenders.append(
+                    f"{rel}:{lineno} cites ADR-{dead_num} "
+                    f"(superseded by ADR-{superseder_num})"
+                )
+
+    if offenders:
+        return {
+            "id": "DOCS-11",
+            "result": "FAIL",
+            "detail": f"{len(offenders)} dead citation(s): {offenders[:5]}",
+            "offenders": offenders,
+        }
+    return {
+        "id": "DOCS-11",
+        "result": "PASS",
+        "detail": (
+            f"no dead citations; "
+            f"{len(_SUPERSEDED_ADRS)} fully-superseded ADRs checked"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# R-SENSITIVE-DETECTOR — enforcement-path PR advisory detector (ADR-0064 D4)
+# ---------------------------------------------------------------------------
+
+# Enforcement-layer paths per ADR-0064 D4.
+_ENFORCEMENT_PATHS: tuple = (
+    ".github/workflows/",
+    ".claude/settings.json",
+    ".claude/hooks/",
+    "tools/ci-checks.sh",
+    ".githooks/",
+)
+
+# Bootstrap window: PRs at or below this number are grandfathered.
+# R-SENSITIVE rule + detector ship in wave-3 (PR ~#800); earlier PRs are exempt.
+_R_SENSITIVE_BOOTSTRAP_PR = 800
+
+# Scan window: look at the last N merged PRs to bound the check cost.
+_R_SENSITIVE_WINDOW = 20
+
+# ACK signal: label name or body keyword indicating a human acknowledged the PR.
+_ACK_LABEL = "human-ack"
+
+
+def check_r_sensitive_detector() -> dict:
+    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack (advisory).
+
+    Implements ADR-0064 D4 — ADVISORY ONLY.  R-SENSITIVE activation is deferred
+    until the workflow-v2 wave-4 closing slice merges; until then this detector
+    counts violations but result is always WARN (never FAIL).
+
+    Scans the last _R_SENSITIVE_WINDOW merged PRs (post-bootstrap) for PRs that
+    touched at least one enforcement-layer path and lacked a human-ack signal
+    (label "human-ack" OR body containing "human-ack").
+    """
+    try:
+        from collector import get_recent_merged_prs  # noqa: PLC0415
+        prs = get_recent_merged_prs(limit=_R_SENSITIVE_WINDOW + 10)
+    except Exception as e:
+        return {
+            "id": "R-SENSITIVE-DETECTOR",
+            "result": "WARN",
+            "detail": (
+                f"ADVISORY (deferred activation per ADR-0064 D4); "
+                f"could not fetch PRs: {e}"
+            ),
+        }
+
+    def _is_enforcement(path: str) -> bool:
+        for ep in _ENFORCEMENT_PATHS:
+            if ep.endswith("/"):
+                if path.startswith(ep):
+                    return True
+            else:
+                if path == ep:
+                    return True
+        return False
+
+    violations = []
+    for pr in prs:
+        pr_num = pr.get("number", 0)
+        if pr_num <= _R_SENSITIVE_BOOTSTRAP_PR:
+            continue  # grandfathered
+
+        labels = [lb.get("name", "") for lb in pr.get("labels", [])]
+        if _ACK_LABEL in labels:
+            continue
+
+        body = pr.get("body", "") or ""
+        if _ACK_LABEL in body:
+            continue
+
+        files = [f.get("path", "") for f in pr.get("files", [])]
+        if any(_is_enforcement(f) for f in files):
+            violations.append(pr_num)
+
+    count = len(violations)
+    detail = (
+        f"ADVISORY (activation deferred per ADR-0064 D4): "
+        f"{count} enforcement-path PR(s) without human-ack in last "
+        f"{_R_SENSITIVE_WINDOW} post-bootstrap merged PRs; "
+        f"PRs: {violations[:10]}"
+    )
+    return {
+        "id": "R-SENSITIVE-DETECTOR",
+        "result": "WARN",
+        "detail": detail,
+        "violation_count": count,
+        "violation_prs": violations[:10],
+    }
+
+
+# ---------------------------------------------------------------------------
 # AS-* checks
 # ---------------------------------------------------------------------------
 
@@ -549,6 +767,8 @@ def audit_meta() -> dict:
         check_docs8_supersession_notes(),
         check_docs9_glossary_cap(),
         check_docs10_backlog_surfacing(),
+        check_docs11_dead_citations(),
+        check_r_sensitive_detector(),
     ]
     return {"checks": _enrich_checks(checks)}
 
@@ -1526,6 +1746,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-8":  check_docs8_supersession_notes,
     "DOCS-9":  check_docs9_glossary_cap,
     "DOCS-10": check_docs10_backlog_surfacing,
+    "DOCS-11": check_docs11_dead_citations,
+    "R-SENSITIVE-DETECTOR": check_r_sensitive_detector,
     # Substrate checks
     "CAPTURE-SLO":     check_capture_slo,
     "HOOK-INTEGRITY":  check_hook_integrity,

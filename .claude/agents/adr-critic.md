@@ -157,6 +157,26 @@ No proposed edits to existing ADR files.
 
 **Examples:** "D1 introduces reviewer rule R-FOO but cites no enforcement mechanism and isn't tagged advisory" → FAIL(a). "D2 adds a new hook validation but doesn't explain why the existing pre-commit hook doesn't cover it" → FAIL(b). "D3 introduces a rule but doesn't name the anti-pattern it prevents" → FAIL(c). "D1 introduces R-FOO, names the CI grep that checks it, states existing checks don't cover it, and names 'silent scope drift' as the shadow" → PASS.
 
+### AC-PROPAGATION — superseding ADR must carry a Propagation section
+
+**Mechanic:** Fires ONLY on ADR drafts whose `Supersedes:` header names at least one D-ID. For each named D-ID, mechanically grep the tracked runtime prompt surface (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/settings.json`) for the ADR number being superseded. If any grep hits exist, check that the draft contains a `## Propagation` section enumerating those files with a per-file disposition: `update-in-this-wave` (fix in the same PR) or `grandfather-with-reason` (documented allowlist entry with a one-line justification). Missing `## Propagation` section when hits exist → BLOCK. `## Propagation` section that omits a grepped hit → BLOCK.
+
+**Mechanic (grep):**
+```bash
+grep -rn "ADR-<NNNN>" .claude/agents/ .claude/skills/ .claude/settings.json
+```
+Run for each superseded ADR number named in the `Supersedes:` header.
+
+**Check:** (1) Parse `Supersedes:` header for ADR numbers (e.g., `ADR-NNNN D4` → `NNNN`). (2) Grep each number across the runtime prompt surface. (3) If hits exist AND draft has no `## Propagation` section → FAIL. (4) If `## Propagation` section exists but a grepped file is not listed → FAIL with `"AC-PROPAGATION: <file> cites ADR-<NNNN> but is missing from the Propagation section"`.
+
+**What qualifies as covered:** a file is "covered" in the Propagation section if it appears by name (relative path or basename) with an explicit disposition (`update-in-this-wave` or `grandfather-with-reason:<reason>`). A Propagation section listing only "all files updated" or "see sweep" without per-file entries does NOT satisfy this requirement.
+
+**Bootstrap-mode:** per ADR-0004 D2, AC-PROPAGATION binds forward from the merge of its ship slice (slice 2 of PRD #794). ADRs accepted before that merge are not retroactively re-gated.
+
+**Rationale:** When an ADR is superseded, every runtime prompt that cites its D-IDs as live authority becomes a dead citation (the ADR-0064 D2 / DOCS-11 class). Without a Propagation section, the superseding ADR author has no record of which prompts need updating, and reviewers have no way to verify the sweep was complete. The mandatory enumeration + disposition pattern makes supersession propagation observable and auditable at draft time — the same principle that motivates rule #18/ADR-0045 at write time, applied at supersession time. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D1.
+
+**Examples:** "Draft supersedes ADR-0026; no `## Propagation` section; `grep ADR-0026 .claude/agents/` returns 3 hits" → FAIL. "Draft supersedes ADR-0026; `## Propagation` section lists adr-critic.md (grandfather: KB-layer flagging preserved as advisory per ADR-0032) but omits reviewer.md which also cites it" → FAIL. "Draft supersedes ADR-0026; `## Propagation` covers all 3 grepped files with per-file dispositions" → PASS.
+
 ---
 
 ## Additional responsibility — flag affected topics (non-blocking)
@@ -236,6 +256,6 @@ This subagent ships in slice 2 of PRD-B per ADR-0004 D2's bootstrap-mode policy.
 - ADR-0004 D1 (joint critic gate with prd-critic) + D2 (bootstrap-mode policy)
 - ADR-0005 D1 (5-section verdict template + CRITIC trailer schema)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
-- ADR-0026 D2 (truth-doc flagging) + D4 (topics.json) + D5 (R-TRUTH-DOC enforcement)
+- ADR-0026 D2 (truth-doc flagging) + D4 (topics.json) + D5 (R-TRUTH-DOC enforcement) — superseded entirely by ADR-0032 (KB layer retired; topic-flagging retained as advisory only per ADR-0032)
 - ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; KB layer retired per ADR-0032.
 - `.claude/skills/to-prd/SKILL.md` — primary caller via joint-APPROVE gate with `prd-critic`.

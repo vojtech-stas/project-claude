@@ -133,6 +133,6 @@ CONCERNS:
 
 - [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) — D1 (one implementer for all slice types), D2 (/ship auto-invokes), D3 (DAG-aware parallel batching), D4 (forward-block), D5 (sequential walking-skeleton), D6 (tool boundaries), D7 (failure return modes), D8 (reviewer is the critic), D9 (bootstrap-mode).
 - [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D2/D4/D8; [ADR-0002](../../decisions/0002-autonomous-merge-policy.md) (reviewer auto-merge); [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c.
-- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file.
+- [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file; superseded entirely by ADR-0032.
 - [`reviewer.md`](reviewer.md) — your adversarial critic; mirror its tool-boundary discipline and read its rubric to pre-empt blocks.
 - `CLAUDE.md` — branch naming, commit conventions, PR body shape ("Operational git workflow").

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "prd-block-production-check",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-production-check.md",
+    "notes": "PRD has no production-verification plan — PC-PRODUCTION-CHECK"
+  },
+  {
+    "id": "prd-block-ears-trigger-missing",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-ears-trigger-missing.md",
+    "notes": "EARS statement missing trigger — PC-EARS violation"
+  },
+  {
+    "id": "prd-block-vague-problem",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-vague-problem.md",
+    "notes": "Problem statement is vague — PC-PRD-COMPLETENESS"
+  },
+  {
+    "id": "prd-block-non-goals-tbd",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-non-goals-tbd.md",
+    "notes": "Non-goals section says TBD — PC-NON-GOALS-EXPLICIT"
+  },
+  {
+    "id": "prd-block-appetite-incoherent",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-appetite-incoherent.md",
+    "notes": "Appetite/timeline contradicts scope — PC-APPETITE-BOUNDED"
+  },
+  {
+    "id": "prd-block-ears-multi-behavior",
+    "expected_verdict": "BLOCK",
+    "holdout": false,
+    "artifact": "prd-block-ears-multi-behavior.md",
+    "notes": "Single EARS statement encodes multiple behaviors"
+  },
+  {
+    "id": "prd-approve-complete",
+    "expected_verdict": "APPROVE",
+    "holdout": false,
+    "artifact": "prd-approve-complete.md",
+    "notes": "Well-formed PRD with all required sections"
+  },
+  {
+    "id": "prd-approve-verifiable-escape-hatch",
+    "expected_verdict": "APPROVE",
+    "holdout": true,
+    "artifact": "prd-approve-verifiable-escape-hatch.md",
+    "notes": "HOLDOUT: PRD with honest escape-hatch on Verifiable — acceptable per PC-EARS guidance"
+  },
+  {
+    "id": "prd-approve-docs-only-na",
+    "expected_verdict": "APPROVE",
+    "holdout": true,
+    "artifact": "prd-approve-docs-only-na.md",
+    "notes": "HOLDOUT: Docs-only PRD where production-check is N/A"
+  }
+]

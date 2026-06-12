@@ -616,6 +616,25 @@ if [ "$CHECK10_FAIL" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 11: qa-tester.md documents PROOF_SOURCE (ADR-0061 D2)
+#   Verifies that qa-tester.md contains the PROOF_SOURCE: field in its
+#   production-verify trailer template, confirming that structured proof
+#   provenance (session_id + timestamp) is documented for machine-validation.
+#   Whole-file fixed-string grep; no network calls; deterministic.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 11: qa-tester.md documents PROOF_SOURCE ---"
+QA_TESTER=".claude/agents/qa-tester.md"
+if [ ! -f "$QA_TESTER" ]; then
+    fail "CHECK 11 — $QA_TESTER not found"
+else
+    if grep -qF "PROOF_SOURCE:" "$QA_TESTER" 2>/dev/null; then
+        pass "CHECK 11 — $QA_TESTER documents PROOF_SOURCE:"
+    else
+        fail "CHECK 11 — $QA_TESTER missing PROOF_SOURCE: (required by ADR-0061 D2)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

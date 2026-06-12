@@ -197,20 +197,27 @@ If any of the three inputs is missing → `RESULT: INVALID_INPUT`, `REASON: prod
 
 If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` tokens → `RESULT: INVALID_INPUT`, `REASON: mode ambiguous`.
 
-### Route selection and tiebreak
+### Route table — changed-path-glob → proof class (ADR-0061 D1)
 
-Route is selected by the dominant changed-path glob of the merged diff:
+**This table is the single routing authority.** Route is not an agent judgment call — it is a lookup. Deviations from the table (choosing a different route than the table mandates) are themselves findings, not acceptable alternatives. Per ADR-0061 D1 (bootstrap-mode: binds forward from this merge).
 
-| Changed-path glob | Route | Exercise |
+| Changed-path glob | Proof class | Required proof |
 |---|---|---|
-| `dashboard/*` | **browser** | Navigate + interact + assert renders + 0 console errors |
-| `.claude/hooks/*`, `.claude/settings.json` | **hook-fire** | Fire hook with synthetic payload + assert log/exit-code |
-| `.claude/skills/*`, `tools/*` | **command-run** | Run the command + assert declared output |
-| `decisions/*`, `docs/*`, `README.md` | **static-check** | Declared grep/assertion; no runtime exercise |
+| `dashboard/**` | **browser** | screenshot (.png/.jpg) + inner_text: excerpt |
+| `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (exit= + log:) AND induced-failure beacon pair (ERROR beacon shown firing) |
+| `tools/**`, `.claude/skills/**` | **command-run** | command output excerpt + exit codes |
+| `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
+| `.github/workflows/**`, `tools/ci-checks.sh` | **command-run + failing-canary** | the command-run proof PLUS a deliberately-failing canary shown to fail before the green run |
 
-**Tiebreak when a PR touches multiple categories:** apply the **most-exercisable route** — the route that performs the deepest runtime validation. Priority order (highest → lowest): `browser > hook-fire > command-run > static-check`. Example: a PR touching both `dashboard/*` and `decisions/*` → use the browser route. A PR touching `.claude/skills/*` and `README.md` → use the command-run route. If multiple paths in the SAME category level are present, they all fall under one route — document the multiple paths in REASON.
+**Negative-path escalation rows (ADR-0061 D4):**
+- PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon must be shown firing. A happy-path-only proof is insufficient for hook-fire changes.
+- PRs touching `.github/workflows/**` or `tools/ci-checks.sh`: require a **deliberately-failing canary** shown to fail before the final green run is evidence. A green-only run is not admissible.
 
-If the merged diff's dominant path does not match any glob → `RESULT: INVALID_INPUT`, `REASON: production-verify route could not be determined from the diff; no glob matched`.
+**Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `dashboard/**` and `.claude/skills/**` requires both a browser screenshot+inner_text AND a command-run output+exit proof.
+
+**Tiebreak for single-route selection (legacy):** when the union is functionally identical to one route (all matched globs resolve to the same proof class), document as that route. Priority order for readability (highest → lowest): `browser > hook-fire > command-run > static`. This priority is descriptive only; the TABLE above is the authority.
+
+If the merged diff path does not match any glob → `RESULT: INVALID_INPUT`, `REASON: production-verify route could not be determined from the diff; no glob matched`.
 
 ### Browser route behavior (per ADR-0037 D2, extended by ADR-0050 D1-D5)
 
@@ -317,17 +324,19 @@ Used when the merged diff's dominant changed-path matches `decisions/*`, `docs/*
 
 No browser, no hook firing, no command execution — static only. The "Production check:" line for this route MUST follow the `"static: <assertion>"` or `"N/A -- docs-only, static: <assertion>"` form documented in ADR-0037 D4.
 
-### Route-downgrade policy (per ADR-0054 D5)
+### Route-downgrade policy (per ADR-0054 D5, mechanized by ADR-0061 D3)
 
-When a declared route's required tooling is unavailable in the verification environment (e.g., browser route with no Playwright install, hook-fire route with no `claude` binary), the verdict is **PROVISIONAL** — never a silent PASS via a weaker route.
+When the table-mandated route's required tooling is unavailable in the verification environment (e.g., browser route with no Playwright install, hook-fire route with no `claude` binary), the verdict is **PROVISIONAL** — never a silent PASS via a weaker route.
+
+**The "mandated route" is the ADR-0061 D1 route TABLE's output** — not a prior agent route declaration. Under ADR-0054 D5 alone, an agent could self-select a weaker route upfront and pass honestly against it (the #639 gap). ADR-0061 D3 closes that gap: even if you label your own route selection as "browser", the TABLE is the authority and any discrepancy is a finding, not an alternative.
 
 **Mechanic:**
-1. Before executing any route, probe for required tooling: browser → `python -c "from playwright.sync_api import sync_playwright"` exit 0; hook-fire → `which claude` exit 0; command-run → direct bash; static-check → always available.
-2. If tooling unavailable: do NOT fall back to a weaker route silently. Return:
+1. Before executing any route, consult the TABLE for every changed glob. Probe for required tooling: browser → `python -c "from playwright.sync_api import sync_playwright"` exit 0; hook-fire → `which claude` exit 0; command-run → direct bash; static → always available.
+2. If the table-mandated tooling is unavailable: do NOT fall back to a weaker route silently. Do NOT self-select a weaker route and report PASS. Return:
    ```
    PRODUCTION_VERIFY: PROVISIONAL
-   ROUTE: <declared-route> (tooling unavailable)
-   REASON: <declared route tooling unavailable — downgrade would produce silent PASS; routed to needs-human-check per ADR-0054 D5>
+   ROUTE: <table-mandated-route> (tooling unavailable)
+   REASON: <table-mandated route tooling unavailable — downgrade would produce silent PASS; routed to needs-human-check per ADR-0054 D5 / ADR-0061 D3>
    ```
 3. The calling orchestrator routes this to the `needs-human-check` queue per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D2/D4. Do NOT resolve PROVISIONAL as PASS.
 
@@ -373,6 +382,27 @@ If the probe returns PROVISIONAL → the hook-fire route verdict is PROVISIONAL 
 
 Update Step 5 (PASS condition) to: PASS when asserts (A)+(B)+(C)+(D)+(E)+(F) all pass. (D) and (E) that cannot be evaluated deterministically → PROVISIONAL (residual); (F) evaluates as FAIL or PASS only.
 
+### Regenerate-proofs mandate (ADR-0060 D3)
+
+In production-verify mode, **implementer-supplied proof artifacts are inadmissible**. You regenerate all proofs yourself against the live environment — screenshots, log lines, output excerpts, grep counts. If the caller's dispatch includes proof artifacts supplied by the implementer (screenshots embedded in PR bodies, output excerpts from the implementer's own verification), treat them as ANCHORING-INPUT: note them in CONCERNS but do NOT use them as your evidence. Your proof is always freshly generated in this run. Per ADR-0060 D3 (bootstrap-mode: binds forward from this qa-tester prompt-update merge).
+
+### Artifact-path requirement — ROOT-absolute only (ADR-0061 D5)
+
+Write proof artifacts (screenshots, output excerpts saved to disk) ONLY under:
+- `F:\project_claude\.claude\logs\review-shots\` (gitignored log directory)
+- `F:\project_claude\qa-proof\<prd-num>\` (tracked qa-proof directory)
+
+**Never write to worktree-relative paths.** Worktrees are auto-cleaned after dispatch; a proof artifact at a worktree-relative path vanishes with the worktree — the exact class that produced PASS verdicts whose ARTIFACTS paths no longer existed (issue #777). The ROOT-absolute `qa-proof/` and `.claude/logs/review-shots/` paths survive auto-cleanup.
+
+When computing `PROOF_DIR` in Playwright scripts, use the ROOT-absolute form:
+```python
+import os
+REPO_ROOT = os.environ.get("CLAUDE_PROJECT_DIR", "")  # set by Claude Code
+PROOF_DIR = os.path.join(REPO_ROOT, "qa-proof", "<prd-num>")
+os.makedirs(PROOF_DIR, exist_ok=True)
+```
+If `CLAUDE_PROJECT_DIR` is not set, derive from `git rev-parse --show-toplevel` before writing any script. Per ADR-0061 D5, per issue #777.
+
 ### Output shape (production-verify mode)
 
 Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent production-verify extensions. DO NOT emit VERDICT, ROUND, or any critic-rubric fields — qa-tester is a GENERATOR, not a critic (ADR-0037 D3; critic parsimony per ADR-0046 D1).
@@ -380,14 +410,24 @@ Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent productio
 ```
 RESULT: SUCCESS | FAIL | INVALID_INPUT | CONFUSION
 REASON: <one sentence -- e.g., "browser gate PASS: renders + 0 console errors + graph visible" or "hook-fire FAIL: exit code 1, expected 0">
-ARTIFACTS: <proof path if captured (browser route screenshot path), else empty>
-PRODUCTION_VERIFY: PASS | FAIL
-ROUTE: browser | hook-fire | command-run | static-check
-PROOF: <route-specific: "inner_text: <text excerpt> [+ screenshot: <path>]" (browser -- primary human-faithful evidence; inner_text always present; screenshot always available in headless mode; eval supplements only); "exit=0, log: <line>" (hook-fire); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static-check)>
+ARTIFACTS: <ROOT-absolute proof path if captured (browser route screenshot path), else empty>
+PRODUCTION_VERIFY: PASS | FAIL | PROVISIONAL
+ROUTE: browser | hook-fire | command-run | static-check | command-run+failing-canary
+PROOF: <route-specific: "inner_text: <text excerpt> [+ screenshot: <ROOT-absolute-path>]" (browser -- primary human-faithful evidence; inner_text always present; screenshot always available in headless mode; eval supplements only); "exit=0, log: <line>" (hook-fire happy-path); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static); "canary-failed=<excerpt>, exit=0, output: <excerpt>" (command-run+failing-canary)>
 ASSERTIONS_CHECKED: <route-specific field list -- see below>
+PROOF_SOURCE: <session_id>@<ts>
+ENV: <sha>@<started_at>
 DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
 CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
+
+**`PROOF_SOURCE:` field (ADR-0061 D2):** populate with `<session_id>@<ts>` where `session_id` is the `$CLAUDE_CODE_SESSION_ID` env var (or derive from the most-recent `workflow-events.jsonl` event whose `session_id` matches your invocation) and `ts` is the ISO-8601 UTC timestamp at verification start. Machine-validation contract (enforced by orchestrators):
+- `session_id` must exist in the `.claude/logs/workflow-events.jsonl` event window (at least one event with that `session_id`).
+- `session_id` must NOT be fixture-patterned (does not match `sess-test-*`, `fixture-*`, `synthetic-*`, or any prefix used in test fixtures).
+- `ts` ordering must be sane (not a future timestamp; not older than the verification window).
+Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds forward from this qa-tester prompt-update merge).
+
+**`ENV:` field (ADR-0061 D2):** populate with `<sha>@<started_at>` where `sha` is the merged HEAD sha (`git rev-parse HEAD`) and `started_at` is the ISO-8601 timestamp when the verification environment (dashboard server or command context) was started. For browser routes: the orchestrator validates this against `/api/meta` (sha must match, `stale` must be false). For other routes: populate with the sha and the time this verification invocation started. Per ADR-0061 D2.
 
 `ASSERTIONS_CHECKED` is route-specific:
 - **browser:** `renders=<PASS|FAIL|PROVISIONAL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state; that criterion is returned as a residual, not forced to PASS (ADR-0040 D5)
@@ -398,6 +438,7 @@ CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "no
 `RESULT: SUCCESS` when `PRODUCTION_VERIFY: PASS` (all route-specific assertions pass).
 `RESULT: FAIL` when `PRODUCTION_VERIFY: FAIL` (any assertion fails).
 `RESULT: INVALID_INPUT` on missing inputs, mode ambiguity, or route cannot be determined.
+`PRODUCTION_VERIFY: PROVISIONAL` when the table-mandated route's tooling is unavailable — never a weaker-route PASS. The calling orchestrator routes PROVISIONAL to the `needs-human-check` queue (ADR-0040 D2/D4). On PROVISIONAL, `RESULT` is also `FAIL` (gate not passed). Do NOT set `RESULT: SUCCESS` on PROVISIONAL.
 
 The orchestrator (`/build` and `/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved).
 
@@ -426,3 +467,5 @@ No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here
 - PRD [#452](https://github.com/vojtech-stas/project-claude/issues/452) — parent of production-verify mode (mandatory production-verification gate); browser route per slice #453; hook-fire, command-run, static-check routes + tiebreak per slice #454.
 - PRD [#552](https://github.com/vojtech-stas/project-claude/issues/552) — parent of prior driver swap (Claude_Preview replaces Playwright); ADR-0049 macro-ADR; slice #553. **Superseded** by ADR-0050 D1/D2.
 - PRD [#574](https://github.com/vojtech-stas/project-claude/issues/574) — parent of this driver swap (headless Playwright/Chrome replaces Claude_Preview); ADR-0050 macro-ADR; slice #575.
+- [ADR-0061](../../decisions/0061-rule-20-mechanization.md) — D1 (route table as single routing authority; changed-path-glob → proof class; multi-glob union); D2 (PROOF_SOURCE/ENV structured fields; machine-validation contract); D3 (PROVISIONAL semantics mechanized — mandated route from D1 table, not agent self-declaration; closes the #639 gap); D4 (negative-path proof obligations; hook happy+induced-failure pair; ci-checks failing canary); D5 (ROOT-absolute artifact paths; artifact-existence stat by orchestrator; issue #777 class). Bootstrap-mode: all binds forward from this qa-tester prompt-update merge.
+- [ADR-0060](../../decisions/0060-blind-dispatch-contract.md) — D3 (regenerate-proofs mandate: implementer-supplied proofs inadmissible in production-verify mode; qa-tester regenerates all proofs against live environment).

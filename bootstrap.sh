@@ -7,7 +7,7 @@
 #
 # Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
-#   2. Create the 7 repo-level labels (skip if they already exist).
+#   2. Create the 8 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
 #   5. Apply branch protection R1+R2 on `main` (warn-and-proceed if no admin).
@@ -128,14 +128,16 @@ step 2 "create repo labels (idempotent)"
 
 # Label spec — keep aligned with CLAUDE.md "Hierarchy — PRD → Slice → PR".
 # Format: "<name>|<color-hex>|<description>"
+# NOTE: root-cause label already exists on the live repo; entry here is for fresh clones.
 LABELS=(
     "prd|a2eeef|Product Requirements Document"
     "slice|0075ca|INVEST-shaped vertical slice of a PRD"
     "backlog|cccccc|Forward-looking work queue item; not yet a PRD"
-    "captured|8b949e|Graveyard of backlog-critic rejects per ADR-0008 D1; lazy human review"
+    "captured|8b949e|Graveyard of backlog-critic rejects per ADR-0008 D1; lazy human review (cull or rescue)"
     "trivial|fbca04|≤10 LoC runtime; I3 trivial-lane PR; reviewer fast-paths"
     "needs-human|d93f0b|Round-3 BLOCK escalation per I5"
     "needs-human-check|e4e669|QA-plan residual queue; cleared by /qa-review skill"
+    "root-cause|B60205|rule #13 root-cause capture (3-part shape per ADR-0063)"
 )
 
 create_label() {

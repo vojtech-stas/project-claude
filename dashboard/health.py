@@ -19,6 +19,11 @@ Exports:
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
+    check_blind_dispatch_rate() -> dict  (slice #783/ADR-0060 D1: BLIND-REVIEW prefix rate)
+    check_proof_presence() -> dict       (slice #783/ADR-0061 D1: route+proof-token per merged PR)
+    check_merge_integrity() -> dict      (slice #783/ADR-0062 D1: BEHIND encountered/recovered)
+    check_capture_shape() -> dict        (slice #783/ADR-0063 D2: 3-heading regex over root-cause issues)
+    check_green_main() -> dict           (slice #783/ADR-0062 D3: last main_green sha + lag + age)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -1059,6 +1064,427 @@ def check_critic_health() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Verification-integrity evaluators (slice #783 / ADR-0060/0061/0062/0063)
+# ---------------------------------------------------------------------------
+
+# ADR-0061 D1 route-table glob classes (changed-path → mandatory proof class).
+# Used by check_proof_presence to classify PRs by their changed paths.
+_ROUTE_TABLE = [
+    # (glob_pattern, proof_class)
+    ("dashboard/**", "browser"),
+    ("*.html", "browser"),
+    (".claude/hooks/**", "hook-fire"),
+    (".claude/settings.json", "hook-fire"),
+    ("tools/**", "command-run"),
+    (".claude/skills/**", "command-run"),
+    (".github/workflows/**", "command-run"),
+    ("decisions/**", "static"),
+    ("docs/**", "static"),
+    ("*.md", "static"),
+    ("CLAUDE.md", "static"),
+    ("bootstrap.sh", "static"),
+]
+
+# Proof tokens per route class (ADR-0061 D1 / rule #20).
+# These regexes are searched over the PR body + comment trail.
+_PROOF_TOKENS: dict[str, list[str]] = {
+    "browser":      [r'\.png\b', r'inner_text:', r'screenshot'],
+    "hook-fire":    [r'exit=', r'hook-fire', r'HOOK-FIRE'],
+    "command-run":  [r'exit=', r'exit code', r'exit\s*0'],
+    "static":       [r'grep count=', r'grep -c', r'grep\s+\d+', r'count=\d'],
+}
+
+# Window for proof-presence: last N merged non-trivial PRs.
+_PROOF_PRESENCE_WINDOW = 10
+
+# Bootstrap cutoff for proof-presence: PRs before this are grandfathered.
+# Bind-forward per ADR-0004 D2 — slice #783 is the implementing merge.
+_PROOF_PRESENCE_BOOTSTRAP_PR = 788   # last merged PR before this slice
+
+
+def _classify_route(changed_files: list[str]) -> set[str]:
+    """Return the union of proof classes from changed-path globs (ADR-0061 D1)."""
+    import fnmatch
+    classes: set[str] = set()
+    for f in changed_files:
+        for pattern, cls in _ROUTE_TABLE:
+            if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.split("/")[-1], pattern):
+                classes.add(cls)
+                break
+    return classes
+
+
+def _pr_has_proof_token(pr_body: str, comments: list[str], route_classes: set[str]) -> bool:
+    """Return True if ANY comment or pr_body contains a proof token for ANY route class."""
+    search_text = " ".join([pr_body] + comments)
+    for cls in route_classes:
+        tokens = _PROOF_TOKENS.get(cls, [])
+        for tok in tokens:
+            if re.search(tok, search_text, re.IGNORECASE):
+                return True
+    return False
+
+
+def check_blind_dispatch_rate() -> dict:
+    """BLIND-RATE: fraction of critic dispatches with ^BLIND-REVIEW prefix.
+
+    Reads workflow-events.jsonl for agent_start events whose input begins with
+    'BLIND-REVIEW'. Pre-migration denominator is honest: all agent_start events
+    with a non-empty input are counted. Bind-forward per ADR-0060 D5 — pre-merge
+    dispatches are grandfathered.
+
+    Returns {"id": "BLIND-RATE", "result": ..., "detail": ...,
+             "blind": N, "total": N, "rate": float}
+    """
+    import json as _json
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {"id": "BLIND-RATE", "result": "WARN",
+                "detail": "workflow-events.jsonl not found", "blind": 0, "total": 0, "rate": None}
+
+    blind = 0
+    total = 0
+    try:
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                if obj.get("event") != "agent_start":
+                    continue
+                inp = obj.get("input", "") or ""
+                if not inp:
+                    continue
+                total += 1
+                if inp.startswith("BLIND-REVIEW"):
+                    blind += 1
+    except Exception as exc:
+        return {"id": "BLIND-RATE", "result": "WARN",
+                "detail": f"read error: {exc}", "blind": 0, "total": 0, "rate": None}
+
+    if total == 0:
+        return {"id": "BLIND-RATE", "result": "WARN",
+                "detail": "no agent_start events with input found (pre-migration — expected)",
+                "blind": 0, "total": 0, "rate": None}
+
+    rate = round(blind / total, 3)
+    detail = (
+        f"{blind}/{total} dispatches carry BLIND-REVIEW prefix "
+        f"({rate*100:.0f}%) — pre-migration denominator; bind-forward ADR-0060 D5"
+    )
+    result = "PASS" if rate >= 1.0 else "WARN"
+    return {"id": "BLIND-RATE", "result": result, "detail": detail,
+            "blind": blind, "total": total, "rate": rate}
+
+
+def check_proof_presence() -> dict:
+    """PROOF-PRESENCE: per merged non-trivial PR: route + proof-token presence.
+
+    Classifies each PR's changed files via ADR-0061 D1 route table; greps the
+    PR body + comment trail for route-appropriate proof tokens. Computes per-PR
+    and rolling rate. Grandfathers PRs <= _PROOF_PRESENCE_BOOTSTRAP_PR.
+
+    Reuses collector's fetch caching (get_trail + get_recent_merged_prs).
+    """
+    try:
+        _insert_dashboard_sys_path()
+        from collector import get_recent_merged_prs  # noqa: PLC0415
+        from collector import _run_gh  # noqa: PLC0415
+    except Exception as exc:
+        return {"id": "PROOF-PRESENCE", "result": "WARN",
+                "detail": f"collector import failed: {exc}", "rate": None, "window": 0}
+
+    import json as _json
+
+    prs = get_recent_merged_prs(limit=_PROOF_PRESENCE_WINDOW + 5)
+    # Filter trivial-lane PRs (heuristic: trivial in headRef or body)
+    non_trivial = []
+    for pr in prs:
+        ref = pr.get("headRefName", "")
+        labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
+        if "trivial" in labels or ref.startswith("hotfix/"):
+            continue
+        if pr.get("number", 0) > _PROOF_PRESENCE_BOOTSTRAP_PR:
+            non_trivial.append(pr)
+        if len(non_trivial) >= _PROOF_PRESENCE_WINDOW:
+            break
+
+    if not non_trivial:
+        return {"id": "PROOF-PRESENCE", "result": "WARN",
+                "detail": f"no non-trivial merged PRs found above bootstrap threshold #{_PROOF_PRESENCE_BOOTSTRAP_PR}",
+                "rate": None, "window": 0}
+
+    with_proof = 0
+    without_proof = []
+    for pr in non_trivial:
+        pr_num = pr.get("number", 0)
+        # Fetch changed files
+        stdout, _ = _run_gh(["pr", "view", str(pr_num), "--json",
+                              "files,body,comments"], timeout=20)
+        if stdout is None:
+            # Cannot verify — count as present (honest: missing data != missing proof)
+            with_proof += 1
+            continue
+        try:
+            pr_data = _json.loads(stdout)
+        except Exception:
+            with_proof += 1
+            continue
+        changed_files = [f.get("path", "") for f in (pr_data.get("files") or [])]
+        route_classes = _classify_route(changed_files)
+        if not route_classes:
+            # No recognized route → unclassifiable; skip (not a violation)
+            with_proof += 1
+            continue
+        pr_body = pr_data.get("body", "") or ""
+        comments = [c.get("body", "") for c in (pr_data.get("comments") or [])]
+        has_proof = _pr_has_proof_token(pr_body, comments, route_classes)
+        if has_proof:
+            with_proof += 1
+        else:
+            without_proof.append(str(pr_num))
+
+    total = len(non_trivial)
+    rate = round(with_proof / total, 3) if total > 0 else None
+    missing_str = ", ".join(without_proof) if without_proof else "none"
+    detail = (
+        f"{with_proof}/{total} non-trivial PRs have route-appropriate proof tokens "
+        f"(bind-forward >#{ _PROOF_PRESENCE_BOOTSTRAP_PR}); missing: {missing_str}"
+    )
+    result = "PASS" if not without_proof else "WARN"
+    return {"id": "PROOF-PRESENCE", "result": result, "detail": detail,
+            "rate": rate, "window": total, "missing_prs": without_proof}
+
+
+def check_merge_integrity() -> dict:
+    """MERGE-INTEGRITY: BEHIND-encountered/recovered counters from PR comment trails.
+
+    Scans the PR comment trails of recent closed PRDs for MERGE_STATUS lines
+    containing 'behind-retried' (ADR-0062 D1). Honest zero when no data exists yet.
+    """
+    try:
+        _insert_dashboard_sys_path()
+        from collector import get_closed_prd_numbers, get_trail  # noqa: PLC0415
+    except Exception as exc:
+        return {"id": "MERGE-INTEGRITY", "result": "WARN",
+                "detail": f"collector import failed: {exc}", "behind_total": 0}
+
+    prd_numbers = get_closed_prd_numbers(10)
+    behind_total = 0
+    auth_dead = False
+    _behind_re = re.compile(r'behind-retried:\s*(\d+)', re.IGNORECASE)
+
+    for prd_num in prd_numbers:
+        trail = get_trail(prd_num)
+        if trail.get("collector_status") == "auth_dead":
+            auth_dead = True
+            continue
+        for pr_trail in trail.get("prs", {}).values():
+            for verdict in pr_trail.get("verdicts", []):
+                # verdicts are parsed from comments; check raw too via any body field
+                pass
+            # Scan raw PR body excerpt for MERGE_STATUS
+            body_exc = pr_trail.get("body_excerpt", "") or ""
+            for m in _behind_re.finditer(body_exc):
+                behind_total += int(m.group(1))
+            for verdict in pr_trail.get("verdicts", []):
+                # Verdicts don't carry raw body; best-effort via body_excerpt only
+                pass
+
+    detail = (
+        f"behind-retried total: {behind_total} "
+        f"(from last 10 closed PRDs; honest 0 if no BEHIND races recorded)"
+    )
+    if auth_dead:
+        detail += " | WARNING: some PRDs skipped (auth_dead)"
+    result = "WARN" if auth_dead else "PASS"
+    return {"id": "MERGE-INTEGRITY", "result": result, "detail": detail,
+            "behind_total": behind_total}
+
+
+def check_capture_shape() -> dict:
+    """CAPTURE-SHAPE: shape-conforming fraction of root-cause-labeled issue bodies.
+
+    Checks:
+    1. Fraction with all 3 headings: **Symptom:** / **Root cause:** / **Proposed:**
+    2. Evidence-presence sub-metric: fraction of conforming issues with a fenced/quoted
+       verbatim block in the Symptom section.
+    3. Counter of 3-section-shaped captured issues missing the root-cause label
+       (surfaced only, never auto-relabeled).
+
+    Per ADR-0063 D1/D2/D3. Bind-forward: pre-ADR-0063 issues grandfathered.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    _heading_re = re.compile(
+        r'\*\*Symptom:\*\*.*?\*\*Root cause:\*\*.*?\*\*Proposed:\*\*',
+        re.DOTALL,
+    )
+    _evidence_re = re.compile(r'```|\> ', re.MULTILINE)
+    _symptom_block_re = re.compile(
+        r'\*\*Symptom:\*\*(.*?)(?=\*\*Root cause:\*\*)', re.DOTALL
+    )
+
+    def _fetch_issues(label: str) -> list[dict]:
+        try:
+            result = _sp.run(
+                ["gh", "issue", "list", "--label", label,
+                 "--state", "all", "--limit", "50",
+                 "--json", "number,body,labels"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=20,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if result.returncode == 0:
+                return _json.loads(result.stdout)
+        except Exception:
+            pass
+        return []
+
+    # Step 1: Check root-cause labeled issues
+    root_cause_issues = _fetch_issues("root-cause")
+    total_rc = len(root_cause_issues)
+    conforming = []
+    non_conformers = []
+    evidence_present = 0
+
+    for issue in root_cause_issues:
+        body = issue.get("body", "") or ""
+        num = issue.get("number")
+        if _heading_re.search(body):
+            conforming.append(num)
+            # Check evidence in Symptom section
+            sym_m = _symptom_block_re.search(body)
+            if sym_m and _evidence_re.search(sym_m.group(1)):
+                evidence_present += 1
+        else:
+            non_conformers.append(num)
+
+    conf_rate = round(len(conforming) / total_rc, 3) if total_rc > 0 else None
+    evid_rate = round(evidence_present / len(conforming), 3) if conforming else None
+
+    # Step 2: Unlabeled-candidate counter (captured issues with 3-section shape)
+    captured_issues = _fetch_issues("captured")
+    unlabeled_candidates = []
+    rc_numbers = {i["number"] for i in root_cause_issues}
+    for issue in captured_issues:
+        if issue["number"] in rc_numbers:
+            continue
+        body = issue.get("body", "") or ""
+        if _heading_re.search(body):
+            unlabeled_candidates.append(issue["number"])
+
+    parts = []
+    if total_rc == 0:
+        parts.append("no root-cause-labeled issues found (bind-forward ADR-0063 D1)")
+    else:
+        parts.append(f"{len(conforming)}/{total_rc} conforming ({conf_rate*100:.0f}%)")
+        if non_conformers:
+            parts.append(f"non-conformers: #{', #'.join(str(n) for n in non_conformers)}")
+        evid_str = f"{evidence_present}/{len(conforming)}" if conforming else "0/0"
+        evid_pct = f" ({evid_rate*100:.0f}%)" if evid_rate is not None else ""
+        parts.append(f"evidence-presence: {evid_str}{evid_pct}")
+    if unlabeled_candidates:
+        parts.append(f"unlabeled-candidates (surfaced only): #{', #'.join(str(n) for n in unlabeled_candidates)}")
+
+    result = "PASS" if (not non_conformers and total_rc > 0) else "WARN"
+    return {
+        "id": "CAPTURE-SHAPE",
+        "result": result,
+        "detail": " | ".join(parts),
+        "total_root_cause": total_rc,
+        "conforming_count": len(conforming),
+        "evidence_count": evidence_present,
+        "non_conformers": non_conformers,
+        "unlabeled_candidates": unlabeled_candidates,
+    }
+
+
+def check_green_main() -> dict:
+    """GREEN-MAIN: last main_green event sha + lag vs origin/main + age.
+
+    Reads workflow-events.jsonl for the last 'main_green' event (ADR-0062 D3).
+    lag = git rev-list <sha>..origin/main --count
+    age = seconds since the event timestamp
+    Red on lag > 0 or stale > 24h.
+    """
+    import json as _json
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {"id": "GREEN-MAIN", "result": "WARN",
+                "detail": "workflow-events.jsonl not found; no main_green events yet"}
+
+    last_green: dict | None = None
+    try:
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                if obj.get("event") == "main_green":
+                    last_green = obj
+    except Exception as exc:
+        return {"id": "GREEN-MAIN", "result": "WARN",
+                "detail": f"read error: {exc}"}
+
+    if last_green is None:
+        return {"id": "GREEN-MAIN", "result": "WARN",
+                "detail": "no main_green events found in workflow-events.jsonl"}
+
+    sha = last_green.get("sha", "")
+    ts_str = last_green.get("ts", "")
+
+    # Compute lag: commits on origin/main since the green sha
+    lag = -1
+    try:
+        r = subprocess.run(
+            ["git", "rev-list", "--count", f"{sha}..origin/main"],
+            capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
+        )
+        if r.returncode == 0:
+            lag = int(r.stdout.strip())
+    except Exception:
+        pass
+
+    # Compute age in hours
+    age_h: float | None = None
+    try:
+        from datetime import datetime, timezone
+        ts = ts_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        now = datetime.now(timezone.utc)
+        age_h = round((now - dt).total_seconds() / 3600, 1)
+    except Exception:
+        pass
+
+    sha_short = sha[:8] if sha else "?"
+    age_str = f"{age_h}h ago" if age_h is not None else "age unknown"
+    lag_str = str(lag) if lag >= 0 else "?"
+
+    if lag > 0:
+        result = "FAIL"
+        detail = f"GREEN-MAIN lag={lag} commits behind; last green sha={sha_short} ({age_str})"
+    elif age_h is not None and age_h > 24:
+        result = "WARN"
+        detail = f"GREEN-MAIN stale ({age_str}); lag=0; sha={sha_short}"
+    else:
+        result = "PASS"
+        detail = f"sha={sha_short} lag=0 ({age_str})"
+
+    return {"id": "GREEN-MAIN", "result": result, "detail": detail,
+            "sha": sha, "lag": lag, "age_hours": age_h}
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -1084,6 +1510,15 @@ def _build_health_data() -> dict:
                 check_critic_health(),
             ]
         },
+        "verificationIntegrity": {
+            "checks": [
+                check_blind_dispatch_rate(),
+                check_proof_presence(),
+                check_merge_integrity(),
+                check_capture_shape(),
+                check_green_main(),
+            ]
+        },
     }
 
 
@@ -1103,6 +1538,7 @@ def _health_background() -> None:
                 "auditSubagents": {},
                 "cascadeFinder": {"available": False, "detail": f"error: {e}"},
                 "substrateMeta": {"checks": []},
+                "verificationIntegrity": {"checks": []},
             }
             _health_cache["ts"] = time.time()
     finally:

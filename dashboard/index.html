@@ -1070,6 +1070,11 @@
     <div class="card-title">critic health (first-pass APPROVE rate, rounds, doubt-theater streak)</div>
     <div id="critic-health-grid"><div class="loading">Loading...</div></div>
   </div>
+  <!-- verification-integrity card (slice #783 / ADR-0060/0061/0062/0063) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">verification integrity (blind-rate, proof-presence, merge-integrity, capture-shape, green-main)</div>
+    <div id="verification-integrity-grid"><div class="loading">Loading...</div></div>
+  </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
@@ -1929,6 +1934,7 @@ async function loadHealth() {
     renderAsGrid(data.auditSubagents);
     renderSubstrateGrid(data.substrateMeta);
     renderCriticHealth(data.substrateMeta);
+    renderVerificationIntegrity(data.verificationIntegrity);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
@@ -2007,6 +2013,32 @@ function renderCriticHealth(substrateMeta) {
     html += `<td>${rate}</td>`;
     html += `<td style="font-size:10px;color:var(--muted)">${escHtml(histStr)}</td>`;
     html += `<td style="color:${streakColor}">${streak}${c.doubt_theater_amber ? ' ⚠' : ''}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
+}
+
+/**
+ * Render verification-integrity card (slice #783 / ADR-0060/0061/0062/0063).
+ * Shows BLIND-RATE, PROOF-PRESENCE, MERGE-INTEGRITY, CAPTURE-SHAPE, GREEN-MAIN rows.
+ */
+function renderVerificationIntegrity(vi) {
+  const grid = document.getElementById('verification-integrity-grid');
+  if (!grid) return;
+  if (!vi || !vi.checks || !vi.checks.length) {
+    grid.innerHTML = '<span style="color:var(--muted)">No verification-integrity data</span>';
+    return;
+  }
+  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  for (const c of vi.checks) {
+    const det = c.detail || '';
+    const detSnippet = det.length > 0
+      ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
+      : '';
+    html += `<tr>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     html += `</tr>`;
   }
   html += '</table>';

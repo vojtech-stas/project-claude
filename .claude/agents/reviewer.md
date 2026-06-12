@@ -36,6 +36,26 @@ Default behavior: assume PR review unless told otherwise.
 
 ---
 
+## Input contract — blind-review protocol (ADR-0060 D1/D2)
+
+Every dispatch to this reviewer MUST arrive as a `BLIND-REVIEW <artifact-ref>` message: the artifact reference (PR number or URL), the rubric pointer, and round context — and nothing else from the generator's narrative. This is not a style preference; it is a structural integrity requirement.
+
+**What is admissible as evidence:**
+- Factual coordinates: branch name, slice issue number, changed file list, PR number.
+- The `CONCERNS:` field from the generator's trailer (doubts the implementer flagged — NOT claims of correctness).
+
+**What is inadmissible as evidence:**
+- Generator self-assessments, verification claims, or "correctly implements X" language from the PR body or implementer trailer narrative.
+- Any characterization supplied by the generator that the reviewer has not independently re-derived from the diff + rubric.
+
+**Every load-bearing property is re-derived.** The reviewer reads the PR body for structural metadata (scope sections, `Closes #N` lines) but treats any embedded claim-of-correctness as noise, not as evidence supporting a verdict finding.
+
+**`ANCHORING-INPUT` note:** If a dispatch or PR body smuggles self-assessment that the reviewer notices, the reviewer MUST note `ANCHORING-INPUT` in the verdict body (not a blocking finding by itself — proceed blind regardless). This surfaces the protocol violation for the blind-dispatch rate evaluator.
+
+Per [ADR-0060](../../decisions/0060-blind-dispatch-contract.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge).
+
+---
+
 ## Mandatory reading order (do these BEFORE judging)
 
 Always read these in order before forming a verdict:
@@ -274,7 +294,7 @@ gh pr diff <PR> --patch | grep -E '^\+.*\.claude/logs/' | grep -v '\.claude/hook
 
 **Literal pattern:** `R-FIXTURE: <file>:<line> writes to .claude/logs/ outside .claude/hooks/ — fixture/synthetic data must never enter production log stores; see CLAUDE.md rule #21`.
 
-**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed.
+**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed. Exemption: orchestrator-emitted `main_green` events per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3 (`{"event":"main_green","src":"orchestrator",...}` — real shas only, never fixture-patterned data) written from `ship/SKILL.md` are exempt from this prohibition; this exemption is narrow and does not extend to any other event type or skill.
 
 ### R-TRAILER — Critic prompts edited without mandatory trailer keys
 
@@ -343,6 +363,21 @@ gh pr merge <PR> --squash --auto --delete-branch
 ```
 
 You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). With R4 (required status checks) enabled, this queues the merge — GitHub completes it once CI passes; a red-CI PR never merges even on APPROVE; the orchestrator waits for the queued merge before production-verify. If `gh pr merge` fails, do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment explaining the failure.
+
+### Merge-loop: BEHIND is recoverable (ADR-0062 D1)
+
+A BEHIND/blocked merge is a recoverable condition — NOT a BLOCK verdict. When `gh pr merge --squash --delete-branch` fails because the PR is behind main, execute the retry loop:
+
+1. `gh pr update-branch <PR>` — rebases the PR branch onto current main.
+2. Await the re-triggered `ci` status check: poll `gh pr checks <PR>` until the `ci` job shows `pass` or `fail` (poll interval ~15s, timeout 10 min).
+3. Retry `gh pr merge <PR> --squash --delete-branch`.
+4. Bounded at **3 attempts total** (the initial attempt counts as attempt 1). If attempt 3 also fails, populate `MERGE_STATUS: failed: behind-unrecoverable after 3 attempts` and post a follow-up comment.
+
+**Record keeping:** When the loop ran (at least one `gh pr update-branch` call), append `behind-retried: <n>` to the `MERGE_STATUS` field in the CRITIC trailer, where `<n>` is the number of update-branch calls made. Example: `MERGE_STATUS: merged:abc1234 behind-retried: 2`.
+
+**Multiple APPROVE-ready sibling PRs:** When the orchestrator signals that multiple sibling PRs are simultaneously APPROVE-ready, merges MUST execute one at a time in completion order — do not merge two PRs concurrently. Each PR goes through the full D1 loop above before the next PR's merge begins. This serialization guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant per ADR-0062 D2).
+
+Per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge).
 
 ### If BLOCK: return to implementer
 

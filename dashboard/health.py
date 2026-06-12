@@ -504,7 +504,7 @@ def check_docs11_dead_citations() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# R-SENSITIVE-DETECTOR — enforcement-path PR advisory detector (ADR-0064 D4)
+# R-SENSITIVE-DETECTOR — enforcement-path PR violation counter (ADR-0064 D4)
 # ---------------------------------------------------------------------------
 
 # Enforcement-layer paths per ADR-0064 D4.
@@ -528,11 +528,13 @@ _ACK_LABEL = "human-ack"
 
 
 def check_r_sensitive_detector() -> dict:
-    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack (advisory).
+    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack.
 
-    Implements ADR-0064 D4 — ADVISORY ONLY.  R-SENSITIVE activation is deferred
-    until the workflow-v2 wave-4 closing slice merges; until then this detector
-    counts violations but result is always WARN (never FAIL).
+    Implements ADR-0064 D4. R-SENSITIVE is now ACTIVE (activated at PRD #813
+    closing slice). This detector counts enforcement-path PRs that were merged
+    without a human-ack signal, as a historical violation tally.  The detector
+    itself always returns WARN (not FAIL) — blocking is enforced at review time
+    by the reviewer rubric rule R-SENSITIVE, not here.
 
     Scans the last _R_SENSITIVE_WINDOW merged PRs (post-bootstrap) for PRs that
     touched at least one enforcement-layer path and lacked a human-ack signal
@@ -546,7 +548,7 @@ def check_r_sensitive_detector() -> dict:
             "id": "R-SENSITIVE-DETECTOR",
             "result": "WARN",
             "detail": (
-                f"ADVISORY (deferred activation per ADR-0064 D4); "
+                f"R-SENSITIVE ACTIVE (ADR-0064 D4); "
                 f"could not fetch PRs: {e}"
             ),
         }
@@ -581,7 +583,7 @@ def check_r_sensitive_detector() -> dict:
 
     count = len(violations)
     detail = (
-        f"ADVISORY (activation deferred per ADR-0064 D4): "
+        f"R-SENSITIVE ACTIVE (ADR-0064 D4): "
         f"{count} enforcement-path PR(s) without human-ack in last "
         f"{_R_SENSITIVE_WINDOW} post-bootstrap merged PRs; "
         f"PRs: {violations[:10]}"

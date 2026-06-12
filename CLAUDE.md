@@ -131,6 +131,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | CI gate workflow | `.github/workflows/ci.yml` | GitHub Actions workflow; fires on pull_request; runs `tools/ci-checks.sh`; job name `ci` is the R4 required-status-check context; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
 | CI check script | `tools/ci-checks.sh` | deterministic CLI-runnable checks (settings.json validity, README regen-clean, ≤72-char commit subjects, CHECK 4 dangling ADR links via registry delegation `python3 dashboard/health.py --check DOCS-7`, CHECK 5 decisions/README.md index via `--check DOCS-1`/`DOCS-2`); run locally before pushing; per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1, [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
 | Health check registry CLI | `python dashboard/health.py --check <id>` / `--list` | run any registered DOCS-*/AS-* check headlessly; exit 0 on PASS/WARN, 1 on FAIL; `--list` prints all IDs; consumed by ci-checks.sh CHECK 4/5; per [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
+| Regression test suite | `tests/` | stdlib unittest + pytest suite; seeded with events.py interleave regression; `quarantine.txt` for flaky tests (30-day SLA); `evals/` for critic golden-set fixtures; per [ADR-0067](decisions/0067-regression-memory.md) D1/D4/D5 |
+| Eval runner | `tools/run_evals.py` | invokes `claude -p` per critic golden-set fixture, parses CRITIC trailer VERDICT, writes `tests/evals/results.json`; on-demand only (not a CI stage); per [ADR-0067](decisions/0067-regression-memory.md) D5 |
 
 ---
 

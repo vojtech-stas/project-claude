@@ -325,7 +325,7 @@ gh pr diff <PR> --patch | grep -E '^\+[0-9]+\.\s+\*\*.*rule #[0-9]+' | grep -v '
 
 ### R-SENSITIVE — enforcement-path PRs require human acknowledgment
 
-**ADVISORY — activation deferred until the workflow-v2 wave-4 closing slice merges (ADR-0064 D4); until then report the violation count, do NOT block.**
+**ACTIVE — activated at PRD #813 closing slice per ADR-0064 D4. PRs touching the declared enforcement-path set require human ack before APPROVE; BLOCK without it.**
 
 **Mechanic:** Fires ONLY when the PR touches at least one enforcement-layer path:
 - `.github/workflows/**`
@@ -345,11 +345,9 @@ gh pr view <PR> --json labels --jq '.labels[].name' | grep human-ack
 gh pr view <PR> --json body --jq '.body' | grep human-ack
 ```
 
-If the PR touches enforcement paths AND lacks both ack signals AND R-SENSITIVE is activated: BLOCK with `R-SENSITIVE: enforcement-path PR lacks human-ack (label or body); add human-ack label or include "human-ack" in PR body`.
+If the PR touches enforcement paths AND lacks both ack signals: BLOCK with `R-SENSITIVE: enforcement-path PR lacks human-ack (label or body); add human-ack label or include "human-ack" in PR body`.
 
-**ADVISORY behavior (current):** Until activation, report the finding as a Recommendation — count the enforcement paths touched and note the missing ack, but do NOT emit a BLOCK verdict for this reason alone.
-
-**Rationale:** The enforcement layer (CI workflows, hook scripts, settings, pre-commit hooks) is the machinery that polices all other PRs. An agent modifying this machinery without human awareness creates a blind-spot: the policing infrastructure can be silently modified by the same pipeline it polices. R-SENSITIVE ensures a human sees these changes before they merge. Activation is deferred to avoid deadlocking the autonomous wave-3/wave-4 program that must modify these paths under its own critic-gated ADR obligations. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4.
+**Rationale:** The enforcement layer (CI workflows, hook scripts, settings, pre-commit hooks) is the machinery that polices all other PRs. An agent modifying this machinery without human awareness creates a blind-spot: the policing infrastructure can be silently modified by the same pipeline it polices. R-SENSITIVE ensures a human sees these changes before they merge. Activation was deferred during the autonomous wave-3/wave-4 program that modified these paths under its own critic-gated ADR obligations; the deferred activation point is now reached. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4.
 
 ### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
 

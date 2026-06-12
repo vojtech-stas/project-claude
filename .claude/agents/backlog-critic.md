@@ -83,6 +83,15 @@ The canonical verdict template + CRITIC trailer field schema applies. 5 required
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include `VERDICT` and `REASON` as the first two keys. **`ROUND:` is omitted** for this critic (fires once per item, no multi-round loop — state that fact in the Summary if relevant). **`ESCALATE:` is omitted** (user-rescue from the captured tier replaces the `needs-human` label as the escalation path). On BLOCK include `FAILED_RULES:` and `FINDINGS_COUNT:` per the canonical schema.
 
+**backlog-critic trailer template** (emit this fenced block verbatim, filling in values):
+```
+VERDICT: <APPROVE|BLOCK>
+REASON: <one sentence>
+CRITIC: backlog-critic
+FAILED_RULES: <comma-separated rule names, or "none" — on APPROVE: "none">
+FINDINGS_COUNT: <integer, or 0>
+```
+
 Return your verdict inline to the calling agent (the autopilot — e.g., `/promote-to-backlog` — acts on it without further prompting). On APPROVE the autopilot performs the label swap `captured` → `backlog` and posts the verdict as an issue comment for audit trail. On BLOCK the autopilot posts the verdict and leaves the `captured` label in place; the user's per-item options are (a) cull (close as won't-promote), (b) rescue (manually `gh issue edit --remove-label captured --add-label backlog`), or (c) restructure-and-recapture.
 
 ---

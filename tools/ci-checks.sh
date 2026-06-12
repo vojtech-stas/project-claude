@@ -563,14 +563,18 @@ fi
 fi  # end python3/dashboard/server.py availability check
 
 # ---------------------------------------------------------------------------
-# CHECK 10: Critic + reviewer trailer-schema completeness (ADR-0054 D2)
-#   Every .claude/agents/*-critic.md and reviewer.md must document all three
-#   mandatory CRITIC trailer keys: VERDICT, REASON, ROUND.
+# CHECK 10: Trailer-schema completeness (ADR-0054 D2 + ADR-0059 D1/D2)
+#   Critic files (*-critic.md + reviewer.md): must document VERDICT, REASON,
+#   ROUND, and CRITIC: (attribution field per ADR-0059 D1).
+#   Generator files (implementer.md, slicer.md, qa-tester.md): must document
+#   DIDNT_TOUCH: and CONCERNS: (scope-disclosure fields per ADR-0059 D2).
 #   Whole-file fixed-string grep; SPIDR-I fallback (fenced-block scoping later
 #   if false-positive issues arise).  Deterministic, local, network-free.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 10: critic + reviewer trailer-schema completeness ---"
+echo "--- CHECK 10: trailer-schema completeness (critic CRITIC: + generator DIDNT_TOUCH:/CONCERNS:) ---"
 CHECK10_FAIL=0
+
+# --- 10a: Critic files: VERDICT, REASON, ROUND, CRITIC: ---
 CRITIC_FILES=()
 # nullglob: if no *-critic.md files exist, the glob expands to nothing rather
 # than passing the literal pattern string through (closes #667).
@@ -584,7 +588,7 @@ shopt -u nullglob
 [ -f ".claude/agents/reviewer.md" ] && CRITIC_FILES+=(".claude/agents/reviewer.md")
 
 for agent_file in "${CRITIC_FILES[@]}"; do
-    for key in VERDICT REASON ROUND; do
+    for key in VERDICT REASON ROUND "CRITIC:"; do
         if ! grep -qF "$key" "$agent_file" 2>/dev/null; then
             fail "CHECK 10 — $agent_file missing trailer key: $key"
             CHECK10_FAIL=1
@@ -592,8 +596,23 @@ for agent_file in "${CRITIC_FILES[@]}"; do
     done
 done
 
+# --- 10b: Generator files: DIDNT_TOUCH: and CONCERNS: ---
+GENERATOR_FILES=()
+for f in .claude/agents/implementer.md .claude/agents/slicer.md .claude/agents/qa-tester.md; do
+    [ -f "$f" ] && GENERATOR_FILES+=("$f")
+done
+
+for agent_file in "${GENERATOR_FILES[@]}"; do
+    for key in "DIDNT_TOUCH:" "CONCERNS:"; do
+        if ! grep -qF "$key" "$agent_file" 2>/dev/null; then
+            fail "CHECK 10 — $agent_file missing generator trailer key: $key"
+            CHECK10_FAIL=1
+        fi
+    done
+done
+
 if [ "$CHECK10_FAIL" -eq 0 ]; then
-    pass "CHECK 10 — all critic + reviewer files document VERDICT/REASON/ROUND"
+    pass "CHECK 10 — all critic files document VERDICT/REASON/ROUND/CRITIC:; all generator files document DIDNT_TOUCH:/CONCERNS:"
 fi
 
 # ---------------------------------------------------------------------------

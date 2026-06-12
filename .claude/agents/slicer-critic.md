@@ -239,6 +239,7 @@ Append as a fenced code block immediately after the verdict body.
 VERDICT: APPROVE
 REASON: <one sentence>
 ROUND: 1 | 2 | 3
+CRITIC: slicer-critic
 ```
 
 ### On BLOCK
@@ -246,6 +247,7 @@ ROUND: 1 | 2 | 3
 VERDICT: BLOCK
 REASON: <one sentence>
 ROUND: 1 | 2 | 3
+CRITIC: slicer-critic
 FAILED_RULES: <comma-separated SC-* criterion names, e.g. "SC-INVEST,SC-WALKING-SKELETON">
 FINDINGS_COUNT: <integer>
 ```

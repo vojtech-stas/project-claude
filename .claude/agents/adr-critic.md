@@ -173,6 +173,17 @@ The canonical verdict template + CRITIC trailer field schema is defined in [ADR-
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
 
+**adr-critic trailer template** (emit this fenced block verbatim, filling in values):
+```
+VERDICT: <APPROVE|BLOCK>
+REASON: <one sentence>
+ROUND: <N>
+CRITIC: adr-critic
+FAILED_RULES: <comma-separated rule names, or "none">
+FINDINGS_COUNT: <integer, or 0>
+ESCALATE: <needs-human|n/a>
+```
+
 **Mandatory output-contract posting (per ADR-0054 D1):** After rendering your verdict — EVERY round, BLOCK and APPROVE alike — post the full verdict body including the fenced CRITIC trailer as a comment on the parent PRD issue (the PRD issue that triggered this ADR review):
 ```bash
 gh issue comment <PRD-issue-number> --body-file <tempfile>

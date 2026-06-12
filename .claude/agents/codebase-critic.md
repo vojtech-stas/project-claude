@@ -280,6 +280,7 @@ Append as a fenced code block immediately after the verdict body.
 VERDICT: APPROVE
 REASON: <one sentence — e.g., "all PRD-introduced references are current; no architectural drift detected">
 ROUND: 1 | 2 | 3
+CRITIC: codebase-critic
 RECOMMENDATIONS: <comma-separated captured issue numbers for RECOMMEND findings, or "none">
 ```
 
@@ -288,6 +289,7 @@ RECOMMENDATIONS: <comma-separated captured issue numbers for RECOMMEND findings,
 VERDICT: BLOCK
 REASON: <one sentence — the primary drift finding>
 ROUND: 1 | 2 | 3
+CRITIC: codebase-critic
 FAILED_RULES: <comma-separated CC-* criterion names, e.g. "CC-REF-CURRENCY,CC-ARCH-DRIFT">
 FINDINGS_COUNT: <integer — count of BLOCK-severity findings only>
 RECOMMENDATIONS: <comma-separated captured issue numbers for RECOMMEND findings, or "none">

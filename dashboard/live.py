@@ -48,7 +48,7 @@ _CAPTURE_PILL_THRESHOLD = 120     # seconds — coarse freshness threshold
 
 # Reader-side fixture-pattern guard (mirrors log-tool-event.sh FIXTURE_PATTERN).
 _FIXTURE_SID_RE_POLL = re.compile(
-    r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)", re.IGNORECASE
 )
 
 # ---------------------------------------------------------------------------

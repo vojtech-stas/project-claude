@@ -1,23 +1,26 @@
 #!/bin/bash
 # PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
-# restructured per ADR-0030 D3 to run allowlist BEFORE jq-fallback for Windows
-# Git Bash robustness (jq is not installed by default on Windows; previous
-# layering escalated rule-#10 ask on every edit, including gitignored ones).
+# retrofitted per ADR-0057 D1/D2 to parse FULL stdin via python3 (no head -c
+# truncation), gate on extracted tool_input.file_path field (not raw-stdin
+# substring), emit attempt beacon BEFORE parse, and emit ERROR beacon with
+# session_id on parser failure (fail-open + fail-loud).
 #
 # Layered behavior (in order):
-#  1. Subagent context skip (CLAUDE_AGENT_TYPE set) — exit 0; subagents ARE the PR pipeline.
-#  2. Pre-jq allowlist (ADR-0030 D3) — read raw stdin substring, POSIX-portable
-#     path matching (handles `/` AND `\` separators). Exits silently for
-#     gitignored scratch dirs even when jq is missing.
-#  3. jq-missing fallback — emit "ask" (cannot parse stdin reliably without jq).
-#  4. File-path extract via jq.
-#  5. Tracked-file check; non-tracked files → exit 0.
-#  6. Spec-gate (ADR-0028 D1+D2, PRESERVED UNCHANGED): for main-agent edits to tracked files,
+#  1. Read full stdin once into variable (no head -c cap — ADR-0057 D1c).
+#  2. Emit attempt beacon — pure bash, before any parsing (ADR-0057 D1a).
+#  3. Subagent context skip (CLAUDE_AGENT_TYPE set) — exit 0; subagents ARE the PR pipeline.
+#  4. Parse stdin via python3: extract tool_input.file_path + session_id.
+#     On parse failure: emit ERROR beacon w/ session_id, exit 0 (ADR-0057 D1b/D2).
+#  5. Allowlist on extracted file_path field (ADR-0057 D1c — field-based, not raw substring).
+#     Paths under tool-results / .claude/projects / .claude/logs → exit 0.
+#  6. jq-missing fallback — emit "ask" (cannot build JSON response without jq).
+#  7. Tracked-file check; non-tracked files → exit 0.
+#  8. Spec-gate (ADR-0028 D1+D2, PRESERVED UNCHANGED): for main-agent edits to tracked files,
 #     parse branch and verify an in-flight PRD/slice issue exists. DENY when no matching
 #     issue / no matching branch pattern / issue closed. Fall through to rule-#10 ask when
 #     issue exists+open. Soft-degrades to ask if `gh` is unavailable OR returns a network
 #     error (ADR-0028 D4).
-#  7. Rule-#10 escalate-to-ask fallback (preserved from ADR-0023 D3).
+#  9. Rule-#10 escalate-to-ask fallback (preserved from ADR-0023 D3).
 
 set -uo pipefail
 
@@ -28,7 +31,16 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
-printf '{"hook":"pre-tool-edit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+# Step 1: read FULL stdin once — no head -c truncation (ADR-0057 D1c).
+STDIN_RAW=$(cat)
+
+# Step 2: emit attempt beacon BEFORE any parsing — pure bash, no parse dependency
+# (ADR-0057 D1a: attempt-before-parse ordering).
+_BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
+mkdir -p "$_BEACON_DIR" 2>/dev/null || true
+printf '{"hook":"pre-tool-edit","status":"attempt","ts":"%s"}\n' \
+  "$(date -Iseconds 2>/dev/null)" \
+  >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 REASON='Main-agent write to tracked file — CLAUDE.md rule #10 says flow through PR pipeline. Confirm if this is an I3 trivial-lane edit (≤10 LoC, `trivial` label, branch `hotfix/<issue#>-…`); cancel and use /to-prd or /ship otherwise.'
 
@@ -54,41 +66,70 @@ emit_deny() {
   exit 0
 }
 
-# Subagent context — allow (no emit). Subagents ARE the PR pipeline per ADR-0023 D3 step 1.
+# Step 3: subagent context — allow (no emit). Subagents ARE the PR pipeline per ADR-0023 D3 step 1.
 # OQ-1 fallback: if CLAUDE_AGENT_TYPE unreliable on dogfood, comment out this block to always escalate.
 if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
   exit 0
 fi
 
-# ADR-0030 D3: Pre-jq allowlist — read raw stdin substring, POSIX-portable
-# path matching that handles both `/` (POSIX) and `\` (Windows) separators.
-# Runs BEFORE the jq-missing fallback so gitignored scratch dirs exit silently
-# even on Windows Git Bash where jq is not installed by default.
-# Capped at 4096 bytes to bound memory; tool_input.file_path appears early.
-STDIN_RAW=$(head -c 4096 </dev/stdin 2>/dev/null || echo "")
-case "$STDIN_RAW" in
-  *tool-results*|*.claude/projects*|*.claude/logs*|*.claude\\projects*|*.claude\\logs*) exit 0 ;;
+# Step 4: parse FULL stdin with python3 — extract file_path + session_id.
+# ADR-0057 D1c: gating decisions match extracted JSON fields, never raw-stdin text.
+# ADR-0057 D1b/D2: on parser failure emit ERROR beacon with session_id and exit 0 (fail-open).
+_PY_OUT=$(export _PTE_STDIN="$STDIN_RAW"; python3 - <<'PYEOF' 2>/dev/null
+import sys, os, json, re
+raw = os.environ.get("_PTE_STDIN", "")
+try:
+    payload = json.loads(raw)
+    fp  = (payload.get("tool_input") or {}).get("file_path") or ""
+    sid = payload.get("session_id") or ""
+    print(json.dumps({"ok": True, "file_path": fp, "session_id": sid}))
+except Exception as exc:
+    # Best-effort session_id extraction even on corrupt JSON.
+    m = re.search(r'"session_id"\s*:\s*"([^"]*)"', raw)
+    sid = m.group(1) if m else ""
+    print(json.dumps({"ok": False, "file_path": "", "session_id": sid, "error": str(exc)[:200]}))
+PYEOF
+)
+
+_PY_OK=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print('1' if d.get('ok') else '0')" 2>/dev/null || echo "0")
+FP=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_path',''))" 2>/dev/null || echo "")
+_SID=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
+# Bash-level session_id fallback: if python3 failed entirely _SID is empty; extract via sed.
+if [ -z "$_SID" ]; then
+  _SID=$(printf '%s' "$STDIN_RAW" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 2>/dev/null || echo "")
+fi
+
+if [ "$_PY_OK" != "1" ]; then
+  # ADR-0057 D1b: parser failure → ERROR beacon with session_id, then fail-open.
+  _ERR_MSG=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','parse-failed'))" 2>/dev/null || echo "parse-failed")
+  printf '{"hook":"pre-tool-edit","status":"ERROR","ts":"%s","session_id":"%s","reason":"%s"}\n' \
+    "$(date -Iseconds 2>/dev/null)" "$_SID" "$_ERR_MSG" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+  exit 0
+fi
+
+# Step 5: allowlist on EXTRACTED file_path (ADR-0057 D1c — field-based, not raw substring).
+# Handles both POSIX (/) and Windows (\) path separators.
+case "$FP" in
+  *tool-results*|*.claude/projects*|*.claude/logs*|*.claude\\projects*|*.claude\\logs*)
+    exit 0
+    ;;
 esac
 
-# Missing jq → cannot parse stdin reliably; escalate (default-conservative per OQ-1 fallback).
+# Step 6: jq-missing fallback — cannot build JSON response without jq.
 if ! command -v jq >/dev/null 2>&1; then
   emit_ask
 fi
 
-# Re-parse: STDIN_RAW already consumed /dev/stdin; pipe it into jq instead.
-FP=$(printf '%s' "$STDIN_RAW" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo "")
 [ -z "$FP" ] && exit 0
 
-# (Post-jq allowlist removed per ADR-0030 D3 — pre-jq allowlist at line ~62
-# handles all scratch-dir cases now, including Windows backslash paths.)
-
-# Tracked-file check; if NOT tracked → exit cleanly (no spec-gate, no ask).
+# Step 7: tracked-file check; if NOT tracked → exit cleanly (no spec-gate, no ask).
 REL="${FP#"$PWD"/}"
 if ! git ls-files --error-unmatch -- "$REL" >/dev/null 2>&1 && ! git ls-files --error-unmatch -- "$FP" >/dev/null 2>&1; then
   exit 0
 fi
 
-# ADR-0028 D1+D2: spec-gate runs BEFORE rule-#10 ask fallback for tracked-file edits.
+# Step 8: ADR-0028 D1+D2: spec-gate runs BEFORE rule-#10 ask fallback for tracked-file edits.
 # Soft-degrades per D4: if `gh` missing OR `gh issue view` returns a network error, fall through to ask.
 if command -v gh >/dev/null 2>&1; then
   BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}"
@@ -124,6 +165,6 @@ if command -v gh >/dev/null 2>&1; then
   # Issue exists + open — fall through to existing rule-#10 ask.
 fi
 
-# Rule-#10 escalate-to-ask fallback (ADR-0023 D3) — preserved for tracked-file edits when
+# Step 9: Rule-#10 escalate-to-ask fallback (ADR-0023 D3) — preserved for tracked-file edits when
 # spec-gate either passed (issue open) or soft-degraded (gh unavailable).
 emit_ask

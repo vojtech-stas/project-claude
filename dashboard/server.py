@@ -17,6 +17,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
         GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
         GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
+        GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -31,6 +32,7 @@ import sys
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -78,6 +80,44 @@ from health import (  # noqa: E402
 from events import serve_runs as _serve_runs_fn  # noqa: E402
 from workitems import fetch_workitems  # noqa: E402
 from readme_gen import generate_readme, render_pipeline_mermaid  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Server identity — captured once at import/startup time (ADR-0056/0057/0058).
+# /api/meta returns {sha, started_at, stale}; stale is recomputed per-request
+# by comparing the current HEAD to the sha captured at startup.
+# ---------------------------------------------------------------------------
+def _capture_startup_sha() -> str:
+    """Return git HEAD sha at server startup; empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _current_head_sha() -> str:
+    """Return current git HEAD sha; empty string on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+_SERVER_SHA: str = _capture_startup_sha()
+_SERVER_STARTED_AT: str = datetime.now(timezone.utc).isoformat()
 
 # ---------------------------------------------------------------------------
 # Known critics (explicit allow-list per implementer note 1).
@@ -158,7 +198,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     # log-tool-event.sh so the server defensively drops synthetic sids even if the
     # writer's routing was bypassed (e.g. direct file writes during testing).
     _FIXTURE_SID_RE = re.compile(
-        r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+        r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)", re.IGNORECASE
     )
 
     @classmethod
@@ -354,6 +394,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             t.start()
             self._send_json({"status": "computing", "last_n": last_n})
+
+        elif path == "/api/meta":
+            # GET /api/meta — server identity: {sha, started_at, stale}
+            # sha: HEAD sha captured at startup; stale: HEAD has moved since startup.
+            # stale is recomputed per-request (cheap git rev-parse).
+            current_sha = _current_head_sha()
+            stale = bool(_SERVER_SHA and current_sha and current_sha != _SERVER_SHA)
+            self._send_json({
+                "sha": _SERVER_SHA,
+                "started_at": _SERVER_STARTED_AT,
+                "stale": stale,
+            })
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

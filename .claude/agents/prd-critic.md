@@ -153,6 +153,23 @@ PRD §2 criteria are EARS-shaped: numbered, each leading with a WHEN/WHERE trigg
 
 ---
 
+### Delta mode (AMENDMENT invocation path)
+
+When dispatched with `DELTA_MODE: true` and an `## AMENDMENT <n>` comment body, prd-critic reviews ONLY the delta — the ADDED/MODIFIED/REMOVED criteria listed in that comment — against the existing approved PRD context.
+
+**Mechanic:**
+1. **Identify the delta.** Parse the AMENDMENT comment for lines prefixed `ADDED §2 #n:`, `MODIFIED §2 #n:`, or `REMOVED §2 #n:`. These are the only criteria under review; all other existing criteria are already approved and are NOT re-examined.
+2. **Apply PC-EARS to new/modified criteria.** Each `ADDED` or `MODIFIED` criterion must satisfy the WHEN/SHALL grammar or carry an explicit `Verifiable:` escape hatch. Trigger-less or multi-behavior new criteria → BLOCK.
+3. **Apply PC-ACCEPTANCE-MECHANICALLY-VERIFIABLE to new/modified criteria.** Each must be bash-checkable or JUDGMENT-extractable.
+4. **Check REMOVED criteria** for downstream impact: if a removed criterion is cited in any open slice's `Covers:` line, note this as a finding (the slice's contract predates the removal; it is NOT a BLOCK — the in-flight slice finishes against its original contract; capture as a reconciliation follow-up).
+5. All other full-PRD rubric rules (PC-PRD-COMPLETENESS, PC-RABBIT-HOLES-NAMED, etc.) are **NOT applied** in delta mode — the PRD body is frozen; those checks ran at original approval time.
+
+**Output:** Same CRITIC trailer as standard mode, with `ROUND:` reflecting the amendment review round (not the original PRD approval round). Append `DELTA_MODE: true` to the trailer. Post the verdict as a comment on the PRD issue per the standard output-contract.
+
+**Bind-forward:** Per ADR-0066 D3 / ADR-0004 D2 — applies to PRDs first-dispatched after this critic-merge.
+
+---
+
 ### PC-PRODUCTION-CHECK
 
 PRD §2 contains an actionable "Production check:" line (per [ADR-0037](../../decisions/0037-production-verification-gate.md) D4).

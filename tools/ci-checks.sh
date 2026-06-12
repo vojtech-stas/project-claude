@@ -9,7 +9,11 @@
 # Usage: bash tools/ci-checks.sh
 #   (run from the repo root)
 
-set -euo pipefail
+# set -e intentionally OMITTED: this script accumulates failures via FAIL_COUNT
+# so ALL checks must run regardless of earlier failures.  -u (unbound vars) and
+# -o pipefail are kept; -e (abort-on-error) is incompatible with the run-all
+# design (see #727 root-cause).
+set -uo pipefail
 
 FAIL_COUNT=0
 
@@ -37,14 +41,21 @@ fi
 # ---------------------------------------------------------------------------
 echo "--- CHECK 2: README regen-clean ---"
 if command -v python3 > /dev/null 2>&1 && [ -f "dashboard/server.py" ]; then
+    # Stash the current README into a temp file so we can restore it without
+    # clobbering pre-existing uncommitted edits (issue #727: git checkout --
+    # README.md is destructive; cp/mv is safe).
+    _readme_tmp=$(mktemp)
+    cp README.md "$_readme_tmp"
     python3 dashboard/server.py --generate-readme > /dev/null 2>&1
     if git diff --exit-code README.md > /dev/null 2>&1; then
         pass "README.md is up-to-date with regen output"
     else
         fail "README.md is stale — run 'python3 dashboard/server.py --generate-readme' and commit"
-        # restore to not pollute diff output for other checks
-        git checkout -- README.md 2>/dev/null || true
     fi
+    # Always restore to pre-check state (avoids polluting diff for other checks
+    # and preserves any pre-existing uncommitted edits).
+    cp "$_readme_tmp" README.md
+    rm -f "$_readme_tmp"
 else
     echo "SKIP: CHECK 2 — python3 or dashboard/server.py not available (soft-degrade)"
 fi
@@ -561,10 +572,14 @@ fi  # end python3/dashboard/server.py availability check
 echo "--- CHECK 10: critic + reviewer trailer-schema completeness ---"
 CHECK10_FAIL=0
 CRITIC_FILES=()
+# nullglob: if no *-critic.md files exist, the glob expands to nothing rather
+# than passing the literal pattern string through (closes #667).
+shopt -s nullglob
 # Collect all *-critic.md files
 for f in .claude/agents/*-critic.md; do
     [ -f "$f" ] && CRITIC_FILES+=("$f")
 done
+shopt -u nullglob
 # Add reviewer.md
 [ -f ".claude/agents/reviewer.md" ] && CRITIC_FILES+=(".claude/agents/reviewer.md")
 

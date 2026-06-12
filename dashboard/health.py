@@ -2198,6 +2198,91 @@ def check_silent_drift() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# TESTS-COLLECTED — regression suite collected-count row (ADR-0067 D1)
+# ---------------------------------------------------------------------------
+
+
+def check_tests_collected() -> dict:
+    """TESTS-COLLECTED: count of pytest-collected test items in tests/.
+
+    Implements ADR-0067 D1 — the founding memory row: reports how many tests
+    are collected in the tests/ suite. PASS when count > 0 (the suite exists
+    and is non-empty). FAIL when tests/ exists but no tests are collected.
+    WARN when tests/ does not exist or pytest is unavailable.
+
+    Uses 'pytest --collect-only -q' which is fast (no test execution).
+    Bind-forward per ADR-0004 D2: pre-suite repos honestly report WARN.
+    """
+    tests_dir = _HEALTH_REPO_ROOT / "tests"
+    if not tests_dir.exists():
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "WARN",
+            "detail": "tests/ directory does not exist (pre-suite: bind-forward ADR-0067 D1)",
+        }
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(tests_dir),
+             "--collect-only", "-q", "--no-header"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+    except FileNotFoundError:
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "WARN",
+            "detail": "pytest not available; install pytest or use stdlib unittest",
+        }
+    except Exception as exc:
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "WARN",
+            "detail": f"pytest collect-only failed: {exc}",
+        }
+
+    # Parse collected count from pytest output.
+    # pytest --collect-only -q emits lines like "<path>::<class>::<method>"
+    # followed by a summary "N tests" or "no tests ran".
+    output = (result.stdout or "") + (result.stderr or "")
+
+    # Count lines that look like collected test IDs (contain "::")
+    # This is more reliable than parsing the summary line.
+    collected_lines = [
+        line for line in output.splitlines()
+        if "::" in line and not line.startswith("=") and not line.startswith("-")
+    ]
+    count = len(collected_lines)
+
+    if count == 0:
+        # Try parsing the summary line as a fallback
+        import re as _re
+        m = _re.search(r'(\d+)\s+(?:test|item)', output)
+        if m:
+            count = int(m.group(1))
+
+    if count > 0:
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "PASS",
+            "detail": f"{count} test(s) collected in tests/ (ADR-0067 D1 founding memory row)",
+            "count": count,
+        }
+    else:
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "FAIL",
+            "detail": (
+                "tests/ exists but 0 tests collected — "
+                "suite must stay non-empty per ADR-0067 D1"
+            ),
+            "count": 0,
+        }
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -2247,6 +2332,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
+    # Memory checks (ADR-0067 wave 4)
+    "TESTS-COLLECTED": check_tests_collected,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -2362,6 +2449,7 @@ def _build_health_data() -> dict:
                 check_rule_coverage(),
                 check_spec_coverage(),
                 check_critic_health(),
+                check_tests_collected(),
             ]
         },
         "verificationIntegrity": {

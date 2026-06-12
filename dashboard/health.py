@@ -2198,6 +2198,125 @@ def check_silent_drift() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# TESTS-COLLECTED — regression suite collected-count row (ADR-0067 D1)
+# ---------------------------------------------------------------------------
+
+
+def check_tests_collected() -> dict:
+    """TESTS-COLLECTED: count of test items collected in tests/.
+
+    Implements ADR-0067 D1 — the founding memory row: reports how many tests
+    are collected in the tests/ suite. PASS when count > 0 (the suite exists
+    and is non-empty). FAIL when tests/ exists but no tests are collected.
+    WARN when tests/ does not exist.
+
+    Prefers pytest --collect-only -q when pytest is importable; falls back to
+    stdlib unittest discovery (python -m unittest discover --collect-only or
+    a manual loader) so the health row works on any standard Python install.
+    Bind-forward per ADR-0004 D2: pre-suite repos honestly report WARN.
+    """
+    tests_dir = _HEALTH_REPO_ROOT / "tests"
+    if not tests_dir.exists():
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "WARN",
+            "detail": "tests/ directory does not exist (pre-suite: bind-forward ADR-0067 D1)",
+        }
+
+    # --- Try pytest first (optional dependency) ---
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(tests_dir),
+             "--collect-only", "-q", "--no-header"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        # pytest available — parse output.
+        output = (result.stdout or "") + (result.stderr or "")
+        # Lines containing "::" are collected test IDs.
+        collected_lines = [
+            line for line in output.splitlines()
+            if "::" in line and not line.startswith("=") and not line.startswith("-")
+        ]
+        count = len(collected_lines)
+        if count == 0:
+            import re as _re
+            m = _re.search(r'(\d+)\s+(?:test|item)', output)
+            if m:
+                count = int(m.group(1))
+
+        if count > 0:
+            return {
+                "id": "TESTS-COLLECTED",
+                "result": "PASS",
+                "detail": f"{count} test(s) collected in tests/ via pytest (ADR-0067 D1)",
+                "count": count,
+            }
+        else:
+            return {
+                "id": "TESTS-COLLECTED",
+                "result": "FAIL",
+                "detail": (
+                    "tests/ exists but 0 tests collected via pytest — "
+                    "suite must stay non-empty per ADR-0067 D1"
+                ),
+                "count": 0,
+            }
+
+    except FileNotFoundError:
+        # pytest not installed — fall through to stdlib unittest discovery.
+        pass
+    except Exception as exc:
+        # Unexpected error from pytest subprocess — fall through.
+        _ = exc  # log if needed; continue to stdlib fallback
+
+    # --- Stdlib unittest fallback (no pytest required) ---
+    # Use unittest's TestLoader to discover and count tests without running them.
+    try:
+        import unittest as _unittest
+        loader = _unittest.TestLoader()
+        suite = loader.discover(str(tests_dir), pattern="test_*.py",
+                                top_level_dir=str(_HEALTH_REPO_ROOT))
+
+        def _count_tests(s) -> int:
+            """Recursively count leaf TestCase instances in a suite."""
+            total = 0
+            for item in s:
+                if hasattr(item, "__iter__"):
+                    total += _count_tests(item)
+                else:
+                    total += 1
+            return total
+
+        count = _count_tests(suite)
+        if count > 0:
+            return {
+                "id": "TESTS-COLLECTED",
+                "result": "PASS",
+                "detail": f"{count} test(s) collected in tests/ via stdlib unittest (ADR-0067 D1)",
+                "count": count,
+            }
+        else:
+            return {
+                "id": "TESTS-COLLECTED",
+                "result": "FAIL",
+                "detail": (
+                    "tests/ exists but 0 tests collected via stdlib unittest — "
+                    "suite must stay non-empty per ADR-0067 D1"
+                ),
+                "count": 0,
+            }
+    except Exception as exc:
+        return {
+            "id": "TESTS-COLLECTED",
+            "result": "WARN",
+            "detail": f"test collection failed (pytest unavailable, stdlib discovery error): {exc}",
+        }
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -2247,6 +2366,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
+    # Memory checks (ADR-0067 wave 4)
+    "TESTS-COLLECTED": check_tests_collected,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -2362,6 +2483,7 @@ def _build_health_data() -> dict:
                 check_rule_coverage(),
                 check_spec_coverage(),
                 check_critic_health(),
+                check_tests_collected(),
             ]
         },
         "verificationIntegrity": {

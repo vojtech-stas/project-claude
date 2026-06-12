@@ -601,6 +601,48 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 12: tests/ suite (ADR-0067 D1)
+#   Runs pytest when tests/ exists; FAIL on any test failure.
+#   Reports collected count in the pass line.
+#   Falls back to stdlib unittest discovery when pytest is unavailable.
+#   Per-check aggregation: FAIL_COUNT incremented on failure only.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 12: tests/ suite ---"
+if [ ! -d "tests" ]; then
+    echo "SKIP: CHECK 12 — tests/ directory not found (soft-degrade)"
+elif ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 12 — python3 not available (soft-degrade)"
+else
+    CHECK12_FAIL=0
+    if python3 -m pytest --version > /dev/null 2>&1; then
+        # pytest available — run with collect count
+        CHECK12_OUTPUT=$(python3 -m pytest tests/ -v --tb=short 2>&1)
+        CHECK12_EXIT=$?
+        # Extract collected count from pytest output (e.g. "collected 3 items")
+        CHECK12_COUNT=$(echo "$CHECK12_OUTPUT" | grep -oE 'collected [0-9]+ item' | grep -oE '[0-9]+' || echo "?")
+        if [ "$CHECK12_EXIT" -eq 0 ]; then
+            pass "CHECK 12 — pytest: $CHECK12_COUNT test(s) collected and passed"
+        else
+            fail "CHECK 12 — pytest: test suite failed (exit $CHECK12_EXIT)"
+            echo "$CHECK12_OUTPUT" >&2
+            CHECK12_FAIL=1
+        fi
+    else
+        # Fallback: stdlib unittest discover
+        CHECK12_OUTPUT=$(python3 -m unittest discover -s tests -p "test_*.py" -v 2>&1)
+        CHECK12_EXIT=$?
+        CHECK12_COUNT=$(echo "$CHECK12_OUTPUT" | grep -oE 'Ran [0-9]+ test' | grep -oE '[0-9]+' || echo "?")
+        if [ "$CHECK12_EXIT" -eq 0 ]; then
+            pass "CHECK 12 — unittest: $CHECK12_COUNT test(s) collected and passed"
+        else
+            fail "CHECK 12 — unittest: test suite failed (exit $CHECK12_EXIT)"
+            echo "$CHECK12_OUTPUT" >&2
+            CHECK12_FAIL=1
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

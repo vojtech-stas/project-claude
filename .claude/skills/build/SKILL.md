@@ -185,6 +185,15 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
   - **hook-fire / command-run / static-check routes:** no file to send (no image); instead print the `PROOF:` string inline in the summary beside the verified claim.
 - **Visible-surface screenshot floor (run-to-done complement):** Regardless of proof route, if the shipped work has ANY user-visible surface — a dashboard tab, panel, graph, or report view — the wrap-up MUST capture a post-merge production screenshot from a fresh (restarted/live) environment per rule #20's freshness clause and `SendUserFile` it with a claim-tied caption. The route-scoped SendUserFile items above are the per-route minimum; this floor-raises them for visual work. Non-visual work: send the nearest visible artifact if one exists (e.g. a CLI output excerpt as an inline code block), else state honestly "no visual surface — nearest artifact: [quoted output]". Do NOT send a screenshot of a stale or pre-merge environment; restart the relevant server/dashboard before capturing.
+- **Post-merge green-main step (ADR-0062 D3):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged main:
+  1. `bash tools/ci-checks.sh` — must exit 0.
+  2. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
+  3. On success, append a `main_green` event to the workflow event log via the canonical logger pattern:
+     ```bash
+     python3 -c "import json,datetime,subprocess; sha=subprocess.check_output(['git','rev-parse','origin/main']).decode().strip(); line=json.dumps({'v':2,'ts':datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),'event':'main_green','sha':sha,'src':'orchestrator'}); open('$(git rev-parse --show-toplevel)/.claude/logs/workflow-events.jsonl','a').write(line+'\n')"
+     ```
+  4. On failure: the suspect set = squash commits since the last `main_green` event (≤300 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
+  Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3.
 - Mark the feature done; proceed to output.
 
 **FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:

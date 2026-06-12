@@ -294,7 +294,7 @@ gh pr diff <PR> --patch | grep -E '^\+.*\.claude/logs/' | grep -v '\.claude/hook
 
 **Literal pattern:** `R-FIXTURE: <file>:<line> writes to .claude/logs/ outside .claude/hooks/ — fixture/synthetic data must never enter production log stores; see CLAUDE.md rule #21`.
 
-**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed.
+**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed. Exemption: orchestrator-emitted `main_green` events per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3 (`{"event":"main_green","src":"orchestrator",...}` — real shas only, never fixture-patterned data) written from `ship/SKILL.md` are exempt from this prohibition; this exemption is narrow and does not extend to any other event type or skill.
 
 ### R-TRAILER — Critic prompts edited without mandatory trailer keys
 

@@ -45,7 +45,7 @@ Argument-parsing logic (shell-style switch): set `RUN_STRUCT` / `RUN_DOCS` flags
 
 **Mechanic:** `ls -d .claude/skills/*/ | wc -l` → ≤ 16 → PASS; 17–19 → WARN; > 19 → FAIL.
 
-**Rationale:** The 16-skill cap accommodates the planned sibling-skill expansion ([ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md)) but no further. New skills past 16 should justify why an existing skill cannot absorb the concern. Cap bumped from 12 to accommodate ADR-0022 D3+D8 best-practice sibling skills.
+**Rationale:** The 16-skill cap accommodates the planned sibling-skill expansion ([ADR-0022](../../../decisions/0022-docs-first-kb-pattern.md) — superseded entirely by [ADR-0032](../../../decisions/0032-workflow-only-architecture.md)) but no further. New skills past 16 should justify why an existing skill cannot absorb the concern. Cap bumped from 12 to accommodate ADR-0022 D3+D8 best-practice sibling skills.
 
 ### STRUCT-3 — no markdown file > 500 LoC (split-candidate detector)
 
@@ -231,7 +231,7 @@ Forbidden: `Edit`, `Write` (advisory only); `Agent` (no recursive invocation —
 - [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — D1 (skill ownership), D2 (mechanical-only), D5 (no auto-capture), D6 (rubric embedded), D7 (no-args precedent — extended here with subcommands). The template this SKILL.md mirrors.
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — GENERATOR trailer shape.
 - [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7 (6-critic-cap, honored), D8 (surfacing convention — sources DOCS-10).
-- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; former `am-*.md` atomic rule bodies are now inlined above.
+- [ADR-0031](../../../decisions/0031-knowledge-architecture-v2.md) — T5 thin-prompt migration; former `am-*.md` atomic rule bodies are now inlined above; superseded entirely by [ADR-0032](../../../decisions/0032-workflow-only-architecture.md).
 - Backlog [#129](https://github.com/vojtech-stas/project-claude/issues/129) — structure auditor (consolidated as `--structure`).
 - Backlog [#130](https://github.com/vojtech-stas/project-claude/issues/130) — doc-currency auditor (consolidated as `--docs`).
 - Backlog [#47](https://github.com/vojtech-stas/project-claude/issues/47) — future cadence + boy-scout PRDs per ADR-0017 D7.

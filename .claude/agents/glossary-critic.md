@@ -147,5 +147,5 @@ This subagent originally shipped in slice 1 of PRD #53 per ADR-0007 D7 and was u
 - ADR-0007 D2/D3/D5/D7 (entry shape, scope rule, rubric source, bootstrap policy)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
 - ADR-0012 D2 (citation threshold) + D4 (rubric supersession) + D7 (grandfathering)
-- ADR-0031 — T4 thin-prompt migration; rule bodies inlined above.
+- ADR-0031 — T4 thin-prompt migration; rule bodies inlined above; superseded entirely by ADR-0032.
 - [`.claude/skills/glossary/SKILL.md`](../skills/glossary/SKILL.md) — primary caller (both `add` and `fold` subcommands, per ADR-0038 D3).

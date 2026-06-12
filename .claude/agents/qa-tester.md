@@ -130,27 +130,31 @@ Per-agent extensions per ADR-0005 D1c (sum of bash-mode counts equals row count 
 
 **bash-mode trailer:**
 ```
-RESULT: SUCCESS | FAIL | INVALID_INPUT
+RESULT: SUCCESS | FAIL | INVALID_INPUT | CONFUSION
 REASON: <one sentence>
 ARTIFACTS:
 PASS_COUNT: <integer>
 FAIL_COUNT: <integer>
 JUDGMENT_COUNT: <integer>
 EXTRACT_FAILED_COUNT: <integer>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
 
 **ui-mode trailer:**
 ```
-RESULT: SUCCESS | FAIL | INVALID_INPUT
+RESULT: SUCCESS | FAIL | INVALID_INPUT | CONFUSION
 REASON: <one sentence>
 ARTIFACTS: <captured-issue URLs comma-separated, or empty>
 UI_PASS_COUNT: <integer>
 UI_PROVISIONAL_PASS_COUNT: <integer>
 UI_FAIL_COUNT: <integer>
 UI_CAPTURED_ISSUES: <integer>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
 
-`RESULT: SUCCESS` when every verdict is PASS / JUDGMENT / EXTRACT_FAILED (bash-mode) or every per-criterion aggregate is PASS (ui-mode, PROVISIONAL_PASS folded). `RESULT: FAIL` on any FAIL. `RESULT: INVALID_INPUT` on malformed input, missing `ui-mode` token, dogfood failure, or mode-ambiguous prompt. `ARTIFACTS:` is empty in bash-mode (writer owns artifact persistence); in ui-mode it lists URLs of `captured`-labeled issues opened during PROVISIONAL_PASS handling.
+`RESULT: SUCCESS` when every verdict is PASS / JUDGMENT / EXTRACT_FAILED (bash-mode) or every per-criterion aggregate is PASS (ui-mode, PROVISIONAL_PASS folded). `RESULT: FAIL` on any FAIL. `RESULT: INVALID_INPUT` on malformed input, missing `ui-mode` token, dogfood failure, or mode-ambiguous prompt. `RESULT: CONFUSION` when contradictory instructions or an impossible acceptance criterion is encountered — name the specific conflict and provide 2–3 resolution options, STOP without guessing (per ADR-0059 D3). `ARTIFACTS:` is empty in bash-mode (writer owns artifact persistence); in ui-mode it lists URLs of `captured`-labeled issues opened during PROVISIONAL_PASS handling. `DIDNT_TOUCH:` and `CONCERNS:` are optional-empty but must be present as keys (per ADR-0059 D2).
 
 ## Tool boundaries
 
@@ -374,13 +378,15 @@ Update Step 5 (PASS condition) to: PASS when asserts (A)+(B)+(C)+(D)+(E)+(F) all
 Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent production-verify extensions. DO NOT emit VERDICT, ROUND, or any critic-rubric fields — qa-tester is a GENERATOR, not a critic (ADR-0037 D3; critic parsimony per ADR-0046 D1).
 
 ```
-RESULT: SUCCESS | FAIL | INVALID_INPUT
+RESULT: SUCCESS | FAIL | INVALID_INPUT | CONFUSION
 REASON: <one sentence -- e.g., "browser gate PASS: renders + 0 console errors + graph visible" or "hook-fire FAIL: exit code 1, expected 0">
 ARTIFACTS: <proof path if captured (browser route screenshot path), else empty>
 PRODUCTION_VERIFY: PASS | FAIL
 ROUTE: browser | hook-fire | command-run | static-check
 PROOF: <route-specific: "inner_text: <text excerpt> [+ screenshot: <path>]" (browser -- primary human-faithful evidence; inner_text always present; screenshot always available in headless mode; eval supplements only); "exit=0, log: <line>" (hook-fire); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static-check)>
 ASSERTIONS_CHECKED: <route-specific field list -- see below>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
 
 `ASSERTIONS_CHECKED` is route-specific:

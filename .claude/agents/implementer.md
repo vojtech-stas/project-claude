@@ -79,6 +79,8 @@ ARTIFACTS: <PR URL>
 PR_URL: <PR URL>
 BRANCH_NAME: <branch>
 SLICE_ISSUE: #<N>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
 
 ### On BLOCKED
@@ -89,6 +91,8 @@ ARTIFACTS:
 PR_URL:
 BRANCH_NAME: <branch if created, else empty>
 SLICE_ISSUE: #<N>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points, or "none">
 ```
 
 ### On INVALID_INPUT
@@ -99,7 +103,25 @@ ARTIFACTS:
 PR_URL:
 BRANCH_NAME:
 SLICE_ISSUE: #<N>
+DIDNT_TOUCH:
+CONCERNS:
 ```
+
+### On CONFUSION
+```
+RESULT: CONFUSION
+REASON: <the specific conflict — two contradictory instructions or an impossible AC>
+ARTIFACTS:
+PR_URL:
+BRANCH_NAME:
+SLICE_ISSUE: #<N>
+DIDNT_TOUCH:
+CONCERNS:
+```
+
+`CONFUSION` is returned when the agent encounters contradictory instructions or an impossible acceptance criterion and cannot resolve the conflict without guessing. Name the specific conflict and provide 2–3 resolution options in the body. STOP — do NOT guess or implement. The orchestrator routes `CONFUSION` to `needs-human` or back to the design step and records the choice in the dispatch trail (per ADR-0059 D3).
+
+`DIDNT_TOUCH:` lists files/areas deliberately left alone (scope-discipline evidence for the reviewer). `CONCERNS:` discloses doubts — risk entry points the reviewer should scrutinize — NOT success self-assessments (per ADR-0059 D2). Both fields are optional-empty but must be present as keys.
 
 ## Conduct
 

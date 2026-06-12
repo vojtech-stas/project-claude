@@ -96,6 +96,17 @@ Return your verdict inline to the calling agent (`/glossary add` runs the loop b
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
 
+**glossary-critic trailer template** (emit this fenced block verbatim, filling in values):
+```
+VERDICT: <APPROVE|BLOCK>
+REASON: <one sentence>
+ROUND: <N>
+CRITIC: glossary-critic
+FAILED_RULES: <comma-separated rule names, or "none">
+FINDINGS_COUNT: <integer, or 0>
+ESCALATE: <needs-human|n/a>
+```
+
 ---
 
 ## Tool boundaries

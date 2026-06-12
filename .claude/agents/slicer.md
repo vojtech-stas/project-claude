@@ -109,12 +109,16 @@ Print the following structure literally. The downstream critic parses by header 
 Then emit the GENERATOR trailer (canonical schema per [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — see CLAUDE.md glossary for generator-trailer) as a fenced code block immediately after the decomposition block:
 
 ```
-RESULT: SUCCESS | STOPPED | INVALID_INPUT
+RESULT: SUCCESS | STOPPED | INVALID_INPUT | CONFUSION
 REASON: <one sentence>
 ARTIFACTS: <single decomposition presented above>
+DIDNT_TOUCH: <files/areas deliberately left alone, or "none">
+CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "none">
 ```
 
-`RESULT: SUCCESS` when the decomposition is emitted; `INVALID_INPUT` on malformed PRD (alongside `INVALID_PRD: <reason>`, ARTIFACTS may be empty); `STOPPED` on other halts. Return only the decomposition block + trailer.
+`RESULT: SUCCESS` when the decomposition is emitted; `INVALID_INPUT` on malformed PRD (alongside `INVALID_PRD: <reason>`, ARTIFACTS may be empty); `STOPPED` on other halts; `CONFUSION` when contradictory instructions or an impossible acceptance criterion is encountered — name the specific conflict and provide 2–3 resolution options, STOP without guessing (per ADR-0059 D3). Return only the decomposition block + trailer.
+
+`DIDNT_TOUCH:` lists files/areas deliberately left alone. `CONCERNS:` discloses doubts — risk entry points for the downstream critic — NOT success self-assessments (per ADR-0059 D2). Both fields are optional-empty but must be present as keys.
 
 ## Tool boundaries
 

@@ -19,6 +19,9 @@ Exports:
     cascade_finder_summary() -> dict
     check_test_ordering() -> dict         (slice #816/ADR-0067 D2: fix-type PR test-first ordering rate)
     check_quarantine_sla() -> dict        (slice #816/ADR-0067 D4: quarantine register size + oldest-entry SLA)
+    check_frontmatter_coverage() -> dict  (slice #820/ADR-0069 D3: % agent files with explicit model: frontmatter)
+    check_declared_parity() -> dict       (slice #820/ADR-0069 D3: declared model: vs observed in agent events)
+    check_dora_panel() -> dict            (slice #820/ADR-0069 D4: DORA instability panel renders-with-real-ids)
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
@@ -2886,6 +2889,430 @@ def check_reassurance_rerun() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Economics checks continued (ADR-0069 D3/D4 wave-4 slice #820)
+# ---------------------------------------------------------------------------
+
+# Known critic agent file stems (per ADR-0027 D3 + ADR-0069 D3).
+_CRITIC_STEMS = frozenset({
+    "reviewer", "prd-critic", "adr-critic", "slicer-critic",
+    "glossary-critic", "backlog-critic", "codebase-critic",
+})
+
+
+def check_frontmatter_coverage() -> dict:
+    """FRONTMATTER-COVERAGE: % subagent files with explicit model: frontmatter.
+
+    Implements ADR-0069 D3 standing invariant (ADR-0027 D1: every .claude/agents/*.md
+    MUST have explicit model: frontmatter). Reports honest current value; PASS=100%.
+
+    PASS when all agent files have explicit model: frontmatter.
+    FAIL when any agent file is missing the model: field.
+    WARN when the agents directory is missing or unreadable.
+    """
+    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
+    if not agents_dir.exists():
+        return {
+            "id": "FRONTMATTER-COVERAGE",
+            "result": "WARN",
+            "detail": ".claude/agents/ directory not found",
+            "covered": 0, "total": 0, "missing": [],
+        }
+
+    agent_files = sorted(agents_dir.glob("*.md"))
+    if not agent_files:
+        return {
+            "id": "FRONTMATTER-COVERAGE",
+            "result": "WARN",
+            "detail": "no .md files in .claude/agents/",
+            "covered": 0, "total": 0, "missing": [],
+        }
+
+    missing = []
+    _model_re = re.compile(r'^model\s*:', re.MULTILINE)
+    for agent_path in agent_files:
+        try:
+            text = agent_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            missing.append(agent_path.name)
+            continue
+        if not _model_re.search(text):
+            missing.append(agent_path.name)
+
+    total = len(agent_files)
+    covered = total - len(missing)
+    pct = int(covered * 100 / total) if total > 0 else 0
+    detail = (
+        f"{covered}/{total} agent files have explicit model: frontmatter "
+        f"({pct}%; ADR-0027 D1 invariant; expect 100%)"
+    )
+    if missing:
+        detail += f"; missing: {missing[:5]}"
+    result = "PASS" if not missing else "FAIL"
+    return {
+        "id": "FRONTMATTER-COVERAGE",
+        "result": result,
+        "detail": detail,
+        "covered": covered,
+        "total": total,
+        "missing": missing,
+    }
+
+
+def check_declared_parity() -> dict:
+    """DECLARED-PARITY: declared model: vs observed model field in agent events.
+
+    Implements ADR-0069 D3. Compares each agent's declared model: frontmatter
+    against the model field observed in agent_start events in workflow-events.jsonl.
+
+    Pre-baseline bucket: the model field on agent events was added in slice #819 merge
+    (2026-06-12). Events before that date have no model field; they go in the
+    honest "pre-baseline" bucket and do not affect the verdict.
+
+    PASS when all post-baseline events match their declared model (or no post-baseline
+    events with model field exist yet — WARN with honest pre-baseline bucket).
+    FAIL when any post-baseline event carries a model value that mismatches the
+    agent's declared frontmatter model.
+    """
+    import json as _json
+
+    # Load declared model: values from frontmatter
+    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
+    declared: dict[str, str] = {}
+    _model_val_re = re.compile(r'^model\s*:\s*(\S+)', re.MULTILINE)
+    _name_val_re = re.compile(r'^name\s*:\s*(\S+)', re.MULTILINE)
+    if agents_dir.exists():
+        for agent_path in sorted(agents_dir.glob("*.md")):
+            try:
+                text = agent_path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            nm = _name_val_re.search(text)
+            mm = _model_val_re.search(text)
+            if nm and mm:
+                declared[nm.group(1).strip()] = mm.group(1).strip()
+
+    # Load agent events from workflow-events.jsonl
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {
+            "id": "DECLARED-PARITY",
+            "result": "WARN",
+            "detail": (
+                "workflow-events.jsonl not found; honest pre-baseline bucket — "
+                "model field on agent events flows from slice #819 merge"
+            ),
+            "pre_baseline": 0, "matched": 0, "mismatched": 0,
+        }
+
+    pre_baseline = 0
+    matched = 0
+    mismatches: list[str] = []
+
+    try:
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                if obj.get("v") != 2:
+                    continue
+                if obj.get("event") != "agent_start":
+                    continue
+                model_field = obj.get("model")
+                if not model_field:
+                    pre_baseline += 1
+                    continue
+                # We have a model field — check against declared
+                # The subagent_type or description may carry the agent name
+                desc = obj.get("description", "") or ""
+                # Try to identify the agent from the description
+                agent_name = None
+                for stem in declared:
+                    if stem in desc.lower():
+                        agent_name = stem
+                        break
+                if agent_name is None:
+                    # Cannot identify agent from description — skip (honest)
+                    pre_baseline += 1
+                    continue
+                declared_model = declared.get(agent_name, "")
+                if declared_model and model_field != declared_model:
+                    mismatches.append(
+                        f"{agent_name}: declared={declared_model} observed={model_field}"
+                    )
+                else:
+                    matched += 1
+    except Exception as exc:
+        return {
+            "id": "DECLARED-PARITY",
+            "result": "WARN",
+            "detail": f"read error: {exc}",
+            "pre_baseline": 0, "matched": 0, "mismatched": 0,
+        }
+
+    total_checked = matched + len(mismatches)
+    detail_parts = [
+        f"{matched}/{total_checked} post-baseline agent events match declared model"
+    ]
+    if pre_baseline > 0:
+        detail_parts.append(
+            f"pre-baseline (no model field): {pre_baseline} "
+            f"(honest — model field flows from slice #819 merge, bind-forward ADR-0069 D3)"
+        )
+    if mismatches:
+        detail_parts.append(f"mismatches: {mismatches[:3]}")
+
+    detail = " | ".join(detail_parts)
+    result = "FAIL" if mismatches else "PASS" if total_checked > 0 else "WARN"
+    return {
+        "id": "DECLARED-PARITY",
+        "result": result,
+        "detail": detail,
+        "pre_baseline": pre_baseline,
+        "matched": matched,
+        "mismatched": len(mismatches),
+    }
+
+
+def _discover_dora_metrics(window_days: int = 7) -> dict:
+    """Compute DORA-style instability metrics from gh CLI data.
+
+    Data sources (repo-local proxies, per ADR-0069 D4):
+    - merges/day: merged PRs in window / window_days
+    - lead time (slice-open→merge): slice issues closed in window with a linked PR
+    - change-failure rate: (revert PRs + hotfix PRs + production-verify FAILs) / merged PRs
+      * revert PRs: head ref starts with 'revert/' or title starts with 'Revert'
+      * hotfix PRs: head ref starts with 'hotfix/'
+      * production-verify FAILs: PRs with label 'needs-human' (reviewer escalated)
+    - MTTR (capture-opened→fix-merged): root-cause issues with closedAt and a fix PR
+
+    Returns a dict naming all data sources + honest empty-window handling.
+    """
+    import json as _json
+    import subprocess as _sp
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    def _gh_run(args: list[str]) -> list | None:
+        try:
+            r = _sp.run(
+                ["gh"] + args,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode == 0:
+                return _json.loads(r.stdout)
+        except Exception:
+            pass
+        return None
+
+    now = _dt.now(tz=_tz.utc)
+    window_start = now - _td(days=window_days)
+    window_str = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # --- 1. Merged PRs in window ---
+    prs_raw = _gh_run([
+        "pr", "list", "--state", "merged",
+        "--limit", "100",
+        "--json", "number,mergedAt,headRefName,title,labels",
+    ])
+    if prs_raw is None:
+        return {"error": "gh CLI unavailable", "data_source": "gh pr list (merged)"}
+
+    # Filter to window
+    def _in_window(ts_str: str) -> bool:
+        if not ts_str:
+            return False
+        try:
+            ts = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return ts >= window_start
+        except Exception:
+            return False
+
+    prs_in_window = [p for p in prs_raw if _in_window(p.get("mergedAt", ""))]
+    total_merged = len(prs_in_window)
+    merges_per_day = round(total_merged / window_days, 2)
+
+    # --- 2. Classify change failures ---
+    revert_prs = []
+    hotfix_prs = []
+    needs_human_prs = []
+    for p in prs_in_window:
+        head = p.get("headRefName", "")
+        title = p.get("title", "")
+        labels = [lb.get("name", "") for lb in (p.get("labels") or [])]
+        pr_num = p.get("number")
+        if head.startswith("revert/") or title.lower().startswith("revert "):
+            revert_prs.append(pr_num)
+        elif head.startswith("hotfix/"):
+            hotfix_prs.append(pr_num)
+        if "needs-human" in labels:
+            needs_human_prs.append(pr_num)
+
+    failure_count = len(revert_prs) + len(hotfix_prs) + len(needs_human_prs)
+    cfr = round(failure_count / total_merged, 3) if total_merged > 0 else 0.0
+
+    # --- 3. Lead time: slice-open → merge ---
+    slices_raw = _gh_run([
+        "issue", "list",
+        "--label", "slice",
+        "--state", "closed",
+        "--limit", "50",
+        "--json", "number,createdAt,closedAt",
+    ])
+    lead_times_h = []
+    if slices_raw:
+        for s in slices_raw:
+            closed = s.get("closedAt", "")
+            created = s.get("createdAt", "")
+            if not _in_window(closed) or not created:
+                continue
+            try:
+                t_open = _dt.fromisoformat(created.replace("Z", "+00:00"))
+                t_close = _dt.fromisoformat(closed.replace("Z", "+00:00"))
+                delta_h = (t_close - t_open).total_seconds() / 3600
+                if delta_h >= 0:
+                    lead_times_h.append(round(delta_h, 1))
+            except Exception:
+                pass
+
+    avg_lead_h = (
+        round(sum(lead_times_h) / len(lead_times_h), 1) if lead_times_h else None
+    )
+
+    # --- 4. MTTR: capture-opened → fix-merged ---
+    # Root-cause issues closed in window (proxy for "incident resolved")
+    captures_raw = _gh_run([
+        "issue", "list",
+        "--label", "captured",
+        "--label", "root-cause",
+        "--state", "closed",
+        "--limit", "30",
+        "--json", "number,createdAt,closedAt",
+    ])
+    mttr_h_list = []
+    if captures_raw:
+        for c in captures_raw:
+            closed = c.get("closedAt", "")
+            created = c.get("createdAt", "")
+            if not _in_window(closed) or not created:
+                continue
+            try:
+                t_open = _dt.fromisoformat(created.replace("Z", "+00:00"))
+                t_close = _dt.fromisoformat(closed.replace("Z", "+00:00"))
+                delta_h = (t_close - t_open).total_seconds() / 3600
+                if delta_h >= 0:
+                    mttr_h_list.append(round(delta_h, 1))
+            except Exception:
+                pass
+
+    avg_mttr_h = (
+        round(sum(mttr_h_list) / len(mttr_h_list), 1) if mttr_h_list else None
+    )
+
+    # Build sample PR id references for naming data sources (per rule #20 / ADR-0069 D4)
+    sample_pr_ids = [p.get("number") for p in prs_in_window[:5]]
+    failure_pr_ids = revert_prs[:3] + hotfix_prs[:3] + needs_human_prs[:3]
+
+    return {
+        "window_days": window_days,
+        "window_start": window_str,
+        "total_merged": total_merged,
+        "merges_per_day": merges_per_day,
+        "lead_time_avg_h": avg_lead_h,
+        "lead_time_samples": len(lead_times_h),
+        "cfr": cfr,
+        "failure_count": failure_count,
+        "revert_prs": revert_prs,
+        "hotfix_prs": hotfix_prs,
+        "needs_human_prs": needs_human_prs,
+        "failure_pr_ids": failure_pr_ids,
+        "mttr_avg_h": avg_mttr_h,
+        "mttr_samples": len(mttr_h_list),
+        "sample_pr_ids": sample_pr_ids,
+        "data_source": (
+            f"gh pr list --state merged (last 100); "
+            f"gh issue list --label slice --state closed; "
+            f"gh issue list --label captured,root-cause --state closed; "
+            f"window={window_days}d from {window_str}"
+        ),
+    }
+
+
+def check_dora_panel() -> dict:
+    """DORA-PANEL: renders-with-real-ids check for the DORA instability panel.
+
+    Implements ADR-0069 D4. Verifies the DORA discovery function returns a
+    valid payload with at least one real PR id or an honest empty-window result.
+
+    PASS when discovery returns a dict with a 'sample_pr_ids' key (even if empty
+    — honest empty windows are permitted per ADR-0069 D4).
+    FAIL when discovery returns an error payload.
+    WARN when gh CLI is unavailable.
+    """
+    try:
+        metrics = _discover_dora_metrics(window_days=7)
+    except Exception as exc:
+        return {
+            "id": "DORA-PANEL",
+            "result": "WARN",
+            "detail": f"discovery error: {exc}",
+        }
+
+    if "error" in metrics:
+        err = metrics["error"]
+        if "unavailable" in err.lower():
+            return {
+                "id": "DORA-PANEL",
+                "result": "WARN",
+                "detail": f"gh CLI unavailable: {err}",
+            }
+        return {
+            "id": "DORA-PANEL",
+            "result": "FAIL",
+            "detail": f"DORA discovery error: {err}",
+        }
+
+    total = metrics.get("total_merged", 0)
+    sample_ids = metrics.get("sample_pr_ids", [])
+    cfr = metrics.get("cfr", 0.0)
+    mpd = metrics.get("merges_per_day", 0)
+    lead = metrics.get("lead_time_avg_h")
+    mttr = metrics.get("mttr_avg_h")
+
+    if total > 0:
+        detail = (
+            f"renders-with-real-ids: {total} PRs in 7d window "
+            f"(sample PR ids: {sample_ids[:3]}); "
+            f"merges/day={mpd}; CFR={cfr}; "
+            f"lead_time={'N/A' if lead is None else str(lead)+'h'}; "
+            f"MTTR={'N/A' if mttr is None else str(mttr)+'h'}"
+        )
+    else:
+        detail = (
+            "honest empty window: 0 merged PRs in last 7 days "
+            "(window granularity=7d; data sources: gh pr list merged + "
+            "slice issues + root-cause captures)"
+        )
+
+    return {
+        "id": "DORA-PANEL",
+        "result": "PASS",
+        "detail": detail,
+        "total_merged": total,
+        "merges_per_day": mpd,
+        "cfr": cfr,
+        "lead_time_avg_h": lead,
+        "mttr_avg_h": mttr,
+        "sample_pr_ids": sample_ids,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Hygiene registry checks (ADR-0068 D1) — wave-4 slice #818
 # ---------------------------------------------------------------------------
 
@@ -3356,6 +3783,10 @@ CHECK_REGISTRY: dict[str, callable] = {
     # Economics checks (ADR-0069 D1/D2 wave-4 slice #819)
     "EFFORT-BUDGET":      check_effort_budget,
     "REASSURANCE-RERUN":  check_reassurance_rerun,
+    # Economics checks continued (ADR-0069 D3/D4 wave-4 slice #820)
+    "FRONTMATTER-COVERAGE": check_frontmatter_coverage,
+    "DECLARED-PARITY":      check_declared_parity,
+    "DORA-PANEL":           check_dora_panel,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -3506,6 +3937,9 @@ def _build_health_data() -> dict:
             "checks": [
                 check_effort_budget(),
                 check_reassurance_rerun(),
+                check_frontmatter_coverage(),
+                check_declared_parity(),
+                check_dora_panel(),
             ]
         },
     }

@@ -1,0 +1,32 @@
+# tests/quarantine.txt — flaky / known-broken test quarantine register
+#
+# RULES (per ADR-0067 D4):
+#
+#   run-and-log, never gate
+#     Quarantined tests are still executed in CI but their failure does NOT
+#     block the build. They log their outcome to support trend detection.
+#
+#   captured-issue reference required
+#     Every entry MUST carry a reference to a `captured`-labeled GitHub issue
+#     on the same line, e.g.:
+#       tests/test_foo.py::TestBar::test_baz  # captured #NNN
+#
+#   30-day fix-or-delete SLA
+#     An entry older than 30 days is an SLA breach (QUARANTINE-SLA registry
+#     row turns red). Either fix the test and remove the entry, or close the
+#     captured issue with a documented won't-fix rationale and remove the entry.
+#
+#   named anti-pattern — deletion without quarantine
+#     Deleting a failing test without first adding it here AND opening a
+#     captured issue is the named anti-pattern for how agents "fix" CI.
+#     The `R-PROVE` reviewer rule and `TEST-ORDERING` health row detect this.
+#
+# FORMAT (one entry per line, blank lines and #-comment lines ignored):
+#   <test_node_id>  # captured #<issue-number>  [quarantined: YYYY-MM-DD]
+#
+# EXAMPLE (not a real entry — shows the format only):
+#   # tests/test_example.py::TestSuite::test_flaky  # captured #999  [quarantined: 2026-01-01]
+#
+# ---------------------------------------------------------------------------
+# Active quarantine entries (add below this line):
+# ---------------------------------------------------------------------------

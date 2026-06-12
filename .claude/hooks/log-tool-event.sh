@@ -148,12 +148,29 @@ try:
     if event_type == "agent_start":
         event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
         event["input"]         = str(tool_input.get("description", ""))[:300]
+        # effort_class: parse from dispatch description where available (ADR-0069 D1).
+        # Pattern: "effort_class: <trivial|standard|closing>" anywhere in description.
+        _desc = str(tool_input.get("description", ""))
+        _ec_m = re.search(r'\beffort_class\s*:\s*(trivial|standard|closing)\b',
+                          _desc, re.IGNORECASE)
+        if _ec_m:
+            event["effort_class"] = _ec_m.group(1).lower()
+        # model: subagent model where derivable from subagent_type frontmatter (ADR-0069 D3).
+        # Parse model from the description if declared as "model: <value>".
+        _model_m = re.search(r'\bmodel\s*:\s*(\S+)', _desc, re.IGNORECASE)
+        if _model_m:
+            event["model"] = str(_model_m.group(1))[:100]
 
     elif event_type == "agent_complete":
         event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
         event["input"]         = str(tool_input.get("description", ""))[:300]
         # tail = last 2000 chars of tool_response (trailer capture for verdict parsing).
         event["tail"]          = tool_response[-2000:] if len(tool_response) > 2000 else tool_response
+        # model: carry through on completion events where derivable (ADR-0069 D3).
+        _desc_c = str(tool_input.get("description", ""))
+        _model_mc = re.search(r'\bmodel\s*:\s*(\S+)', _desc_c, re.IGNORECASE)
+        if _model_mc:
+            event["model"] = str(_model_mc.group(1))[:100]
 
     elif event_type == "bash_complete":
         event["command"] = str(tool_input.get("command", ""))[:200]

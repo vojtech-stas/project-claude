@@ -127,6 +127,7 @@ CONCERNS:
 
 - **Default conservative** per [ADR-0009](../../decisions/0009-discipline-tightening.md) D3/D4: when uncertain about acceptance-criterion interpretation, scope boundary, branch-name choice, commit-format compliance, or whether an edit belongs in this slice — return `RESULT: BLOCKED` with a one-sentence `REASON:` rather than guess. A spurious BLOCK costs one human-prompt round; a wrong-guess edit costs a reviewer round-trip plus rework.
 - **Adversarial mindset** (full rationale in entity note): treat every edit as a scope-drift suspect; pre-empt reviewer findings (scope drift / YAGNI / missing tests / commit format / R-LOC pressure) before pushing.
+- **No reassurance reruns (ADR-0069 D2):** never re-run an identical command with no intervening file change or new hypothesis — state what new information the rerun is expected to produce before running it.
 - **Bootstrap-mode** per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D9: enforcement of CLAUDE.md rules binds forward from invocation time; use whichever `CLAUDE.md` was loaded at session start; do NOT re-read mid-pipeline.
 
 ## References

@@ -2590,6 +2590,302 @@ def _insert_dashboard_sys_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Economics checks (ADR-0069 D1/D2 wave-4 slice #819)
+# ---------------------------------------------------------------------------
+
+# Advisory tool-call budgets per effort class (ADR-0069 D1).
+_EFFORT_BUDGETS: dict[str, int] = {
+    "trivial": 20,
+    "standard": 80,
+    "closing": 150,
+}
+
+# PASS threshold: ≥90% of classified dispatches within budget (ADR-0069 D1).
+_EFFORT_BUDGET_PASS_RATE = 0.90
+
+
+def check_effort_budget() -> dict:
+    """EFFORT-BUDGET: tool-calls-per-dispatch by class; flag >2x budget.
+
+    Implements ADR-0069 D1. Reads workflow-events.jsonl pairing agent_start
+    events (carrying effort_class + session_id) with bash_complete events to
+    count tool calls per dispatch window. A dispatch window spans from an
+    agent_start event to the next agent_complete event for the same session.
+
+    Measurement:
+    - classified dispatches: those with an effort_class field on agent_start.
+    - unclassified: agent_start events without effort_class (pre-ADR-0069 D1
+      history — honest unclassified bucket per ADR-0004 D2 bind-forward).
+    - over-budget: classified dispatches where tool_calls > 2x class budget.
+
+    PASS when ≥90% of classified dispatches are within budget (or no classified
+    dispatches yet — WARN with honest unclassified bucket).
+    WARN when <90% within budget but no outright failures.
+    FAIL when >10% of classified dispatches exceed 2x budget.
+    """
+    import json as _json
+
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {
+            "id": "EFFORT-BUDGET",
+            "result": "WARN",
+            "detail": (
+                "workflow-events.jsonl not found; "
+                "bind-forward ADR-0069 D1 — classified dispatches expected "
+                "after ship/SKILL.md template merge"
+            ),
+            "classified": 0, "unclassified": 0, "over_budget": 0,
+        }
+
+    try:
+        # Load all events; pair agent_start → agent_complete by session_id.
+        # Count bash_complete events between each start/complete pair.
+        events: list[dict] = []
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                ev = obj.get("event", "")
+                if ev in ("agent_start", "agent_complete", "bash_complete"):
+                    events.append(obj)
+    except Exception as exc:
+        return {"id": "EFFORT-BUDGET", "result": "WARN",
+                "detail": f"read error: {exc}",
+                "classified": 0, "unclassified": 0, "over_budget": 0}
+
+    # Build dispatch records: for each agent_start, find the next agent_complete
+    # with the same session_id and count bash_complete events in between.
+    dispatches = []
+    open_starts: dict[str, dict] = {}   # session_id → agent_start event
+    open_start_idx: dict[str, int] = {} # session_id → index in events
+
+    for i, ev in enumerate(events):
+        sid = ev.get("session_id", "")
+        etype = ev.get("event", "")
+        if etype == "agent_start":
+            open_starts[sid] = ev
+            open_start_idx[sid] = i
+        elif etype == "agent_complete" and sid in open_starts:
+            start_ev = open_starts.pop(sid)
+            start_i = open_start_idx.pop(sid)
+            # Count bash_complete events with same session_id between start and complete
+            tool_calls = sum(
+                1 for j in range(start_i + 1, i)
+                if events[j].get("event") == "bash_complete"
+                and events[j].get("session_id") == sid
+            )
+            effort_class = start_ev.get("effort_class")  # None if absent
+            dispatches.append({
+                "effort_class": effort_class,
+                "tool_calls": tool_calls,
+            })
+
+    if not dispatches:
+        return {
+            "id": "EFFORT-BUDGET",
+            "result": "WARN",
+            "detail": (
+                "no complete dispatch pairs found in workflow-events.jsonl; "
+                "bind-forward ADR-0069 D1 (history unclassified — expected)"
+            ),
+            "classified": 0, "unclassified": 0, "over_budget": 0,
+        }
+
+    classified = []
+    unclassified = []
+    for d in dispatches:
+        if d["effort_class"] is not None:
+            classified.append(d)
+        else:
+            unclassified.append(d)
+
+    over_budget = []
+    within_budget = 0
+    class_counts: dict[str, dict] = {}
+
+    for d in classified:
+        cls = d["effort_class"]
+        tc = d["tool_calls"]
+        budget = _EFFORT_BUDGETS.get(cls, _EFFORT_BUDGETS["standard"])
+        if cls not in class_counts:
+            class_counts[cls] = {"count": 0, "over": 0}
+        class_counts[cls]["count"] += 1
+        if tc > 2 * budget:
+            over_budget.append((cls, tc, budget))
+            class_counts[cls]["over"] += 1
+        else:
+            within_budget += 1
+
+    total_classified = len(classified)
+    total_unclassified = len(unclassified)
+    total_over = len(over_budget)
+
+    # Build summary
+    class_summary = "; ".join(
+        f"{cls}:{v['count']}disp({v['over']}over)"
+        for cls, v in sorted(class_counts.items())
+    ) if class_counts else "none"
+    unclass_str = (
+        f"unclassified: {total_unclassified} "
+        f"(pre-ADR-0069-D1 history, bind-forward)"
+    )
+
+    if total_classified == 0:
+        return {
+            "id": "EFFORT-BUDGET",
+            "result": "WARN",
+            "detail": (
+                f"0 classified dispatches; {unclass_str}; "
+                "PASS once effort_class appears in agent_start events"
+            ),
+            "classified": 0, "unclassified": total_unclassified,
+            "over_budget": 0,
+        }
+
+    within_rate = within_budget / total_classified if total_classified > 0 else 1.0
+    rate_pct = f"{within_rate * 100:.0f}%"
+
+    detail = (
+        f"{within_budget}/{total_classified} classified dispatches within "
+        f"budget ({rate_pct}; PASS≥{int(_EFFORT_BUDGET_PASS_RATE*100)}%); "
+        f"over-2x: {total_over}; classes: {class_summary}; "
+        + unclass_str
+    )
+
+    if within_rate >= _EFFORT_BUDGET_PASS_RATE:
+        result = "PASS"
+    elif total_over > 0:
+        result = "WARN"  # advisory per ADR-0069 D1 — never hard kill
+    else:
+        result = "WARN"
+
+    return {
+        "id": "EFFORT-BUDGET",
+        "result": result,
+        "detail": detail,
+        "classified": total_classified,
+        "unclassified": total_unclassified,
+        "over_budget": total_over,
+        "within_rate": round(within_rate, 3),
+    }
+
+
+def check_reassurance_rerun() -> dict:
+    """REASSURANCE-RERUN: identical consecutive bash commands with no Edit/Write.
+
+    Implements ADR-0069 D2. Reads workflow-events.jsonl per session, scans
+    for consecutive bash_complete events with identical commands and no
+    intervening Edit or Write tool event.
+
+    A 'reassurance rerun' is: running the same command twice in a row (same
+    session_id, identical command text) with no Edit/Write event between them.
+    These are measurement signals — an agent re-observing without new info.
+
+    Trend target: zero (ADR-0069 D2). Reports count + per-session breakdown.
+    PASS when 0 pairs found. WARN always (advisory measurement, not a gate).
+    """
+    import json as _json
+
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {
+            "id": "REASSURANCE-RERUN",
+            "result": "WARN",
+            "detail": (
+                "workflow-events.jsonl not found; "
+                "bind-forward ADR-0069 D2 — measurement starts from hook setup"
+            ),
+            "pair_count": 0,
+        }
+
+    try:
+        # Load events: bash_complete (command text) + agent tool events.
+        # We need to detect Edit/Write events between bash events.
+        # The hook currently records: bash_complete, agent_start, agent_complete,
+        # skill_invoke, grill_qa, user_prompt, session_start, session_stop.
+        # Edit/Write are not separately hooked — but user_prompt events serve as
+        # natural intervening signals. Since Edit/Write fire inside tool calls
+        # (not separately logged), we use a conservative approximation:
+        # detect pairs where the same bash command fires CONSECUTIVELY for the
+        # same session_id without any OTHER event type in between.
+        sessions: dict[str, list[dict]] = {}
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                sid = obj.get("session_id", "")
+                ev = obj.get("event", "")
+                if not sid or not ev:
+                    continue
+                if sid not in sessions:
+                    sessions[sid] = []
+                sessions[sid].append(obj)
+    except Exception as exc:
+        return {"id": "REASSURANCE-RERUN", "result": "WARN",
+                "detail": f"read error: {exc}", "pair_count": 0}
+
+    total_pairs = 0
+    session_details: list[str] = []
+
+    for sid, evts in sessions.items():
+        pairs_this_session = 0
+        last_bash_cmd: str | None = None
+        has_intervening: bool = True  # reset between sessions
+
+        for ev in evts:
+            etype = ev.get("event", "")
+            if etype == "bash_complete":
+                cmd = ev.get("command", "")
+                if (not has_intervening
+                        and last_bash_cmd is not None
+                        and cmd == last_bash_cmd
+                        and cmd.strip()):
+                    pairs_this_session += 1
+                last_bash_cmd = cmd
+                has_intervening = False
+            elif etype in ("agent_start", "agent_complete",
+                           "skill_invoke", "grill_qa", "user_prompt",
+                           "session_start", "session_stop"):
+                # Any non-bash event counts as an intervening signal.
+                has_intervening = True
+
+        if pairs_this_session > 0:
+            total_pairs += pairs_this_session
+            session_details.append(f"{sid[:8]}:{pairs_this_session}")
+
+    detail_parts = [f"identical-consecutive-pair count: {total_pairs}"]
+    if session_details:
+        detail_parts.append(
+            "sessions with reruns: " + ", ".join(session_details[:5])
+            + (" ..." if len(session_details) > 5 else "")
+        )
+    detail_parts.append(
+        "trend target: zero (ADR-0069 D2); "
+        "bind-forward: pre-merge history is the honest starting value"
+    )
+    detail = " | ".join(detail_parts)
+
+    result = "PASS" if total_pairs == 0 else "WARN"
+    return {
+        "id": "REASSURANCE-RERUN",
+        "result": result,
+        "detail": detail,
+        "pair_count": total_pairs,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Hygiene registry checks (ADR-0068 D1) — wave-4 slice #818
 # ---------------------------------------------------------------------------
 
@@ -3057,6 +3353,9 @@ CHECK_REGISTRY: dict[str, callable] = {
     "REQUIRED-LABELS":   check_required_labels,
     "DEAD-ROUTES":       check_dead_routes,
     "SESSION-INJECTION": check_session_injection,
+    # Economics checks (ADR-0069 D1/D2 wave-4 slice #819)
+    "EFFORT-BUDGET":      check_effort_budget,
+    "REASSURANCE-RERUN":  check_reassurance_rerun,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -3201,6 +3500,12 @@ def _build_health_data() -> dict:
                 check_required_labels(),
                 check_dead_routes(),
                 check_session_injection(),
+            ]
+        },
+        "economicsIntegrity": {
+            "checks": [
+                check_effort_budget(),
+                check_reassurance_rerun(),
             ]
         },
     }

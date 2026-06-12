@@ -1930,8 +1930,8 @@ async function loadHealth() {
 }
 
 /**
- * Render substrate health check grid (CAPTURE-SLO, HOOK-INTEGRITY, ISOLATION-GROUP).
- * Slice #767: simple table rows, red on FAIL, amber on WARN.
+ * Render substrate health check grid (CAPTURE-SLO, HOOK-INTEGRITY, ISOLATION-GROUP, RULE-COVERAGE).
+ * Slice #767/#768: simple table rows, red on FAIL, amber on WARN.
  */
 function renderSubstrateGrid(substrateMeta) {
   const grid = document.getElementById('substrate-grid');

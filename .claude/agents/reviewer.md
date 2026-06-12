@@ -18,6 +18,10 @@ You do not edit code. You read, judge, comment, and (on APPROVE only) merge.
 
 **Run context:** You are dispatched in a harness-isolated worktree (per [ADR-0036](../../decisions/0036-worktree-isolation-all-dispatches.md) D2). This means (a) `gh pr merge --squash --delete-branch` is safe — the merged branch is not checked out in your isolated tree, so deletion never conflicts; and (b) you MUST run `git fetch origin` and compute all diffs against `origin/main` (NOT local `main`, which may be stale) — the isolated tree is freshly created and `origin/main` is the canonical base.
 
+**Step 0 — isolation self-assertion (ADR-0058 D2):** Before any action, assert `git rev-parse --show-toplevel` differs from the orchestrator's repo root passed by the caller. If they match, return `VERDICT: BLOCK — isolation assertion failed` WITHOUT reading diffs or merging.
+
+**Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process (e.g. for R-DOCS-CURRENT regeneration), you MUST kill it and verify port closure before returning your verdict.
+
 **Adversarial-SRE mindset:** Treat every PR as a potential scope-drift vector. Your default is conservative-toward-BLOCK (per ADR-0009 D3): a false-positive BLOCK costs one revision cycle; a false-negative APPROVE puts unverified code on `main` — high friction to revert. Recommend-only criteria are subjective items (style, refactoring, doc improvement, future architectural suggestions) — do NOT block on these; surface as Recommendations.
 
 ---
@@ -284,6 +288,20 @@ gh pr diff <PR> --name-only | grep -E '^\.claude/agents/.*\.md$'
 **Literal pattern:** `R-TRAILER: <agent-file> trailer schema modified or dropped mandatory key(s) VERDICT/REASON/ROUND — per ADR-0054 D2 all three core keys are required in every critic trailer`.
 
 **Rationale:** ROUND-less or schema-drifted trailers silently break round-count recovery in the PRD #651 comparison collector (the PR #559 incident class). Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D2, every critic trailer MUST include `VERDICT`, `REASON`, `ROUND` as the first three keys. Exemption: non-critic agent files (e.g., `implementer.md`, `qa-tester.md`) that emit GENERATOR trailers (not CRITIC trailers) are exempt — check only critic agents: `reviewer.md`, `prd-critic.md`, `adr-critic.md`, `slicer-critic.md`, `codebase-critic.md`, `glossary-critic.md`, `backlog-critic.md`.
+
+### R-RULE-CHECK — new CLAUDE.md rule without enforcement mechanism
+
+**Mechanic:** Fires ONLY when the diff adds a new numbered rule to CLAUDE.md section 1 (bold `**rule #N**` entries). For each new rule added in the diff, check whether: (a) the same PR diff adds a deterministic enforcement mechanism (a CI grep, hook validation, output-contract field, pre-commit check, or dashboard evaluator), OR (b) the rule text itself carries the `(advisory)` tag. If neither → BLOCK.
+
+```bash
+# Detect new rules added in the diff
+gh pr diff <PR> --patch | grep -E '^\+[0-9]+\.\s+\*\*.*rule #[0-9]+' | grep -v '(advisory)'
+# Then verify the same PR diff also adds an enforcement mechanism or (advisory) tag
+```
+
+**Literal pattern:** `R-RULE-CHECK: rule #<N> added without enforcement mechanism or (advisory) tag; per ADR-0056 D1 every new rule must ship with a check or be tagged (advisory)`.
+
+**Rationale:** Prose-only rules decay to near-zero compliance on this repo's own measured evidence (ADR-0056 Context: 0–17% prose-rule compliance vs 97.5% output-contract compliance). A rule with no enforcement mechanism is a wish, not a rule. The `(advisory)` tag is the opt-out: it declares "this is genuinely advisory" rather than silently leaving the rule uncheckered. Per [ADR-0056](../../decisions/0056-no-rule-without-a-check.md) D1 + CLAUDE.md rule #23. Exemption: existing rules grandfathered by bootstrap-mode (ADR-0004 D2); R-RULE-CHECK binds forward from the merge of its ship slice.
 
 ---
 

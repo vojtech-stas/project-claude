@@ -322,11 +322,11 @@ EDGES = [
         "from_node": "build",
         "to_node": "ship",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "build_dispatches_ship",
         "label": "",
         "style": "solid",
-        "description": "/build conducts /ship as its core step (ADR-0034 D1).",
+        "description": "/build conducts /ship as its core step (ADR-0034 D1). Conditional: /build must be invoked in a fresh session with live hooks for this edge to be runtime-observed; resumed-session hook blindspot means invocations in resumed sessions produce no skill_invoke events (issue #719).",
     },
 
     # /grill-me → /ship: settled design handed off (in-conversation)
@@ -352,11 +352,11 @@ EDGES = [
         "from_node": "ship",
         "to_node": "to-prd",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "ship_dispatches_to_prd",
         "label": "",
         "style": "solid",
-        "description": "/ship invokes /to-prd to author and post the PRD issue.",
+        "description": "/ship invokes /to-prd to author and post the PRD issue. Conditional: only runtime-observed when /ship runs in a fresh session with live hooks; resumed-session hook blindspot produces no skill_invoke events (issue #719).",
     },
 
     # /to-prd dispatches critics (runtime)
@@ -426,11 +426,11 @@ EDGES = [
         "from_node": "prd-issue",
         "to_node": "to-issues",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "prd_posted_triggers_to_issues",
         "label": "",
         "style": "solid",
-        "description": "PRD issue posted; orchestrator proceeds to /to-issues for slicing.",
+        "description": "PRD issue posted; orchestrator proceeds to /to-issues for slicing. Conditional: only runtime-observed when /to-issues is invoked in a fresh session with live hooks (issue #719).",
     },
 
     # /to-issues dispatches slicer (runtime)
@@ -439,11 +439,11 @@ EDGES = [
         "from_node": "to-issues",
         "to_node": "slicer",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "to_issues_dispatches_slicer",
         "label": "",
         "style": "solid",
-        "description": "/to-issues dispatches slicer to decompose PRD into slices.",
+        "description": "/to-issues dispatches slicer to decompose PRD into slices. Conditional: only runtime-observed when /to-issues runs in a fresh session with live hooks (issue #719).",
     },
 
     # slicer → slicer-critic (runtime)
@@ -452,11 +452,11 @@ EDGES = [
         "from_node": "slicer",
         "to_node": "slicer-critic",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "slicer_dispatches_slicer_critic",
         "label": "decomposition",
         "style": "solid",
-        "description": "slicer submits decomposition to slicer-critic for INVEST gate.",
+        "description": "slicer submits decomposition to slicer-critic for INVEST gate. Conditional: only runtime-observed when the slicer dispatch occurs in a fresh session with live hooks (issue #719).",
     },
 
     # prd-issue → slice-issue (github: PRD has ≥1 native sub-issue)
@@ -722,11 +722,11 @@ EDGES = [
         "from_node": "glossary",
         "to_node": "glossary-critic",
         "evidence": "runtime",
-        "required": "always",
+        "required": "conditional",
         "predicate": "glossary_dispatches_glossary_critic",
         "label": "",
         "style": "solid",
-        "description": "/glossary dispatches glossary-critic for APPROVE/BLOCK gate.",
+        "description": "/glossary dispatches glossary-critic for APPROVE/BLOCK gate. Conditional: glossary is an optional side-workflow independent of the main PRD orchestration sequence; not every PRD window includes a /glossary invocation (issue #719 proposed workflow change #3).",
     },
 
     # glossary-critic APPROVE → glossary-pr (github: PR opened)

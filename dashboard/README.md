@@ -11,7 +11,7 @@ The backend is split into flat sibling modules under `dashboard/`; `server.py` i
 | `server.py` | HTTP request handler, named re-exports for all `/api/*` routes, module-level globals (caches, locks, `KNOWN_CRITICS`) |
 | `live.py` | Live-progress cache + background refresh, `/api/live-progress` + `/api/live-poll` polling, capture-pill state |
 | `discovery.py` | Skill/agent/hook/ADR filesystem discovery for `/api/pipeline` and the component graph |
-| `health.py` | `check_docs1`–`check_docs10` audit-meta checks + AS-* audit-subagents checks + substrate checks (`check_capture_slo`, `check_hook_integrity`, `check_isolation_group`), TTL-cached `/api/health` |
+| `health.py` | `check_docs1`–`check_docs10` audit-meta checks + AS-* audit-subagents checks + substrate checks (`check_capture_slo`, `check_hook_integrity`, `check_isolation_group`, `check_rule_coverage`), TTL-cached `/api/health` |
 | `events.py` | Workflow-event log reading (`/api/runs`), byte-cursor incremental poll, session grouping |
 | `workitems.py` | GitHub Issues fetch + `/api/workitems` response |
 | `readme_gen.py` | README regeneration logic (`--generate-readme` CLI flag) |
@@ -41,6 +41,7 @@ Then open `http://localhost:8765` in any modern browser.
   - **CAPTURE-SLO** — sessions with ≥1 non-boundary event / total over the last 20 sessions from `workflow-events.jsonl`; red when <50% live (captures the resumed-session blind spot as a visible badge per PRD #763 §2 cr.7). Window N=20 is the implementer's choice, documented here.
   - **HOOK-INTEGRITY** — attempt-vs-ok beacon ratio per hook name from `hook-fires.jsonl`; red when any hook's ok count < attempt count (indicates silently-dropped executions) or when `status: ERROR` beacons are present.
   - **ISOLATION-GROUP** — orphaned dirs under `.claude/worktrees/` (dirs no longer registered in `git worktree list`); prune-drift worktrees (0-ahead + clean); red on orphans, amber on prune-drift only.
+  - **RULE-COVERAGE** — ratio of CLAUDE.md section-1 numbered rules that name a deterministic check or carry `(advisory)` tag; always WARNs (never FAILs) until the wave-3 retrofit pass (per ADR-0056 D3); pre-existing rules ≤22 are grandfathered per ADR-0008 D8; lists unchecked-and-untagged rules above the bootstrap cutoff as "NEW unchecked-untagged".
 
 ## Configuration
 

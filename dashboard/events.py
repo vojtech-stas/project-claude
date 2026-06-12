@@ -16,7 +16,7 @@ from pathlib import Path
 # log-tool-event.sh so the server defensively drops synthetic sids even if the
 # writer's routing was bypassed (e.g. direct file writes during testing).
 FIXTURE_SID_RE = re.compile(
-    r"^(demo|test|verify|fixture|manual|sess-)", re.IGNORECASE
+    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)", re.IGNORECASE
 )
 
 

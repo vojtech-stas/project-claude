@@ -133,6 +133,26 @@ Solution sketch enumerates work-units; stays within stated feature; implies walk
 
 ---
 
+### PC-EARS
+
+PRD §2 criteria are EARS-shaped: numbered, each leading with a WHEN/WHERE trigger context and a SHALL-style single observable behavior.
+
+**Mechanic:** For each numbered criterion in §2 Goal / Success criteria:
+1. **Trigger context present:** The criterion must begin with `WHEN`, `WHERE`, or a clear contextual trigger (e.g. "WHEN `/api/comparison` is queried…", "WHERE the Health tab renders…"). A criterion with no trigger — e.g. "The file exists" or "Users can see…" — lacks the context a qa-plan writer needs to know when and where to verify.
+2. **Single observable behavior:** The criterion names exactly one observable outcome after the trigger. Two distinct behaviors in one criterion → multi-behavior violation. The observable must be concrete enough that a qa-plan writer can write one bash check or one `AskUserQuestion` for it.
+3. **`Verifiable:` escape hatch:** Non-behavioral criteria (doc presence, parity, perf budgets, grep-count assertions) are exempt from the WHEN/SHALL grammar provided they carry an explicit `Verifiable:` annotation that names the check command (e.g. `Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1`). A non-behavioral criterion without a `Verifiable:` annotation → FAIL.
+4. **Multi-behavior outside the hatch:** A criterion with two or more behaviors AND no `Verifiable:` escape hatch → FAIL.
+
+**Bind-forward:** Binds from the merge of this rule; existing PRDs (pre-merge) are not re-gated per ADR-0004 D2 (bootstrap-mode).
+
+**Check:** For each §2 criterion: classify as (a) WHEN/SHALL-shaped (PASS), (b) `Verifiable:` escape hatch (PASS), or (c) trigger-less / multi-behavior / hatch-missing (FAIL with criterion text quoted). BLOCK if any criterion fails.
+
+**Rationale:** Free-prose PRD criteria produce `EXTRACT_FAILED` and `JUDGMENT` residuals in `/qa-plan` by construction (ADR-0020 D2). EARS-shaped criteria make the prose extractable structurally, shrinking both residual classes. The `Verifiable:` escape hatch avoids contorted grammar for legitimately non-behavioral criteria (ADR-0066 D1). Measurement: the `RESIDUAL-RATIO` registry row tracks (JUDGMENT + EXTRACT_FAILED) / total across QA-plan tables — if the ratio does not fall after adoption, the rule is theater and should be dropped (drop-criterion per ADR-0066 D1).
+
+**Examples:** `"WHEN /api/comparison is queried for a nonexistent PRD, the response SHALL carry run_pass != true and a non-null error field"` → PASS (trigger + single SHALL-behavior). `"The file exists and the parity alarm is green"` → FAIL (no trigger, two behaviors, no `Verifiable:`). `"Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1"` → PASS (escape hatch). `"WHEN the deploy runs, the binary is built and tests pass and docs are updated"` → FAIL (multi-behavior outside hatch).
+
+---
+
 ### PC-PRODUCTION-CHECK
 
 PRD §2 contains an actionable "Production check:" line (per [ADR-0037](../../decisions/0037-production-verification-gate.md) D4).
@@ -244,4 +264,5 @@ You may NOT:
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
 - ADR-0031 — T4 thin-prompt migration; rule bodies now inlined above; KB layer retired per ADR-0032.
 - ADR-0037 D4 — PC-PRODUCTION-CHECK rubric rule: PRD §2 must contain an actionable "Production check:" line.
+- ADR-0066 D1 — PC-EARS rubric rule: EARS-shaped criteria + `Verifiable:` escape hatch; residual-ratio drop-criterion.
 - `.claude/skills/to-prd/SKILL.md` — calls this subagent

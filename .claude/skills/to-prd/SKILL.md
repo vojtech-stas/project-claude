@@ -44,6 +44,13 @@ Who is hurting, how, and why now. One paragraph. Concrete language; no "we shoul
 
 The single observable outcome of shipping this PRD, plus a checklist of mechanically verifiable criteria. Each criterion must be checkable at merge (file exists with shape X, command Y produces output Z) — not by subjective judgment. End-to-end quality validation belongs in the QA-plan handoff, not these criteria.
 
+**Criterion grammar (EARS-shaped, per ADR-0066 D1):** Number each criterion. Use one of two forms:
+
+- **WHEN/SHALL form** (behavioral): begin with a `WHEN` or `WHERE` trigger context, then name exactly one observable behavior with `SHALL`. Example: `WHEN /api/health is called, the response SHALL contain a RESIDUAL-RATIO entry with result PASS or WARN.`
+- **`Verifiable:` form** (non-behavioral): for doc-presence, parity, grep-count, or perf-budget assertions that have no natural trigger, use an explicit `Verifiable:` annotation naming the check command. Example: `Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1`
+
+`prd-critic` BLOCKs on trigger-less criteria or multi-behavior criteria outside the `Verifiable:` hatch (PC-EARS rule, bind-forward per ADR-0004 D2). Both forms are equally valid; match the form to the criterion's nature.
+
 **Production check:** <what to exercise in the live running context + expected result — e.g., "load http://localhost:8765/live-tab, assert 0 console errors + graph renders". For non-runnable features: "N/A — docs-only, static: grep -c '<term>' <file> ≥ 1". Required; a missing or vague entry BLOCKs the PRD at prd-critic (PC-PRODUCTION-CHECK, ADR-0037 D4).>
 
 ## 3. Non-goals / Out of scope
@@ -85,4 +92,5 @@ Run a quick self-pass against the critics' rubrics to shorten the loop: [`prd-cr
 - [ADR-0004](../../../decisions/0004-bypass-prevention.md) — D1 (adr-critic exists; mirror of prd-critic's contract); D2 (bootstrap-mode policy).
 - [`.claude/agents/prd-critic.md`](../../agents/prd-critic.md), [`.claude/agents/adr-critic.md`](../../agents/adr-critic.md) — the critics this skill invokes.
 - [`decisions/README.md`](../../../decisions/README.md) — ADR conventions and the "When to write an ADR" heuristic.
+- [ADR-0066](../../../decisions/0066-upstream-spec-contract.md) D1 — EARS-shaped criteria grammar + `Verifiable:` escape hatch; the prd-critic PC-EARS rule the §2 template must satisfy.
 - Sibling: [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) — orchestrator that chains this skill into the autonomous pipeline.

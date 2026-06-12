@@ -21,6 +21,7 @@ Exports:
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
     check_blind_dispatch_rate() -> dict  (slice #783/ADR-0060 D1: BLIND-REVIEW prefix rate)
+    check_residual_ratio() -> dict       (slice #797/ADR-0066 D1: JUDGMENT+EXTRACT_FAILED / total QA-plan rows)
     check_proof_presence() -> dict       (slice #783/ADR-0061 D1: route+proof-token per merged PR)
     check_merge_integrity() -> dict      (slice #783/ADR-0062 D1: BEHIND encountered/recovered)
     check_capture_shape() -> dict        (slice #783/ADR-0063 D2: 3-heading regex over root-cause issues)
@@ -1349,6 +1350,168 @@ def check_blind_dispatch_rate() -> dict:
             "blind": blind, "total": total, "rate": rate}
 
 
+# Minimum QA-plan rows required before ratio is meaningful (honest guard).
+# Rationale: a ratio from 1-2 rows (e.g. one plan with 2 criteria total) has
+# +-50% sampling noise; the ADR-0066 D1 drop-criterion requires a stable signal.
+# 5 rows chosen as a pragmatic floor: below this the check emits WARN/low-sample
+# and reports the actual counts without a ratio verdict.
+_RESIDUAL_RATIO_MIN_ROWS = 5
+
+# Limit on closed PRDs scanned for QA-plan tables -- avoids excessive gh API calls.
+_RESIDUAL_RATIO_PRD_WINDOW = 20
+
+
+def check_residual_ratio() -> dict:
+    """RESIDUAL-RATIO: (JUDGMENT + EXTRACT_FAILED) / total rows across QA-plan tables.
+
+    Reads closed PRD issue comments for '## QA-plan' headings (the qa-plan
+    skill persists its plan as a PRD comment per ADR-0020 D4).  Within each
+    QA-plan table, scans the second column (the check column) for the literal
+    strings 'JUDGMENT' and 'EXTRACT_FAILED'.
+
+    Measurement per ADR-0066 D1 drop-criterion: if the ratio does not fall after
+    PC-EARS adoption (this slice's merge), the rule is theater and should be
+    dropped.  Bind-forward: only criteria authored post-merge are expected to be
+    EARS-shaped; pre-merge plans are honestly included in the denominator.
+
+    Minimum-sample guard: fewer than _RESIDUAL_RATIO_MIN_ROWS total criteria rows
+    across all scanned plans -> WARN with 'low-sample' label and raw counts instead
+    of a ratio.  This avoids a misleading 0%% or 100%% ratio from 1-2 data points.
+
+    Returns {"id": "RESIDUAL-RATIO", "result": ..., "detail": ...,
+             "judgment": N, "extract_failed": N, "total": N, "rate": float|None}
+    """
+    import json as _json
+    import subprocess as _sp
+
+    def _fetch_closed_prds(limit):
+        try:
+            r = _sp.run(
+                ["gh", "issue", "list", "--label", "prd",
+                 "--state", "closed", "--limit", str(limit),
+                 "--json", "number"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=20,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode == 0:
+                return [item["number"] for item in _json.loads(r.stdout)]
+        except Exception:
+            pass
+        return []
+
+    def _fetch_comments(prd_num):
+        try:
+            r = _sp.run(
+                ["gh", "issue", "view", str(prd_num),
+                 "--json", "comments"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=20,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode == 0:
+                data = _json.loads(r.stdout)
+                return [c.get("body", "") for c in data.get("comments", [])]
+        except Exception:
+            pass
+        return []
+
+    # Separator rows like "|---|---|" -- skip these
+    _separator_re = re.compile(r'^\|\s*[-:]+\s*\|')
+
+    judgment = 0
+    extract_failed = 0
+    total = 0
+    prds_scanned = 0
+    fetch_error = None
+
+    prd_numbers = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    if not prd_numbers:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": (
+                "no closed PRDs found -- cannot compute ratio; "
+                "bind-forward ADR-0066 D1: ratio expected to fall after PC-EARS adoption"
+            ),
+            "judgment": 0, "extract_failed": 0, "total": 0, "rate": None,
+        }
+
+    for prd_num in prd_numbers:
+        comments = _fetch_comments(prd_num)
+        if not comments and fetch_error is None:
+            fetch_error = "comment fetch failed for PRD #{} (auth or timeout)".format(prd_num)
+        prd_has_plan = False
+        for body in comments:
+            if "## QA-plan" not in body:
+                continue
+            prd_has_plan = True
+            # Parse the table rows within this comment.
+            # Table format: | col1 | col2 | col3 |
+            # Split on "|" gives: ["", col1, col2, col3, ""]
+            # The second column (index 2) is the check/judgment column.
+            for line in body.splitlines():
+                if not line.startswith("|"):
+                    continue
+                if _separator_re.match(line):
+                    continue
+                # Skip the header row
+                if "criterion #" in line.lower() or "bash check" in line.lower():
+                    continue
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) < 4:
+                    continue
+                check_col = parts[2]
+                if not check_col:
+                    continue
+                total += 1
+                if "EXTRACT_FAILED" in check_col:
+                    extract_failed += 1
+                elif "JUDGMENT" in check_col:
+                    judgment += 1
+        if prd_has_plan:
+            prds_scanned += 1
+
+    if total < _RESIDUAL_RATIO_MIN_ROWS:
+        detail = (
+            "low-sample: {} criteria rows across {} PRDs with QA-plans "
+            "(min={}); judgment={}, extract_failed={}; "
+            "ratio not computed -- insufficient data for ADR-0066 D1 drop-criterion signal"
+        ).format(total, prds_scanned, _RESIDUAL_RATIO_MIN_ROWS, judgment, extract_failed)
+        if fetch_error:
+            detail += " | note: {}".format(fetch_error)
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": detail,
+            "judgment": judgment, "extract_failed": extract_failed,
+            "total": total, "rate": None,
+        }
+
+    residual = judgment + extract_failed
+    rate = round(residual / total, 3) if total > 0 else None
+    rate_pct = "{:.0f}%".format(rate * 100) if rate is not None else "?"
+    detail = (
+        "{}/{} residual rows ({}) "
+        "[judgment={}, extract_failed={}] "
+        "across {} PRDs with QA-plans "
+        "(bind-forward ADR-0066 D1: ratio should fall after PC-EARS adoption)"
+    ).format(residual, total, rate_pct, judgment, extract_failed, prds_scanned)
+    if fetch_error:
+        detail += " | note: {}".format(fetch_error)
+
+    # WARN always (not FAIL) -- this is a measurement row, not a blocking check.
+    # The drop-criterion is a human-reviewed decision, not an automated gate.
+    result = "PASS" if rate is not None and rate < 0.30 else "WARN"
+    return {
+        "id": "RESIDUAL-RATIO",
+        "result": result,
+        "detail": detail,
+        "judgment": judgment, "extract_failed": extract_failed,
+        "total": total, "rate": rate,
+    }
+
+
 def check_proof_presence() -> dict:
     """PROOF-PRESENCE: per merged non-trivial PR: route + proof-token presence.
 
@@ -1701,6 +1864,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "SPEC-COVERAGE":   check_spec_coverage,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
+    "RESIDUAL-RATIO":  check_residual_ratio,
     "MERGE-INTEGRITY": check_merge_integrity,
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
@@ -1817,6 +1981,7 @@ def _build_health_data() -> dict:
         "verificationIntegrity": {
             "checks": [
                 check_blind_dispatch_rate(),
+                check_residual_ratio(),
                 check_proof_presence(),
                 check_merge_integrity(),
                 check_capture_shape(),

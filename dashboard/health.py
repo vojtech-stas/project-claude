@@ -25,6 +25,7 @@ Exports:
 Import direction: server <- health (this module must NOT import server).
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -742,7 +743,11 @@ def check_isolation_group() -> dict:
             for line in result.stdout.splitlines():
                 if line.startswith("worktree "):
                     wt_path = line[len("worktree "):].strip()
-                    registered_paths.add(wt_path.lower())
+                    # Normalize separators + case so forward-slash (git porcelain)
+                    # and backslash (Path.iterdir on Windows) compare equal (B1).
+                    registered_paths.add(
+                        os.path.normcase(os.path.normpath(wt_path))
+                    )
     except Exception as exc:
         return {"id": "ISOLATION-GROUP", "result": "WARN",
                 "detail": f"git worktree list failed: {exc}"}
@@ -757,11 +762,10 @@ def check_isolation_group() -> dict:
                 "detail": f"scan failed: {exc}"}
 
     for d in dirs:
-        path_lower = str(d).lower()
-        registered = any(
-            path_lower == rp or path_lower.rstrip("/\\") == rp.rstrip("/\\")
-            for rp in registered_paths
-        )
+        # Normalize both sides: Path.iterdir yields backslash paths on Windows
+        # while git porcelain yields forward slashes; normcase+normpath unifies both.
+        path_norm = os.path.normcase(os.path.normpath(str(d)))
+        registered = path_norm in registered_paths
         if not registered:
             orphaned.append(d.name)
             continue

@@ -373,7 +373,7 @@ Specialist agents under `.claude/agents/`:
 
 Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
 
-- **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — SessionStart hook — inject live workflow state per ADR-0023 D2.
+- **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
 - **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`session_start`](.claude/hooks/log-tool-event.sh)** (`SessionStart`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.

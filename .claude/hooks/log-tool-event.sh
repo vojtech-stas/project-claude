@@ -241,6 +241,34 @@ try:
     target_file = "workflow-events.test.jsonl" if is_fixture_sid(session_id) else "workflow-events.jsonl"
 
     os.makedirs(write_dir, exist_ok=True)
+
+    # Size-capped archive-aside rotation (ADR-0068 D1).
+    # Cap: 5 MB per workflow-events.jsonl (production file only).
+    # Archive-aside: move to workflow-events.YYYYMMDDTHHMMSS.jsonl — NEVER delete.
+    # Only rotates the production file (not .test.jsonl or .rejects.jsonl).
+    _ROTATION_CAP_BYTES = 5 * 1024 * 1024  # 5 MB; documented here per ADR-0068 D1
+    target_path = os.path.join(write_dir, target_file)
+    if (target_file == "workflow-events.jsonl"
+            and os.path.exists(target_path)
+            and os.path.getsize(target_path) >= _ROTATION_CAP_BYTES):
+        try:
+            archive_ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y%m%dT%H%M%S"
+            )
+            archive_name = "workflow-events.{}.jsonl".format(archive_ts)
+            archive_path = os.path.join(write_dir, archive_name)
+            import shutil as _shutil
+            _shutil.move(target_path, archive_path)
+            rot_obj = {
+                "ts": ts_now(), "hook": "log-tool-event", "status": "rotation",
+                "archived": archive_name, "cap_bytes": _ROTATION_CAP_BYTES,
+            }
+            with open(os.path.join(write_dir, "hook-fires.jsonl"),
+                      "a", encoding="utf-8") as _rf:
+                _rf.write(json.dumps(rot_obj, separators=(",", ":")) + "\n")
+        except Exception:
+            pass  # rotation failure is non-fatal; write proceeds to new file
+
     with open(os.path.join(write_dir, target_file), "a", encoding="utf-8") as f:
         f.write(line + "\n")
 

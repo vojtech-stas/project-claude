@@ -643,6 +643,187 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 13: Secrets gate (ADR-0068 D2)
+#
+# NEVER-LIST RULE: a secret that reaches a commit is ROTATED immediately —
+# allowlisting a real secret is the named anti-pattern. This gate exists to
+# catch accidental autonomous-agent commits before they reach the remote.
+#
+# Patterns: key/token/private-key shape + entropy heuristic.
+# Gate of record (ADR-0042 D1); .githooks/pre-commit is the advisory mirror.
+# Allowlist: tools/secrets-allowlist.txt (reviewed false positives only).
+# Scope: tracked non-binary files in git diff HEAD (staged + working tree).
+#        Skips: decisions/*.md, .claude/logs/, docs/*.md (prose mentions only).
+# Per-check aggregation: FAIL_COUNT incremented on FAIL only.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 13: secrets gate (ADR-0068 D2) ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 13 — python3 not available (soft-degrade)"
+elif ! command -v git > /dev/null 2>&1; then
+    echo "SKIP: CHECK 13 — git not available (soft-degrade)"
+else
+python3 - << 'SECRETS_PYEOF'
+import re, sys, os, subprocess, glob
+
+# Secret-shaped patterns (ADR-0068 D2): key/token/private-key + entropy heuristic.
+# These match value-like strings following assignment operators or JSON colon.
+_SECRET_PATTERNS = [
+    # Generic API key/token/secret patterns: name = <value> or "name": "<value>"
+    re.compile(
+        r'(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token'
+        r'|secret[_-]?key|private[_-]?key|client[_-]?secret|oauth[_-]?token'
+        r'|bearer[_-]?token|password)\s*[=:]\s*["\']?([A-Za-z0-9+/=_\-]{20,})["\']?'
+    ),
+    # GitHub PAT shape: ghp_ / gho_ / ghs_ / ghr_ / github_pat_ prefix
+    re.compile(r'\b(ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}'
+               r'|ghs_[A-Za-z0-9]{36,}|ghr_[A-Za-z0-9]{36,}'
+               r'|github_pat_[A-Za-z0-9_]{36,})\b'),
+    # AWS access key ID pattern: AKIA prefix
+    re.compile(r'\b(AKIA[A-Z0-9]{16})\b'),
+    # Hex-encoded keys ≥ 40 chars after assignment
+    re.compile(
+        r'(?i)(?:key|secret|token|password)\s*[=:]\s*["\']?([0-9a-f]{40,})["\']?'
+    ),
+]
+
+# Entropy heuristic: long base64-like strings in value position.
+_ENTROPY_RE = re.compile(
+    r'[=:]\s*["\']?([A-Za-z0-9+/]{32,}={0,2})["\']?\s*$'
+)
+_ENTROPY_THRESHOLD = 4.2  # bits/char Shannon entropy
+
+
+def shannon_entropy(s):
+    if not s:
+        return 0.0
+    from collections import Counter
+    import math
+    freq = Counter(s)
+    length = len(s)
+    return -sum((c / length) * math.log2(c / length) for c in freq.values())
+
+
+# Path skip list: prose-only files where pattern matches are expected.
+_SKIP_PATH_RE = re.compile(
+    r'^(decisions/|docs/|\.claude/logs/|\.claude/worktrees/|qa-proof/)',
+    re.IGNORECASE
+)
+
+# Load allowlist (tools/secrets-allowlist.txt).
+_allowlist_patterns = []
+allowlist_path = os.path.join(os.getcwd(), 'tools', 'secrets-allowlist.txt')
+if os.path.isfile(allowlist_path):
+    with open(allowlist_path, 'r', encoding='utf-8', errors='replace') as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#'):
+                try:
+                    _allowlist_patterns.append(re.compile(_line))
+                except re.error:
+                    pass  # skip malformed patterns
+
+def is_allowlisted(line_text):
+    for pat in _allowlist_patterns:
+        if pat.search(line_text):
+            return True
+    return False
+
+
+def check_file(filepath):
+    """Return list of (lineno, line, reason) tuples for violations in filepath."""
+    violations = []
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            for lineno, line in enumerate(f, 1):
+                line_stripped = line.rstrip('\n')
+                if is_allowlisted(line_stripped):
+                    continue
+                # Check named patterns
+                for pat in _SECRET_PATTERNS:
+                    m = pat.search(line_stripped)
+                    if m:
+                        violations.append((lineno, line_stripped[:120],
+                                           'secret-pattern'))
+                        break
+                else:
+                    # Entropy heuristic
+                    em = _ENTROPY_RE.search(line_stripped)
+                    if em:
+                        candidate = em.group(1)
+                        ent = shannon_entropy(candidate)
+                        if ent >= _ENTROPY_THRESHOLD and len(candidate) >= 32:
+                            violations.append((lineno, line_stripped[:120],
+                                               f'entropy={ent:.1f}'))
+    except (OSError, UnicodeDecodeError):
+        pass
+    return violations
+
+
+# Get tracked files from git diff (HEAD range: staged + committed since origin/main).
+# We scan the full file content of any file in the diff rather than just the diff lines,
+# since secrets in context lines are also dangerous.
+try:
+    result = subprocess.run(
+        ['git', 'ls-files', '--cached'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace'
+    )
+    tracked_files = [
+        f.strip() for f in result.stdout.splitlines()
+        if f.strip()
+        and not _SKIP_PATH_RE.match(f.strip())
+    ]
+except Exception as e:
+    print(f'SKIP: CHECK 13 — git ls-files failed: {e}')
+    sys.exit(0)
+
+# Filter to files that exist and are text-like (skip binaries by extension).
+_BINARY_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf',
+                '.zip', '.tar', '.gz', '.whl', '.pyc', '.so', '.dll'}
+files_to_scan = []
+for f in tracked_files:
+    if not os.path.isfile(f):
+        continue
+    _, ext = os.path.splitext(f.lower())
+    if ext in _BINARY_EXTS:
+        continue
+    files_to_scan.append(f)
+
+all_violations = []
+for filepath in files_to_scan:
+    viols = check_file(filepath)
+    for lineno, line, reason in viols:
+        all_violations.append((filepath, lineno, line, reason))
+
+if all_violations:
+    for filepath, lineno, line, reason in all_violations[:10]:
+        print(
+            f'FAIL: CHECK 13 — secrets gate: {filepath}:{lineno}: '
+            f'[{reason}] {line[:80]}',
+            file=sys.stderr
+        )
+    if len(all_violations) > 10:
+        print(f'FAIL: CHECK 13 — ... and {len(all_violations) - 10} more violation(s)',
+              file=sys.stderr)
+    print(
+        'NOTE: If this is a false positive, add a reviewed entry to '
+        'tools/secrets-allowlist.txt with a reason comment. '
+        'NEVER allowlist a real secret — rotate it immediately.',
+        file=sys.stderr
+    )
+    sys.exit(1)
+else:
+    scanned = len(files_to_scan)
+    print(f'PASS: CHECK 13 — secrets gate: no secret-shaped strings in '
+          f'{scanned} tracked file(s)')
+    sys.exit(0)
+SECRETS_PYEOF
+CHECK13_EXIT=$?
+if [ "$CHECK13_EXIT" -ne 0 ]; then
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+fi  # end python3/git availability check
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

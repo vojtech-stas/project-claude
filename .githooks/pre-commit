@@ -120,4 +120,117 @@ if ! git -C "$REPO_ROOT" diff --exit-code README.md >/dev/null 2>&1; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Secrets gate — advisory mirror of tools/ci-checks.sh CHECK 13 (ADR-0068 D2)
+#
+# NEVER-LIST RULE: a secret that reaches a commit is ROTATED immediately —
+# allowlisting a real secret is the named anti-pattern.
+# This hook scans STAGED files only (not the full tracked tree).
+# ci-checks.sh CHECK 13 is the gate of record; this hook is advisory speed.
+# Fail-open: if python3 or git is unavailable, warn and allow commit.
+# ---------------------------------------------------------------------------
+
+_SECRETS_PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) || _SECRETS_PYTHON=""
+if [ -z "$_SECRETS_PYTHON" ]; then
+    echo "pre-commit: warning: python not found; skipping secrets gate (fail-open). See ADR-0068 D2." >&2
+    exit 0
+fi
+
+"$_SECRETS_PYTHON" - "$REPO_ROOT" <<'SECRETS_EOF'
+import re, sys, os, subprocess
+
+REPO_ROOT = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
+
+_SECRET_PATTERNS = [
+    re.compile(
+        r'(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|access[_-]?token'
+        r'|secret[_-]?key|private[_-]?key|client[_-]?secret|oauth[_-]?token'
+        r'|bearer[_-]?token|password)\s*[=:]\s*["\']?([A-Za-z0-9+/=_\-]{20,})["\']?'
+    ),
+    re.compile(r'\b(ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}'
+               r'|ghs_[A-Za-z0-9]{36,}|ghr_[A-Za-z0-9]{36,}'
+               r'|github_pat_[A-Za-z0-9_]{36,})\b'),
+    re.compile(r'\b(AKIA[A-Z0-9]{16})\b'),
+    re.compile(
+        r'(?i)(?:key|secret|token|password)\s*[=:]\s*["\']?([0-9a-f]{40,})["\']?'
+    ),
+]
+_ENTROPY_RE = re.compile(r'[=:]\s*["\']?([A-Za-z0-9+/]{32,}={0,2})["\']?\s*$')
+_ENTROPY_THRESHOLD = 4.2
+_SKIP_PATH_RE = re.compile(
+    r'^(decisions/|docs/|\.claude/logs/|\.claude/worktrees/|qa-proof/)',
+    re.IGNORECASE
+)
+
+def shannon_entropy(s):
+    if not s: return 0.0
+    from collections import Counter; import math
+    freq = Counter(s); n = len(s)
+    return -sum((c/n)*math.log2(c/n) for c in freq.values())
+
+_allowlist_patterns = []
+allowlist_path = os.path.join(REPO_ROOT, 'tools', 'secrets-allowlist.txt')
+if os.path.isfile(allowlist_path):
+    with open(allowlist_path, 'r', encoding='utf-8', errors='replace') as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#'):
+                try: _allowlist_patterns.append(re.compile(_line))
+                except re.error: pass
+
+def is_allowlisted(line_text):
+    return any(p.search(line_text) for p in _allowlist_patterns)
+
+try:
+    result = subprocess.run(
+        ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACM'],
+        capture_output=True, text=True, encoding='utf-8', cwd=REPO_ROOT)
+    staged = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+except Exception as e:
+    print(f'pre-commit: warning: could not list staged files: {e}', file=sys.stderr)
+    sys.exit(0)
+
+_BINARY_EXTS = {'.png','.jpg','.jpeg','.gif','.ico','.pdf','.zip','.tar',
+                '.gz','.whl','.pyc','.so','.dll'}
+violations = []
+for filepath in staged:
+    if _SKIP_PATH_RE.match(filepath): continue
+    _, ext = os.path.splitext(filepath.lower())
+    if ext in _BINARY_EXTS: continue
+    full_path = os.path.join(REPO_ROOT, filepath)
+    if not os.path.isfile(full_path): continue
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+            for lineno, line in enumerate(f, 1):
+                ls = line.rstrip('\n')
+                if is_allowlisted(ls): continue
+                for pat in _SECRET_PATTERNS:
+                    if pat.search(ls):
+                        violations.append((filepath, lineno, ls[:80], 'secret-pattern'))
+                        break
+                else:
+                    em = _ENTROPY_RE.search(ls)
+                    if em:
+                        c = em.group(1); ent = shannon_entropy(c)
+                        if ent >= _ENTROPY_THRESHOLD and len(c) >= 32:
+                            violations.append((filepath, lineno, ls[:80],
+                                               f'entropy={ent:.1f}'))
+    except (OSError, UnicodeDecodeError):
+        pass
+
+if violations:
+    print('pre-commit: ERROR: secrets gate detected secret-shaped strings:', file=sys.stderr)
+    for fp, ln, text, reason in violations[:5]:
+        print(f'  {fp}:{ln} [{reason}] {text}', file=sys.stderr)
+    print('pre-commit: If false positive, add to tools/secrets-allowlist.txt with reason.', file=sys.stderr)
+    print('pre-commit: NEVER allowlist a real secret — rotate it immediately.', file=sys.stderr)
+    print('pre-commit: See ADR-0068 D2.', file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+SECRETS_EOF
+_SECRETS_RC=$?
+if [ "$_SECRETS_RC" -ne 0 ]; then
+    exit 1
+fi
+
 exit 0

@@ -28,7 +28,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 
 Both rules share the same downstream mechanism: `backlog-critic` filters `captured` → `backlog` via the `promote-to-backlog` skill per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3/D4. Rule #11 = forward-work (open shape); rule #13 = backward/root-cause (3-part shape). Complementary per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md) D2.
 
-12. **Claude Code hooks are logging/validation/notification only — rule #12.** Hooks may NOT auto-invoke skills or subagents. See [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for full scope policy.
+12. **Claude Code hooks have five authorized categories — rule #12.** (1) logging per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D2; (2) validation per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D2; (3) notification per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D2; (4) tooling-spawn per [ADR-0033](decisions/0033-tooling-spawn-hook-scope.md) D1; (5) context injection per [ADR-0057](decisions/0057-hook-fail-loud-contract.md) D4. Hooks may NOT auto-invoke skills or subagents — that hard line is preserved across all five categories. (ADR-0068 D3 Consequences cascade; refreshed in slice #818.)
 
 15. **Every feature is production-verified before "done" — rule #15.** `qa-tester` must return `PRODUCTION_VERIFY: PASS` (via `/build` step 5 or `/ship` step 6) before a feature is complete. Per [ADR-0037](decisions/0037-production-verification-gate.md) D1.
 

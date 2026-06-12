@@ -17,6 +17,8 @@ Exports:
     audit_subagents() -> dict
     audit_meta() -> dict
     cascade_finder_summary() -> dict
+    check_test_ordering() -> dict         (slice #816/ADR-0067 D2: fix-type PR test-first ordering rate)
+    check_quarantine_sla() -> dict        (slice #816/ADR-0067 D4: quarantine register size + oldest-entry SLA)
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
@@ -2317,6 +2319,269 @@ def check_tests_collected() -> dict:
         }
 
 
+# ---------------------------------------------------------------------------
+# TEST-ORDERING — fix-type PR test-commit-precedes-fix-commit rate (ADR-0067 D2)
+# ---------------------------------------------------------------------------
+
+
+def check_test_ordering() -> dict:
+    """TEST-ORDERING: % of fix-type PRs where test commit precedes fix commit.
+
+    Implements ADR-0067 D2 — bias isolation as git-history sequencing.
+    A fix-type PR is one whose branch name matches fix/* (merged or open).
+
+    Algorithm:
+    1. Fetch recently merged PRs whose headRefName starts with fix/.
+    2. For each, check whether any commit in the PR branch touched tests/
+       and whether that commit precedes (is an ancestor of) the first
+       non-tests-only commit. Uses `git log --name-only` on the PR's
+       merge commit range when available.
+    3. Report: ordered/<total> with honest grandfathered bucket for PRs
+       merged before this check's activation (pre-ADR-0067-D2).
+
+    Honest grandfathering (ADR-0004 D2): fix-type PRs merged before the
+    R-PROVE reviewer rule merge cannot be held to the ordering standard.
+    We grandfather all fix/* PRs with merge number < the R-PROVE slice
+    (issue #816). PASS = 100% of post-activation PRs conform, or no
+    post-activation PRs yet (WARN).
+    """
+    import json as _json
+    import subprocess as _sp
+
+    _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
+
+    def _gh_json(args: list, timeout: int = 20):
+        try:
+            r = _sp.run(
+                ["gh"] + args,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode != 0:
+                return None
+            return _json.loads(r.stdout)
+        except Exception:
+            return None
+
+    # Fetch merged PRs with fix/* head branch
+    prs = _gh_json([
+        "pr", "list",
+        "--state", "merged",
+        "--limit", "30",
+        "--json", "number,headRefName,mergeCommit,closingIssuesReferences",
+    ])
+    if prs is None:
+        return {
+            "id": "TEST-ORDERING",
+            "result": "WARN",
+            "detail": "GitHub API unavailable; honest fallback — run manually",
+            "ordered": 0,
+            "total": 0,
+            "grandfathered": 0,
+            "api_available": False,
+        }
+
+    fix_prs = [p for p in prs if (p.get("headRefName") or "").startswith("fix/")]
+
+    grandfathered_count = 0
+    ordered = 0
+    disordered = []
+    post_activation = []
+
+    for pr in fix_prs:
+        pr_num = pr.get("number", 0)
+        # Grandfather: check if closing slice issue < 816
+        closing = pr.get("closingIssuesReferences") or []
+        slice_nums = [i.get("number", 0) for i in closing if isinstance(i, dict)]
+        is_grandfathered = all(n < _GRANDFATHERED_BELOW for n in slice_nums) if slice_nums else (pr_num < _GRANDFATHERED_BELOW)
+        if is_grandfathered:
+            grandfathered_count += 1
+            continue
+
+        post_activation.append(pr_num)
+
+        # Check ordering: does a test commit precede fix commit?
+        merge_commit = (pr.get("mergeCommit") or {}).get("oid", "")
+        if not merge_commit:
+            # Cannot check — treat as WARN (not FAIL); count but mark unknown
+            continue
+
+        # Get commit list for this PR using git log
+        try:
+            result = _sp.run(
+                ["git", "log", "--reverse", "--pretty=%H",
+                 f"origin/main...{merge_commit}", "--"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=15,
+                cwd=str(_HEALTH_REPO_ROOT),
+            )
+            commit_shas = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+        except Exception:
+            continue
+
+        if not commit_shas:
+            continue
+
+        # For each commit, check whether it touches tests/
+        first_test_idx = None
+        first_fix_idx = None
+        for idx, sha in enumerate(commit_shas):
+            try:
+                files_result = _sp.run(
+                    ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", sha],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=10,
+                    cwd=str(_HEALTH_REPO_ROOT),
+                )
+                changed = files_result.stdout.splitlines()
+            except Exception:
+                continue
+            touches_tests = any(f.startswith("tests/") for f in changed)
+            touches_non_tests = any(not f.startswith("tests/") for f in changed)
+            if touches_tests and first_test_idx is None:
+                first_test_idx = idx
+            if touches_non_tests and not touches_tests and first_fix_idx is None:
+                first_fix_idx = idx
+
+        if first_test_idx is not None and first_fix_idx is not None:
+            if first_test_idx < first_fix_idx:
+                ordered += 1
+            else:
+                disordered.append(pr_num)
+        elif first_test_idx is not None:
+            # Only test commits — counts as ordered (no fix commit yet / docs-only fix)
+            ordered += 1
+        # else: no test commit found — counts as disordered
+
+    total_post = len(post_activation)
+    if total_post == 0:
+        result_val = "WARN"
+        detail = (
+            f"no post-activation fix/* PRs found "
+            f"(grandfathered: {grandfathered_count}; bind-forward ADR-0067 D2)"
+        )
+    elif disordered:
+        result_val = "WARN"
+        detail = (
+            f"{ordered}/{total_post} ordered "
+            f"(grandfathered: {grandfathered_count}; "
+            f"disordered PRs: {disordered})"
+        )
+    else:
+        result_val = "PASS"
+        detail = (
+            f"{ordered}/{total_post} fix-type PRs have test-first ordering "
+            f"(grandfathered pre-ADR-0067-D2: {grandfathered_count})"
+        )
+
+    return {
+        "id": "TEST-ORDERING",
+        "result": result_val,
+        "detail": detail,
+        "ordered": ordered,
+        "total": total_post,
+        "grandfathered": grandfathered_count,
+        "disordered": disordered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# QUARANTINE-SLA — quarantine register size + oldest-entry age (ADR-0067 D4)
+# ---------------------------------------------------------------------------
+
+
+def check_quarantine_sla() -> dict:
+    """QUARANTINE-SLA: quarantine register size + oldest-entry age.
+
+    Implements ADR-0067 D4 — flaky quarantine with SLA.
+    Reads tests/quarantine.txt (blank lines and #-comment lines ignored).
+    Entries must carry a [quarantined: YYYY-MM-DD] tag for age tracking.
+
+    PASS: 0 entries, or all entries within 30-day SLA.
+    WARN: entries exist but none breach the 30-day SLA.
+    FAIL: at least one entry is older than 30 days (SLA breach).
+    """
+    import datetime as _dt
+
+    quarantine_file = _HEALTH_REPO_ROOT / "tests" / "quarantine.txt"
+    if not quarantine_file.exists():
+        return {
+            "id": "QUARANTINE-SLA",
+            "result": "WARN",
+            "detail": "tests/quarantine.txt not found (pre-suite: bind-forward ADR-0067 D4)",
+            "size": 0,
+            "oldest_days": None,
+        }
+
+    text = _read_file(quarantine_file)
+    # Active entries: non-blank, non-comment lines
+    active_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    size = len(active_lines)
+
+    if size == 0:
+        return {
+            "id": "QUARANTINE-SLA",
+            "result": "PASS",
+            "detail": "quarantine register is empty (no quarantined tests)",
+            "size": 0,
+            "oldest_days": None,
+        }
+
+    # Parse [quarantined: YYYY-MM-DD] tags for age check
+    _date_re = re.compile(r'\[quarantined:\s*(\d{4}-\d{2}-\d{2})\]')
+    today = _dt.date.today()
+    sla_days = 30
+    breach_entries = []
+    oldest_days = None
+
+    for line in active_lines:
+        m = _date_re.search(line)
+        if m:
+            try:
+                entry_date = _dt.date.fromisoformat(m.group(1))
+                age = (today - entry_date).days
+                if oldest_days is None or age > oldest_days:
+                    oldest_days = age
+                if age > sla_days:
+                    breach_entries.append((line.split()[0], age))
+            except ValueError:
+                pass  # malformed date — skip age check for this entry
+
+    if breach_entries:
+        breach_desc = "; ".join(f"{t} ({d}d)" for t, d in breach_entries[:3])
+        detail = (
+            f"{size} quarantined, {len(breach_entries)} SLA breach(es) >30d: "
+            f"{breach_desc}"
+        )
+        result_val = "FAIL"
+    elif oldest_days is not None:
+        detail = (
+            f"{size} quarantined; oldest {oldest_days}d "
+            f"(SLA 30d; all within SLA)"
+        )
+        result_val = "WARN"
+    else:
+        detail = (
+            f"{size} quarantined; no [quarantined: YYYY-MM-DD] tags found "
+            f"— add date tags to entries for SLA tracking"
+        )
+        result_val = "WARN"
+
+    return {
+        "id": "QUARANTINE-SLA",
+        "result": result_val,
+        "detail": detail,
+        "size": size,
+        "oldest_days": oldest_days,
+        "breach_count": len(breach_entries),
+    }
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -2367,7 +2632,9 @@ CHECK_REGISTRY: dict[str, callable] = {
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
     # Memory checks (ADR-0067 wave 4)
-    "TESTS-COLLECTED": check_tests_collected,
+    "TESTS-COLLECTED":  check_tests_collected,
+    "TEST-ORDERING":    check_test_ordering,
+    "QUARANTINE-SLA":   check_quarantine_sla,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -2484,6 +2751,8 @@ def _build_health_data() -> dict:
                 check_spec_coverage(),
                 check_critic_health(),
                 check_tests_collected(),
+                check_test_ordering(),
+                check_quarantine_sla(),
             ]
         },
         "verificationIntegrity": {

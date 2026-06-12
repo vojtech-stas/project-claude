@@ -351,6 +351,45 @@ If the PR touches enforcement paths AND lacks both ack signals AND R-SENSITIVE i
 
 **Rationale:** The enforcement layer (CI workflows, hook scripts, settings, pre-commit hooks) is the machinery that polices all other PRs. An agent modifying this machinery without human awareness creates a blind-spot: the policing infrastructure can be silently modified by the same pipeline it polices. R-SENSITIVE ensures a human sees these changes before they merge. Activation is deferred to avoid deadlocking the autonomous wave-3/wave-4 program that must modify these paths under its own critic-gated ADR obligations. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4.
 
+### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
+
+**Mechanic:** Fires ONLY on fix-type PRs: branch name matches `^fix/` OR the linked slice issue carries the `root-cause` label. For such PRs:
+1. The branch history MUST contain a commit that touches `tests/` files, AND that commit MUST precede (be an ancestor of) the commit that makes the fix.
+2. The PR body MUST include a `fails-before` output excerpt — the test output showing the test failing before the fix.
+3. **Non-code fixes** (docs-only, prompt-wording-only changes — no `.py`, `.sh`, or `.js` lines changed) are exempt and MUST say so in the PR body: `R-PROVE: non-code fix — exempt`.
+
+```bash
+# Check branch type
+gh pr view <PR> --json headRefName --jq '.headRefName' | grep -E '^fix/'
+# Or check slice label
+gh issue view <slice-number> --json labels --jq '.labels[].name' | grep root-cause
+
+# Check commit ordering: find commits touching tests/
+git log origin/main..HEAD --pretty="%H %s" --name-only | grep -B5 "^tests/"
+# The test-touching commit sha MUST appear before the fix commit sha in
+# `git log origin/main..HEAD` (log walks newest-first; test commit must be LATER
+# in the log = lower in the list = committed FIRST in time).
+
+# Check fails-before output in PR body
+gh pr view <PR> --json body --jq '.body' | grep -i 'fails-before\|FAILED\|AssertionError\|FAIL'
+```
+
+**Ordering check (mechanical):**
+```bash
+# Collect commit SHAs in topological order (oldest first)
+git log origin/main..HEAD --reverse --pretty="%H" > /tmp/pr-commits.txt
+# Find first commit touching tests/
+TEST_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '/tests\//{print prev; exit} {prev=$0}')
+# Find first non-tests commit changing runtime code
+FIX_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '!/^(tests\/|$)/{if(in_commit) {print prev_sha; exit}} /^[0-9a-f]{40}$/{in_commit=1; prev_sha=$0}')
+# TEST_COMMIT must appear before FIX_COMMIT in /tmp/pr-commits.txt
+```
+
+**Literal pattern:** `R-PROVE: fix-type PR missing test-commit-precedes-fix-commit ordering (test commit not found, or fix commit precedes test commit)`.
+**Literal pattern (missing fails-before):** `R-PROVE: PR body missing fails-before output excerpt`.
+
+**Rationale:** Bias isolation: when the test is written after the fix, the author already knows the answer — the test is not an independent signal. Writing the test first (it fails), then fixing (it passes) produces an unforgeable before/after proof. The commit ordering in git history is the mechanical proxy for this discipline, checkable without re-running the suite. This prevents the named anti-pattern (tests written post-hoc to justify an already-merged fix) and closes the loop on ADR-0067 D2's "bias isolation as git-history sequencing" design. Per [ADR-0067](../../decisions/0067-regression-memory.md) D2 (bootstrap-mode: binds forward from the PR that lands R-PROVE in this file). Exemption: non-code fixes (docs, prompt wording) need no test; they must declare the exemption explicitly.
+
 ---
 
 ## Recommend-only criteria

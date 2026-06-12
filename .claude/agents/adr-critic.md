@@ -139,6 +139,24 @@ No proposed edits to existing ADR files.
 
 **Examples:** "Draft D3: 'Amend ADR-0007 D2 to add the new edge case'" → FAIL. "Draft Consequences: 'Will update ADR-0003 D4's wording to clarify'" → FAIL. "Draft has no mention of editing prior ADRs" → PASS.
 
+### AC-ENFORCEMENT — ADR introducing a rule must name its enforcement mechanism
+
+**Mechanic:** Fires on any ADR that introduces a rule, convention, or recurring obligation in its Decisions section. For each such Decision, verify all three sub-checks:
+
+- **(a) Enforcement named or advisory declared:** the Decision body either (i) explicitly names a deterministic enforcement mechanism (output-contract field, hook validation, CI grep, pre-commit check, dashboard evaluator, critic rubric rule) OR (ii) carries an explicit `advisory` justification explaining why deterministic enforcement is not appropriate. A vague "agents should follow this" without either → FAIL with `"AC-ENFORCEMENT(a): D<X> introduces rule '<name>' but names no enforcement mechanism and is not tagged advisory"`.
+- **(b) Parsimony: no existing mechanism already covers this:** the Decision explains why no existing mechanism (existing CI check, existing critic rubric, existing hook, existing output-contract field) already covers the concern — generalizing ADR-0046 D1's critic-parsimony principle to ALL mechanisms. Absent → FAIL with `"AC-ENFORCEMENT(b): D<X> does not explain why existing mechanisms are insufficient"`.
+- **(c) Anti-pattern shadow named:** the Decision names the anti-pattern or failure mode it guards against (its "shadow") so future audits can test whether the shadow re-appeared. Absent → FAIL with `"AC-ENFORCEMENT(c): D<X> does not name the anti-pattern shadow it guards against"`.
+
+**Bootstrap-mode:** per ADR-0004 D2, AC-ENFORCEMENT binds forward from the merge of its ship slice; ADRs accepted before that merge are not retroactively re-gated. ADRs co-submitted in the same PRD wave are reviewed against it as drafts.
+
+**Self-application:** ADR-0056 satisfies its own test — enforcement = AC-ENFORCEMENT (judgment, adr-critic) + the D3 coverage row (deterministic); parsimony explanation in ADR-0056 Context; shadow = prose-rule accretion with measured-zero compliance.
+
+**Check:** (1) Read every Decision. (2) Identify those introducing rules, conventions, or recurring obligations. (3) For each, verify sub-checks (a), (b), (c). Any absent → FAIL.
+
+**Rationale:** The same prose-decay evidence that motivated rule #23 (ADR-0056 Context: 0–17% prose-rule compliance) applies to ADRs themselves. An ADR that introduces a rule without naming enforcement is an ADR that hopes agents will comply rather than building compliance in. The three sub-checks (enforcement + parsimony + shadow) form the minimum due-diligence set: enforcement makes the rule real; parsimony prevents mechanism proliferation; shadow-naming enables future audit tests. Per [ADR-0056](../../decisions/0056-no-rule-without-a-check.md) D2.
+
+**Examples:** "D1 introduces reviewer rule R-FOO but cites no enforcement mechanism and isn't tagged advisory" → FAIL(a). "D2 adds a new hook validation but doesn't explain why the existing pre-commit hook doesn't cover it" → FAIL(b). "D3 introduces a rule but doesn't name the anti-pattern it prevents" → FAIL(c). "D1 introduces R-FOO, names the CI grep that checks it, states existing checks don't cover it, and names 'silent scope drift' as the shadow" → PASS.
+
 ---
 
 ## Additional responsibility — flag affected topics (non-blocking)

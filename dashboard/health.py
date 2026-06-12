@@ -18,6 +18,7 @@ Exports:
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
+    check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -801,6 +802,109 @@ def check_isolation_group() -> dict:
     return {"id": "ISOLATION-GROUP", "result": result, "detail": detail}
 
 
+def check_rule_coverage() -> dict:
+    """RULE-COVERAGE (WARN): ratio of CLAUDE.md section-1 rules that name a check or are (advisory).
+
+    Heuristic: scans for bold "rule #N" entries in section 1 (stops at the first H2
+    after section 1's opening list).  A rule is considered "covered" when its text
+    contains any of the coverage signals below, OR the entry carries the literal
+    string "(advisory)".
+
+    Coverage signals (simple substring search — honest heuristic, not exhaustive):
+      - "CI grep", "ci-checks", "tools/ci-checks"
+      - "hook validation", "pre-commit", ".claude/hooks"
+      - "dashboard evaluator", "health check", "trail evaluator"
+      - "output-contract", "trailer schema"
+      - "reviewer rule", "R-", "AC-", "SC-", "PC-"  (named critic rubric rules)
+      - "(Mechanized by", "(Enforced at", "(enforced by"
+
+    Pre-existing rules (those numbered ≤22) are grandfathered per ADR-0008 D8
+    (bootstrap-mode); they are reported in the ratio but not flagged as newly
+    violating.  Only rules #23+ are flagged as unchecked-and-untagged.
+
+    Always WARNs (never FAILs) until the wave-3 retrofit pass; per ADR-0056 D3.
+    """
+    claude_md = _HEALTH_REPO_ROOT / "CLAUDE.md"
+    if not claude_md.exists():
+        return {"id": "RULE-COVERAGE", "result": "WARN", "detail": "CLAUDE.md missing"}
+
+    text = _read_file(claude_md)
+
+    # Locate section 1: starts at "## 1." and ends at the next "## " heading.
+    sec1_m = re.search(r'^## 1\.', text, re.MULTILINE)
+    if not sec1_m:
+        return {"id": "RULE-COVERAGE", "result": "WARN",
+                "detail": "could not locate '## 1.' in CLAUDE.md"}
+    next_h2 = re.search(r'^## [^1]', text[sec1_m.end():], re.MULTILINE)
+    sec1_end = sec1_m.end() + next_h2.start() if next_h2 else len(text)
+    section1 = text[sec1_m.start():sec1_end]
+
+    # Coverage signals — one match anywhere in the rule's line-block is sufficient.
+    _COVERAGE_SIGNALS = (
+        "CI grep", "ci-checks", "tools/ci-checks",
+        "hook validation", "pre-commit", ".claude/hooks",
+        "dashboard evaluator", "health check", "trail evaluator",
+        "output-contract", "trailer schema",
+        "reviewer rule", "R-RULE", "(Mechanized by", "(Enforced at", "(enforced by",
+    )
+    # Named critic rubric patterns (R-XXX, AC-XXX, SC-XXX, PC-XXX) — minimum 2 uppercase letters
+    _RUBRIC_PAT = re.compile(r'\b(R|AC|SC|PC)-[A-Z]{2,}')
+
+    # Parse numbered rule entries.  Each entry may span multiple lines (sub-bullets).
+    # Strategy: split on the rule-entry pattern and capture each block.
+    rule_entry_pat = re.compile(
+        r'^(?P<num>[0-9]+)\.\s+\*\*.*?rule\s+#(?P<rnum>[0-9]+)',
+        re.MULTILINE,
+    )
+
+    # Collect (rule_number, full_block_text) pairs.
+    matches = list(rule_entry_pat.finditer(section1))
+    rules = []
+    for i, m in enumerate(matches):
+        block_start = m.start()
+        block_end = matches[i + 1].start() if i + 1 < len(matches) else len(section1)
+        block = section1[block_start:block_end]
+        rnum = int(m.group("rnum"))
+        rules.append((rnum, block))
+
+    total = len(rules)
+    if total == 0:
+        return {"id": "RULE-COVERAGE", "result": "WARN",
+                "detail": "no numbered rules found in section 1"}
+
+    covered_nums = []
+    unchecked_grandfathered = []
+    unchecked_new = []
+
+    _BOOTSTRAP_CUTOFF = 22  # rules ≤22 are grandfathered per ADR-0008 D8
+
+    for rnum, block in rules:
+        is_advisory = "(advisory)" in block
+        has_signal = any(sig in block for sig in _COVERAGE_SIGNALS)
+        has_rubric = bool(_RUBRIC_PAT.search(block))
+        covered = is_advisory or has_signal or has_rubric
+        if covered:
+            covered_nums.append(rnum)
+        elif rnum <= _BOOTSTRAP_CUTOFF:
+            unchecked_grandfathered.append(rnum)
+        else:
+            unchecked_new.append(rnum)
+
+    covered_count = len(covered_nums)
+    ratio_pct = int(covered_count * 100 / total)
+
+    parts = [f"{covered_count}/{total} covered ({ratio_pct}%)"]
+    if unchecked_grandfathered:
+        parts.append(f"grandfathered-unchecked: {unchecked_grandfathered}")
+    if unchecked_new:
+        parts.append(f"NEW unchecked-untagged: {unchecked_new}")
+
+    detail = " | ".join(str(p) for p in parts)
+    # Always WARN per ADR-0056 D3 (retrofit cadence owns the FAILs)
+    result = "WARN" if (unchecked_grandfathered or unchecked_new) else "PASS"
+    return {"id": "RULE-COVERAGE", "result": result, "detail": detail}
+
+
 def _build_health_data() -> dict:
     """Build the full /api/health payload synchronously.
 
@@ -815,6 +919,7 @@ def _build_health_data() -> dict:
                 check_capture_slo(),
                 check_hook_integrity(),
                 check_isolation_group(),
+                check_rule_coverage(),
             ]
         },
     }

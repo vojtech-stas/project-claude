@@ -23,6 +23,8 @@ Violation detectors (first-class outputs):
   slice_no_pr        — slice issue closed without a known closing PR
                        (respects NO_PR_EXPECTED annotation)
   prd_closed_open_slices — PRD closed while ≥1 slice is still open
+  merged_without_ci  — merged non-trivial PR without SUCCESS 'ci' statusCheckRollup
+                       (bootstrap-mode: PRs < #711 grandfathered per ADR-0042)
 
 Run PASS := every required:always github-tier edge is "confirmed"
             AND zero violations.
@@ -569,6 +571,66 @@ def _detect_prd_closed_open_slices(trail: dict) -> list[dict]:
     return violations
 
 
+# Bootstrap cutoff for merged_without_ci: PRs predating ADR-0042 (CI gate) are
+# grandfathered.  PR #711 was the first one under ADR-0042 enforcement.
+_CI_GATE_BOOTSTRAP_PR = 711
+
+
+def _detect_merged_without_ci(trail: dict) -> list[dict]:
+    """Detect merged non-trivial PRs without a SUCCESS 'ci' statusCheckRollup check.
+
+    Bootstrap-mode: PRs with number < _CI_GATE_BOOTSTRAP_PR predate ADR-0042
+    and are grandfathered (never flagged as a violation).
+
+    Graceful defaults:
+    - Missing statusCheckRollup (absent key or []) → grandfathered (no data; not a violation).
+    - Trivial-lane PRs → excluded (trivial PRs are exempt from CI gate per I3).
+    """
+    violations = []
+    prs = trail.get("prs", {})
+    for pr in prs.values():
+        pr_number = pr.get("number", 0)
+        merged_at = pr.get("merged_at")
+        if not merged_at:
+            continue  # not merged; no violation possible
+        if pr.get("is_trivial"):
+            continue  # trivial-lane: exempt from CI gate
+        if pr_number < _CI_GATE_BOOTSTRAP_PR:
+            continue  # grandfathered: predates ADR-0042
+
+        rollup = pr.get("status_check_rollup")
+        if not rollup:
+            # No statusCheckRollup data — absent on some older API responses;
+            # treat as grandfathered (graceful default, not a violation).
+            continue
+
+        # Look for a check named "ci" with conclusion SUCCESS
+        ci_success = any(
+            c.get("name") == "ci" and c.get("conclusion") == "SUCCESS"
+            for c in rollup
+        )
+        if not ci_success:
+            ci_checks = [
+                f"{c.get('name')}:{c.get('conclusion')}"
+                for c in rollup
+                if c.get("name") == "ci"
+            ]
+            checks_summary = (
+                ", ".join(ci_checks) if ci_checks
+                else "no 'ci' check in rollup"
+            )
+            violations.append({
+                "type": "merged_without_ci",
+                "pr_number": pr_number,
+                "merged_at": merged_at,
+                "detail": (
+                    f"PR #{pr_number} merged at {merged_at} without SUCCESS 'ci' check "
+                    f"({checks_summary})"
+                ),
+            })
+    return violations
+
+
 # ---------------------------------------------------------------------------
 # Main compare function
 # ---------------------------------------------------------------------------
@@ -671,12 +733,13 @@ def compare(spec: dict, trail: dict) -> dict:
             "required": edge.get("required", "always"),
         }
 
-    # Violation detection — all four detectors
+    # Violation detection — five detectors (slice #767 adds merged_without_ci)
     violations = (
         _detect_unreviewed_merges(trail)
         + _detect_missing_closes_slice(trail)
         + _detect_slice_no_pr(trail)
         + _detect_prd_closed_open_slices(trail)
+        + _detect_merged_without_ci(trail)
     )
 
     # Run PASS: ALL required:always github-tier edges are "confirmed" OR "not-exercised"

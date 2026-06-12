@@ -1060,6 +1060,11 @@
       </div>
     </div>
   </div>
+  <!-- substrate-meta: capture-SLO + hook-integrity + isolation-group (slice #767) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">substrate health (capture-SLO, hook-integrity, isolation-group)</div>
+    <div id="substrate-grid"><div class="loading">Loading...</div></div>
+  </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
@@ -1917,10 +1922,40 @@ async function loadHealth() {
     const data = await r.json();
     renderDocsGrid(data.auditMeta);
     renderAsGrid(data.auditSubagents);
+    renderSubstrateGrid(data.substrateMeta);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
   }
+}
+
+/**
+ * Render substrate health check grid (CAPTURE-SLO, HOOK-INTEGRITY, ISOLATION-GROUP).
+ * Slice #767: simple table rows, red on FAIL, amber on WARN.
+ */
+function renderSubstrateGrid(substrateMeta) {
+  const grid = document.getElementById('substrate-grid');
+  if (!substrateMeta || !substrateMeta.checks) {
+    grid.innerHTML = '<span style="color:var(--muted)">No data</span>';
+    return;
+  }
+  const checks = substrateMeta.checks;
+  if (!checks.length) {
+    grid.innerHTML = '<span style="color:var(--muted)">No checks</span>';
+    return;
+  }
+  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  for (const c of checks) {
+    const detSnippet = c.detail && c.detail.length > 0
+      ? escHtml(c.detail.slice(0, 120)) + (c.detail.length > 120 ? '…' : '')
+      : '';
+    html += `<tr>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
 }
 
 /**

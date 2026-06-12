@@ -319,6 +319,17 @@ The canonical verdict template + CRITIC trailer field schema is defined in [ADR-
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`) are allowed only after the core three.
 
+**Reviewer trailer template** (emit this fenced block verbatim, filling in values):
+```
+VERDICT: <APPROVE|BLOCK>
+REASON: <one sentence>
+ROUND: <N>
+CRITIC: reviewer
+MERGE_STATUS: <merged:<sha>|queued|failed:<error>|n/a>
+ESCALATE: <needs-human|n/a>
+ESCALATION_STATUS: <applied (...)|n/a>
+```
+
 ---
 
 ## Post-verdict action

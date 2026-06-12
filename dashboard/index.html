@@ -1060,10 +1060,15 @@
       </div>
     </div>
   </div>
-  <!-- substrate-meta: capture-SLO + hook-integrity + isolation-group (slice #767) -->
+  <!-- substrate-meta: capture-SLO + hook-integrity + isolation-group + rule-coverage (slice #767/#768) -->
   <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">substrate health (capture-SLO, hook-integrity, isolation-group)</div>
+    <div class="card-title">substrate health (capture-SLO, hook-integrity, isolation-group, rule-coverage)</div>
     <div id="substrate-grid"><div class="loading">Loading...</div></div>
+  </div>
+  <!-- critic-health card (slice #779 / ADR-0059 D1 / ADR-0060 D4) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">critic health (first-pass APPROVE rate, rounds, doubt-theater streak)</div>
+    <div id="critic-health-grid"><div class="loading">Loading...</div></div>
   </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
@@ -1923,6 +1928,7 @@ async function loadHealth() {
     renderDocsGrid(data.auditMeta);
     renderAsGrid(data.auditSubagents);
     renderSubstrateGrid(data.substrateMeta);
+    renderCriticHealth(data.substrateMeta);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
@@ -1952,6 +1958,55 @@ function renderSubstrateGrid(substrateMeta) {
     html += `<tr>`;
     html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
+}
+
+/**
+ * Render critic-health card (slice #779 / ADR-0059 D1 / ADR-0060 D4).
+ * Extracts the CRITIC-HEALTH check from substrateMeta.checks and renders
+ * a per-critic table: name | verdicts | first-pass APPROVE rate | doubt-theater streak.
+ * Unattributed bucket is shown honestly for pre-v2 verdicts.
+ */
+function renderCriticHealth(substrateMeta) {
+  const grid = document.getElementById('critic-health-grid');
+  if (!grid) return;
+  if (!substrateMeta || !substrateMeta.checks) {
+    grid.innerHTML = '<span style="color:var(--muted)">No data</span>';
+    return;
+  }
+  const chk = substrateMeta.checks.find(c => c.id === 'CRITIC-HEALTH');
+  if (!chk) {
+    grid.innerHTML = '<span style="color:var(--muted)">CRITIC-HEALTH check not present</span>';
+    return;
+  }
+  const critics = chk.critics || {};
+  const names = Object.keys(critics);
+  if (!names.length) {
+    grid.innerHTML = `<div>${badgeHtml(chk.result)} <span style="color:var(--muted);font-size:11px;">${escHtml(chk.detail || '')}</span></div>`;
+    return;
+  }
+  let html = `<div style="margin-bottom:8px;font-size:10px;color:var(--muted);">${escHtml(chk.detail || '')}</div>`;
+  html += '<table><tr><th>Critic</th><th>Verdicts</th><th>1st-pass APPROVE%</th><th>Rounds</th><th>Streak</th></tr>';
+  for (const name of names.sort()) {
+    const c = critics[name];
+    const rate = c.first_pass_approve_rate != null
+      ? Math.round(c.first_pass_approve_rate * 100) + '%'
+      : '—';
+    const hist = c.rounds_histogram || {};
+    const histStr = Object.entries(hist).sort((a,b) => a[0]-b[0])
+      .map(([r, n]) => `R${r}:${n}`).join(' ') || '—';
+    const streak = c.doubt_theater_streak || 0;
+    const streakColor = c.doubt_theater_amber ? 'var(--amber)' : 'inherit';
+    const nameColor = name === 'unattributed' ? 'var(--muted)' : 'var(--text)';
+    html += `<tr>`;
+    html += `<td style="color:${nameColor}">${escHtml(name)}</td>`;
+    html += `<td>${c.verdict_count}</td>`;
+    html += `<td>${rate}</td>`;
+    html += `<td style="font-size:10px;color:var(--muted)">${escHtml(histStr)}</td>`;
+    html += `<td style="color:${streakColor}">${streak}${c.doubt_theater_amber ? ' ⚠' : ''}</td>`;
     html += `</tr>`;
   }
   html += '</table>';

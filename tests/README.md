@@ -4,16 +4,17 @@ This directory holds the project-claude regression test suite, seeded per ADR-00
 
 ## Runner choice
 
-**pytest** is the primary runner (pytest 9.0.3 was verified present on this machine
-at suite creation time). The stdlib `unittest` module is also available as a fallback.
+**stdlib `unittest`** is the primary runner — no external dependencies required.
+**pytest** is optional; it is preferred when installed but is not a requirement
+(per PRD #813 §4: "no new external dependencies — pytest only if already available").
 
 Run the suite:
 ```bash
-# From the repo root:
-pytest tests/ -v
-
-# Fallback (no pytest installed):
+# From the repo root (stdlib — works everywhere):
 python -m unittest discover -s tests -p "test_*.py"
+
+# Optional (when pytest is installed):
+pytest tests/ -v
 ```
 
 ## CI integration

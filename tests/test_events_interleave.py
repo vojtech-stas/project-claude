@@ -19,14 +19,15 @@ The test constructs a synthetic JSONL log with two interleaved sessions
 (A and B) and asserts that fetching session A returns ALL of A's events,
 not just the head before the first B line.
 
-Pytest is the runner on this box (pytest 9.0.3 available). stdlib unittest is
-also available as a fallback (run with: python -m unittest tests/test_events_interleave.py).
+Runner: stdlib unittest (pytest optional — run with either):
+  python -m unittest discover -s tests
+  pytest tests/  (if pytest is installed)
 """
 import json
+import sys
 import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,15 +43,24 @@ def _make_v2_event(session_id: str, event: str, ts: str) -> str:
     })
 
 
-def _write_log(lines: list[str], path: Path) -> None:
+def _write_log(lines: list, path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _get_dashboard_dir() -> str:
+    """Return the dashboard/ directory path and ensure it is on sys.path."""
+    repo_root = Path(__file__).resolve().parent.parent
+    dashboard_dir = str(repo_root / "dashboard")
+    if dashboard_dir not in sys.path:
+        sys.path.insert(0, dashboard_dir)
+    return dashboard_dir
 
 
 # ---------------------------------------------------------------------------
 # Regression test — interleaved session truncation (issue #730)
 # ---------------------------------------------------------------------------
 
-class TestInterleaveRegression:
+class TestInterleaveRegression(unittest.TestCase):
     """serve_runs(?session=A) must return ALL of session A's events even when
     session B lines appear between A's events in the JSONL file.
 
@@ -64,7 +74,7 @@ class TestInterleaveRegression:
     TARGET_SID = "live-session-alpha-001"
     OTHER_SID  = "live-session-beta-002"
 
-    def _build_interleaved_log(self) -> list[str]:
+    def _build_interleaved_log(self) -> list:
         """Build a log where A and B lines are strictly interleaved: A B A B A."""
         return [
             _make_v2_event(self.TARGET_SID, "session_start",  "2026-06-12T10:00:00Z"),
@@ -74,94 +84,88 @@ class TestInterleaveRegression:
             _make_v2_event(self.TARGET_SID, "session_stop",   "2026-06-12T10:00:04Z"),
         ]
 
-    def test_interleaved_session_returns_all_events(self, tmp_path: Path):
+    def test_interleaved_session_returns_all_events(self):
         """With interleaved A/B events, fetching session A must return all 3 A events.
 
         The buggy implementation would return only the first A event (session_start)
         before encountering the first B line and breaking. This test would FAIL on
         that implementation and PASS on the fixed one.
         """
-        import sys
-        # Ensure the dashboard package is importable from the repo root.
-        repo_root = Path(__file__).resolve().parent.parent
-        dashboard_dir = str(repo_root / "dashboard")
-        if dashboard_dir not in sys.path:
-            sys.path.insert(0, dashboard_dir)
-
+        _get_dashboard_dir()
         from events import serve_runs  # noqa: PLC0415
 
-        log_path = tmp_path / "workflow-events.jsonl"
-        _write_log(self._build_interleaved_log(), log_path)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "workflow-events.jsonl"
+            _write_log(self._build_interleaved_log(), log_path)
 
-        result = serve_runs({"session": [self.TARGET_SID]}, log_path)
+            result = serve_runs({"session": [self.TARGET_SID]}, log_path)
 
-        assert result.get("run") is not None, (
+        self.assertIsNotNone(
+            result.get("run"),
             "Expected a run dict for TARGET_SID but got None. "
-            "This means serve_runs found no events for the target session."
+            "This means serve_runs found no events for the target session.",
         )
         events = result["run"]["events"]
 
         # The target session has exactly 3 events: session_start, tool_use, session_stop.
-        assert len(events) == 3, (
+        self.assertEqual(
+            len(events), 3,
             f"Expected 3 events for session {self.TARGET_SID!r} but got {len(events)}. "
             f"Events returned: {[e.get('event') for e in events]}. "
             "The interleave defect (break-on-non-matching-line) truncates the list "
-            "whenever a different session's line appears between two target-session lines."
+            "whenever a different session's line appears between two target-session lines.",
         )
 
         event_types = [e["event"] for e in events]
-        assert event_types == ["session_start", "tool_use", "session_stop"], (
-            f"Unexpected event order: {event_types}"
+        self.assertEqual(
+            event_types, ["session_start", "tool_use", "session_stop"],
+            f"Unexpected event order: {event_types}",
         )
 
-    def test_non_interleaved_baseline(self, tmp_path: Path):
+    def test_non_interleaved_baseline(self):
         """Baseline: contiguous A events (no interleaving) still return all events.
 
         This passes even under the buggy implementation — it is the baseline that
         demonstrates the buggy version would appear to work in the simple case.
         """
-        import sys
-        repo_root = Path(__file__).resolve().parent.parent
-        dashboard_dir = str(repo_root / "dashboard")
-        if dashboard_dir not in sys.path:
-            sys.path.insert(0, dashboard_dir)
-
+        _get_dashboard_dir()
         from events import serve_runs  # noqa: PLC0415
 
-        log_path = tmp_path / "workflow-events.jsonl"
-        lines = [
-            _make_v2_event(self.TARGET_SID, "session_start", "2026-06-12T10:00:00Z"),
-            _make_v2_event(self.TARGET_SID, "tool_use",      "2026-06-12T10:00:01Z"),
-            _make_v2_event(self.TARGET_SID, "session_stop",  "2026-06-12T10:00:02Z"),
-        ]
-        _write_log(lines, log_path)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "workflow-events.jsonl"
+            lines = [
+                _make_v2_event(self.TARGET_SID, "session_start", "2026-06-12T10:00:00Z"),
+                _make_v2_event(self.TARGET_SID, "tool_use",      "2026-06-12T10:00:01Z"),
+                _make_v2_event(self.TARGET_SID, "session_stop",  "2026-06-12T10:00:02Z"),
+            ]
+            _write_log(lines, log_path)
 
-        result = serve_runs({"session": [self.TARGET_SID]}, log_path)
-        assert result.get("run") is not None
-        assert len(result["run"]["events"]) == 3
+            result = serve_runs({"session": [self.TARGET_SID]}, log_path)
 
-    def test_metadata_mode_interleave(self, tmp_path: Path):
+        self.assertIsNotNone(result.get("run"))
+        self.assertEqual(len(result["run"]["events"]), 3)
+
+    def test_metadata_mode_interleave(self):
         """Metadata mode (?n=2): both sessions appear even with strict interleaving."""
-        import sys
-        repo_root = Path(__file__).resolve().parent.parent
-        dashboard_dir = str(repo_root / "dashboard")
-        if dashboard_dir not in sys.path:
-            sys.path.insert(0, dashboard_dir)
-
+        _get_dashboard_dir()
         from events import serve_runs  # noqa: PLC0415
 
-        log_path = tmp_path / "workflow-events.jsonl"
-        _write_log(self._build_interleaved_log(), log_path)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "workflow-events.jsonl"
+            _write_log(self._build_interleaved_log(), log_path)
 
-        result = serve_runs({"n": ["2"]}, log_path)
+            result = serve_runs({"n": ["2"]}, log_path)
+
         runs = result.get("runs", [])
         session_ids = {r["session_id"] for r in runs}
 
-        assert self.TARGET_SID in session_ids, (
-            f"TARGET_SID {self.TARGET_SID!r} missing from metadata runs: {session_ids}"
+        self.assertIn(
+            self.TARGET_SID, session_ids,
+            f"TARGET_SID {self.TARGET_SID!r} missing from metadata runs: {session_ids}",
         )
-        assert self.OTHER_SID in session_ids, (
-            f"OTHER_SID {self.OTHER_SID!r} missing from metadata runs: {session_ids}"
+        self.assertIn(
+            self.OTHER_SID, session_ids,
+            f"OTHER_SID {self.OTHER_SID!r} missing from metadata runs: {session_ids}",
         )
 
         # The log is A B A B A — target has 3 events, other has 2.
@@ -173,7 +177,12 @@ class TestInterleaveRegression:
             sid = run["session_id"]
             expected = expected_counts.get(sid)
             if expected is not None:
-                assert run["event_count"] == expected, (
+                self.assertEqual(
+                    run["event_count"], expected,
                     f"Session {sid!r} has event_count={run['event_count']}, "
-                    f"expected {expected}."
+                    f"expected {expected}.",
                 )
+
+
+if __name__ == "__main__":
+    unittest.main()

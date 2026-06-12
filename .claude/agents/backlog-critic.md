@@ -138,5 +138,5 @@ This subagent ships in slice 1 of PRD #58 per ADR-0008 D8. From that merge forwa
 - ADR-0006 D4 (surfacing convention, amended forward by ADR-0008 D8)
 - ADR-0008 D2/D3/D4/D7/D8 (autopilot semantics, inline-firing, rubric, 6-critic-cap honored, bootstrap)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
-- ADR-0031 — T4 thin-prompt migration; rule bodies inlined above.
+- ADR-0031 — T4 thin-prompt migration; rule bodies inlined above; superseded entirely by ADR-0032.
 - [`.claude/skills/promote-to-backlog/SKILL.md`](../skills/promote-to-backlog/SKILL.md) — primary caller, inline post-`gh issue create --label captured` per ADR-0008 D3.

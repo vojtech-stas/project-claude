@@ -99,98 +99,73 @@ Argument-parsing logic (shell-style switch): set `RUN_STRUCT` / `RUN_DOCS` flags
 
 ## Rubric — Docs-currency subcommand (skip if `RUN_DOCS=0`)
 
+The DOCS-1 through DOCS-11 checks are implemented in the **check registry** (`dashboard/health.py`). The mechanics live there as the single source of truth; this section documents intent and rationale only. To run a check: `python dashboard/health.py --check DOCS-N` (exit 0 = PASS/WARN, exit 1 = FAIL). To list all registered IDs: `python dashboard/health.py --list`. Per ADR-0064 D3.
+
 ### DOCS-1 — every `decisions/README.md` index entry resolves to an existing file
 
-**Mechanic:** Extract every `(NNNN-[a-z0-9-]+\.md)` pattern from `decisions/README.md`; for each extracted target, run `test -f decisions/<target>`. All exist → PASS. Any missing → FAIL (list dangling refs).
+**Registry:** `python dashboard/health.py --check DOCS-1`
 
 **Rationale:** The ADR index is the primary discovery surface for the project's decision history. If the index links to ADRs that no longer exist (dangling rows), readers chase 404s and lose trust. Dangling rows typically come from renaming or deleting an ADR file without updating the index. Auditing only one direction catches half the drift.
 
 ### DOCS-2 — every `decisions/NNNN-*.md` on disk has a row in `decisions/README.md`
 
-**Mechanic:** `for f in decisions/[0-9]*.md; do grep -qF "$(basename $f)" decisions/README.md || echo MISSING $f; done` → empty → PASS; non-empty → FAIL (list missing index entries).
+**Registry:** `python dashboard/health.py --check DOCS-2`
 
 **Rationale:** If the index omits ADRs that DO exist, readers don't discover them — the ADR's authority is silently invisible. Missing rows typically come from creating a new ADR file but forgetting the index update (a common slip when the slice's checklist doesn't enumerate "update decisions/README.md"). DOCS-1 + DOCS-2 together guarantee the index neither lies nor omits.
 
 ### DOCS-3 — every `.claude/agents/*.md` ref in CLAUDE.md Map resolves
 
-**Mechanic:** Extract every `\.claude/agents/[a-z-]+\.md` reference from `CLAUDE.md`; for each, run `test -f`. All exist → PASS. Any missing → FAIL (list dangling refs).
+**Registry:** `python dashboard/health.py --check DOCS-3`
 
 **Rationale:** The CLAUDE.md Map is the agent/skill discovery surface for every Claude Code session. A dangling reference means an agent goes looking for a skill, the Map says it lives at a path, the file does not exist, and the agent fails silently or falls back to default behavior. Forward-direction only (Map → file) — reverse is intentionally not checked because the Map is curated (some agents are deliberately undocumented).
 
 ### DOCS-4 — every `.claude/skills/*/SKILL.md` ref in CLAUDE.md Map resolves
 
-**Mechanic:** Extract every `\.claude/skills/[a-z-]+/SKILL\.md` reference from `CLAUDE.md`; for each, run `test -f`. All exist → PASS. Any missing → FAIL.
+**Registry:** `python dashboard/health.py --check DOCS-4`
 
 **Rationale:** Same Map-forward rationale as DOCS-3, applied to the skill half of the Map. A skill directory renamed without updating the Map → FAIL. The patterns use lowercase-kebab-only classes, mirroring the STRUCT-NAMING invariant.
 
 ### DOCS-5 — no bare `N=3` literal in `README.md` without adjacent ADR-0013 reference (±2-line proximity)
 
-**Mechanic:**
-```
-grep -nF "N=3" README.md | while IFS= read -r hit; do
-  lineno=$(echo "$hit" | cut -d: -f1)
-  ctx=$(awk "NR>=$((lineno-2)) && NR<=$((lineno+2))" README.md)
-  echo "$ctx" | grep -qF "ADR-0013" || echo "$hit"
-done
-```
-Output empty → PASS; any output → FAIL with offending lines.
+**Registry:** `python dashboard/health.py --check DOCS-5`
 
-**Rationale:** [ADR-0013](../../../decisions/0013-slicer-n3-contract-refined.md) refined the slicer's N-decompositions contract; PR #125 fixed README but the literal could regress. DOCS-5 ensures it stays gone. The ±2-line ADR-0013 proximity check allows the legitimate citation `(N=3 or N=1 decompositions per ADR-0013)` that explicitly references the ADR as context. Scoped to README.md only (the file that historically carried the wrong literal).
-
-**Generated-region exemption (per [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md)):** The `{{GENERATED:*}}` regions of README.md are machine-produced by `dashboard/server.py --generate-readme` and may legitimately contain `N=3` in auto-generated agent-description text (e.g., the `slicer` / `slicer-critic` component descriptions). The ADR-0013-adjacency check applies only to hand-written static template prose in `README.template.md`; generated regions are exempt. Practically: when DOCS-5 fires on a README.md hit, verify whether the offending line falls within a `{{GENERATED:*}}` region; if so, mark PASS (generated) rather than FAIL.
+**Rationale:** [ADR-0013](../../../decisions/0013-slicer-n3-contract-refined.md) refined the slicer's N-decompositions contract; PR #125 fixed README but the literal could regress. DOCS-5 ensures it stays gone. The ±2-line ADR-0013 proximity check allows the legitimate citation `(N=3 or N=1 decompositions per ADR-0013)` that explicitly references the ADR as context. Scoped to README.md only (the file that historically carried the wrong literal). Generated-region exemption: `{{GENERATED:*}}` regions of README.md (machine-produced by `dashboard/server.py --generate-readme`) are exempt per [ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md).
 
 ### DOCS-6 — no `GLOSSARY.md` references in `*.md` files outside the known-legitimate allowlist
 
-**Mechanic:**
-```
-grep -rlF "GLOSSARY.md" --include="*.md" . \
-  | grep -v "^\./\.git/" \
-  | grep -v "^\./\.claude/worktrees/" \
-  | grep -v "^\./tool-results/" \
-  | grep -vE "^\./decisions/" \
-  | grep -vF "./.claude/skills/audit-meta/SKILL.md" \
-  | grep -vF "./.claude/skills/grill-me/SKILL.md"
-```
-Empty → PASS; non-empty → FAIL with file list.
+**Registry:** `python dashboard/health.py --check DOCS-6`
 
-**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Two files legitimately reference it (this skill body and `grill-me/SKILL.md`); both are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per the `decisions/README.md` immutability convention). (Previously 5 allowlisted files; 3 KB-layer entries removed per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md) D1.)
+**Rationale:** [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) consolidated the glossary into CLAUDE.md and deleted the standalone `GLOSSARY.md` file. Any remaining reference to that filename is dead — either a broken link or a stale instruction. Two files legitimately reference it (this skill body and `grill-me/SKILL.md`); both are allowlisted. ADRs are allowlisted wholesale via `decisions/*` (immutable historical record per the `decisions/README.md` immutability convention).
 
 ### DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves
 
-**Mechanic:**
-1. Find every tracked `.md` file (excluding `.git/`).
-2. For each, extract all `decisions/[0-9]{4}-[a-z0-9-]+\.md` link targets.
-3. Filter out fake-example slugs matching `decisions/00[0-9]{2}-(old-name|fictional|fictional-adr|new-adr|new-decision)\.md`.
-4. For each remaining unique target, run `test -f`.
-5. PASS if all exist; FAIL with the (source-file, dangling-target) list otherwise.
+**Registry:** `python dashboard/health.py --check DOCS-7`
 
-**Rationale:** ADR references propagate aggressively through the codebase — subagent bodies, skill bodies, CLAUDE.md, other ADRs. A dangling citation means readers chase 404s, agents can't ground behavior in the ADR, and supersession chains break silently after ADR renames or consolidations. This is the broadest dangling-link check in the docs rubric (repo-wide vs DOCS-1's narrow scope). The fake-example allowlist (slug-shape regex) prevents rule-body atomic notes from triggering false positives when they illustrate the check with pedagogical slug strings (e.g., `0007-old-name.md`, `0099-fictional.md`).
+**Rationale:** ADR references propagate aggressively through the codebase — subagent bodies, skill bodies, CLAUDE.md, other ADRs. A dangling citation means readers chase 404s, agents can't ground behavior in the ADR, and supersession chains break silently after ADR renames or consolidations. This is the broadest dangling-link check in the docs rubric (repo-wide vs DOCS-1's narrow scope). The fake-example allowlist (slug-shape regex) prevents rule-body atomic notes from triggering false positives when they illustrate the check with pedagogical slug strings.
 
 ### DOCS-8 — `decisions/README.md` Status column carries "superseded by ADR-NNNN" annotations (WARN)
 
-**Mechanic:**
-1. `grep -nE '^- \*\*Supersedes:\*\*' decisions/*.md` — enumerate supersession declarations using the actual ADR line-prefix format (`- **Supersedes:** ADR-NNNN Dx`).
-2. For each matched line, extract the superseded D-ID.
-3. For each pair, grep `decisions/README.md` Status column for the `superseded by` annotation referencing the superseder.
-4. PASS if all annotations present (or no supersessions found); WARN with missing-annotation list otherwise.
+**Registry:** `python dashboard/health.py --check DOCS-8`
 
-**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history (per the `decisions/README.md` immutability convention). Readers landing on a superseded ADR need a clear "replaced by ADR-NNNN" pointer in the index. WARN-level (not FAIL) because the ADR body has the authoritative `- **Supersedes:**` line; the README annotation is a discoverability convenience that lags by convention. Note: the pattern `^- \*\*Supersedes:\*\*` (with `- ` prefix) matches the actual ADR bullet format; the bare `^\*\*Supersedes:\*\*` pattern silently never fires since no ADR uses that format.
+**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history (per the `decisions/README.md` immutability convention). Readers landing on a superseded ADR need a clear "replaced by ADR-NNNN" pointer in the index. WARN-level (not FAIL) because the ADR body has the authoritative `- **Supersedes:**` line; the README annotation is a discoverability convenience that lags by convention.
 
 ### DOCS-9 — CLAUDE.md glossary entry count ≤ 35 (ADR-0012 D5 soft cap; WARN)
 
-**Mechanic:** `awk '/^### Glossary/{f=1; next} /^### /{f=0} f' CLAUDE.md | grep -cE '^- \*\*'` → ≤ 35 → PASS (report actual count); > 35 → WARN (consolidation candidate).
+**Registry:** `python dashboard/health.py --check DOCS-9`
 
-**Rationale:** The glossary is auto-loaded into every Claude Code session's context. Past ~35 entries, the cost-benefit shifts unfavorably: context-window cost inflates the per-session base load; discoverability degrades from "load-bearing terms only" to "general dictionary"; maintenance pressure on each entry's defensibility relaxes. WARN (not FAIL) — hitting the cap is a signal to act, not a failure mode. Options: consolidate related entries, demote generic-leaning terms, or accept if a new entry is genuinely load-bearing. The awk state-flag pattern `{f=1; next}` avoids the false-start bug of the range pattern `/^### Glossary/,/^### /` where both start and end patterns match the heading `### Glossary (key terms)`, causing the range to immediately close and returning zero. Note: the CLAUDE.md glossary heading is H3 (`### Glossary (key terms)`), not H2; this pattern matches the actual heading.
+**Rationale:** The glossary is auto-loaded into every Claude Code session's context. Past ~35 entries, the cost-benefit shifts unfavorably: context-window cost inflates the per-session base load; discoverability degrades from "load-bearing terms only" to "general dictionary"; maintenance pressure on each entry's defensibility relaxes. WARN (not FAIL) — hitting the cap is a signal to act, not a failure mode.
 
 ### DOCS-10 — no `` `backlog`-labeled `` prose or `--label backlog` literal in agent or skill files
 
-**Mechanic:** `grep -rE '(`backlog`-labeled|--label backlog)' .claude/agents .claude/skills` → empty → PASS; non-empty → FAIL with file:line list, excluding:
-- `backlog-critic.md` (allowlisted per [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) ALL-4 precedent)
-- `promote-to-backlog/SKILL.md` (allowlisted — that skill IS the captured→backlog label-swap operator per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3; its `--label backlog` usage is the intended operation, not drift)
-- `audit-meta/SKILL.md` (allowlisted — post-#341 the rubric was inlined here, so this file contains the `` `backlog`-labeled `` / `--label backlog` literals as rule-definition text, not as a capture instruction)
-- `audit-subagents/SKILL.md` (allowlisted — same rationale as `audit-meta/SKILL.md`; the AS-ALL-4 check text is reproduced here as rule-definition text after #341 inlined the rubric)
+**Registry:** `python dashboard/health.py --check DOCS-10`
 
 **Rationale:** The captured-vs-backlog two-tier surfacing convention from [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../../decisions/0009-discipline-tightening.md) D2 applies to every agent and skill that instructs deferred-work capture. If any skill body says "capture as `backlog`-labeled", it tells agents to skip the `backlog-critic` gate — the exact #105/#107 regression. DOCS-10 extends the AS-ALL-4 subagent-only check to the full skill layer, completing the coverage. Scope is `.claude/agents/` AND `.claude/skills/` — a strict superset of AS-ALL-4.
+
+### DOCS-11 — no dead citations of fully-superseded ADRs in `.claude/` runtime prompts
+
+**Registry:** `python dashboard/health.py --check DOCS-11`
+
+**Rationale:** Runtime prompts (`.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/settings.json`) that cite a fully-superseded ADR without naming its superseder send agents toward retired decisions. DOCS-11 scans those files for citations of ADRs whose `decisions/README.md` Status is "superseded entirely by ADR-NNNN", reporting each line that names the dead ADR without the live one. An allowlist (`_DOCS11_ALLOWLIST` in `dashboard/health.py`) covers intentional historical references. Per [ADR-0064](../../../decisions/0064-rule-layer-integrity.md) D2.
 
 ---
 

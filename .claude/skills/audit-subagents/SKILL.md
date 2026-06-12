@@ -35,6 +35,8 @@ No arguments per [ADR-0011](../../../decisions/0011-subagent-quality-framework.m
 
 ## Rubric (11 checks; ADR-0011 D4)
 
+**Registry pointer:** The complementary DOCS-* and substrate checks (DOCS-1 through DOCS-11, PARITY, SPEC-COVERAGE, RESIDUAL-RATIO, SILENT-DRIFT, etc.) live in the **check registry** (`dashboard/health.py`). Run `python dashboard/health.py --list` to see all registered IDs; `python dashboard/health.py --check <ID>` to run one headlessly. This skill's AS-* checks below are prompt-quality rubric checks that run interactively during `/audit-subagents` invocations; they are not registry-delegated. Per ADR-0064 D3.
+
 **Coverage arithmetic** (ADR-0011 D4 at current 6-critic + 2-generator baseline): 6 × 9 + 4 × 6 + 1 × 2 = baseline 74 evaluations; effective 72 after CRIT-2 + ALL-4 exclusions of `backlog-critic.md`.
 
 **Per-check `excludes:` schema.** A check MAY declare `excludes: <comma-separated subagent filenames>`. For excluded pairs the runner renders `N/A (excluded per rubric)` instead of PASS/FAIL and omits the pair from the FAIL enumeration.

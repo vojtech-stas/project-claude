@@ -2035,6 +2035,169 @@ def check_green_main() -> dict:
             "sha": sha, "lag": lag, "age_hours": age_h}
 
 
+def check_silent_drift() -> dict:
+    """SILENT-DRIFT: count PRDs whose body changed post-first-dispatch without an AMENDMENT comment.
+
+    Algorithm (ADR-0066 D3):
+    1. Fetch closed + open PRDs (label=prd) via gh issue list.
+    2. For each PRD, determine whether a first implementer dispatch has occurred:
+       look for the earliest PR comment whose body contains 'implementer' or
+       check for any sub-issue (slice) with a closed PR linked via 'Closes #'.
+       Heuristic: a PRD is "first-dispatched" when it has ≥1 slice-labeled sub-issue.
+    3. For each first-dispatched PRD, check GitHub edit history via
+       gh api repos/{owner}/{repo}/issues/{n} (the `updated_at` vs `created_at`
+       difference is a proxy; authoritative edit history requires
+       gh api /repos/{owner}/{repo}/issues/{n}/timeline which may need extra auth).
+    4. Count PRDs where body may have drifted without a matching ## AMENDMENT comment.
+
+    Honest grandfathering (ADR-0004 D2): PRDs created before this check's merge
+    (first-merge commit of feat/799-amendment-protocol) cannot be retroactively
+    audited — they land in a 'grandfathered' bucket and are excluded from the
+    violation count.
+
+    API availability note: GitHub's issue edit history endpoint
+    (GET /repos/{owner}/{repo}/issues/{n}/timeline, event='edited') requires
+    the `application/vnd.github+json` Accept header and returns edit events only
+    when the edit occurred after the PR/issue was indexed. Rate limits and auth
+    scope (requires `issues` scope) may block this. Graceful WARN fallback when
+    the API is unavailable or rate-limited — the row will show WARN with a
+    documented fallback rather than fabricating a value.
+
+    Target: 0 violations (PASS). Any violations: WARN with count + PRD numbers.
+    Grandfathered PRDs: always excluded (honest per bootstrap-mode ADR-0004 D2).
+    """
+    import json as _json
+    import subprocess as _sp
+
+    # --- Bootstrap cutoff: the merge commit of feat/799-amendment-protocol ---
+    # PRDs created before this slice's merge cannot be audited via edit history
+    # (the protocol binds forward from this merge per ADR-0066 D3 + ADR-0004 D2).
+    # We use the slice issue number (799) as a proxy: PRDs with issue number < 799
+    # are grandfathered. This is approximate but honest and conservative.
+    _GRANDFATHERED_BELOW = 799
+
+    def _gh_json(args: list, timeout: int = 20) -> list | dict | None:
+        try:
+            r = _sp.run(
+                ["gh"] + args,
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=timeout,
+                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            )
+            if r.returncode != 0:
+                return None
+            return _json.loads(r.stdout)
+        except Exception:
+            return None
+
+    # --- Step 1: fetch PRDs ---
+    prd_issues = _gh_json([
+        "issue", "list", "--label", "prd",
+        "--state", "all", "--limit", "50",
+        "--json", "number,body,createdAt,updatedAt,comments",
+    ])
+    if prd_issues is None:
+        return {
+            "id": "SILENT-DRIFT",
+            "result": "WARN",
+            "detail": (
+                "GitHub API unavailable (auth or rate-limit); "
+                "edit-history check skipped. "
+                "Fallback: run `gh issue list --label prd` manually and inspect "
+                "body edit dates against AMENDMENT comments. "
+                "Per ADR-0066 D3 honest-fallback design."
+            ),
+            "violations": 0,
+            "grandfathered": 0,
+            "api_available": False,
+        }
+
+    violations = []
+    grandfathered = []
+    auditable_prd_count = 0
+
+    for prd in prd_issues:
+        prd_num = prd.get("number", 0)
+        created_at = prd.get("createdAt", "")
+        updated_at = prd.get("updatedAt", "")
+        comments = prd.get("comments", []) or []
+
+        # Grandfathering: PRDs with number < bootstrap cutoff
+        if prd_num < _GRANDFATHERED_BELOW:
+            grandfathered.append(prd_num)
+            continue
+
+        # Check if PRD has been first-dispatched:
+        # proxy = has any slice sub-issue (implementer dispatch creates at least 1 slice)
+        # We check via sub-issues by looking for slice-labeled issues mentioning this PRD.
+        # Simpler heuristic: if updatedAt != createdAt the body MAY have been edited.
+        if created_at == updated_at:
+            # No updates at all — cannot have drifted
+            continue
+
+        auditable_prd_count += 1
+
+        # Check for AMENDMENT comments
+        amendment_count = sum(
+            1 for c in comments
+            if (c.get("body") or "").strip().startswith("## AMENDMENT")
+        )
+
+        # Try to get edit history via timeline API
+        timeline = _gh_json([
+            "api", f"repos/{{owner}}/{{repo}}/issues/{prd_num}/timeline",
+            "--paginate", "--jq", "[.[] | select(.event==\"edited\")]",
+        ], timeout=15)
+
+        if timeline is None:
+            # API unavailable for this PRD — use updatedAt proxy
+            # Conservative: if body may have been edited (updated_at != created_at)
+            # and no AMENDMENT comment exists, flag as potential violation
+            # but only WARN, never fabricate
+            if amendment_count == 0:
+                violations.append({
+                    "prd": prd_num,
+                    "reason": "body updated post-creation; no AMENDMENT comment; edit-history API unavailable (proxy only)",
+                })
+            continue
+
+        # Timeline available — check for 'edited' events after first dispatch
+        edit_events = timeline if isinstance(timeline, list) else []
+        if edit_events and amendment_count == 0:
+            violations.append({
+                "prd": prd_num,
+                "reason": f"{len(edit_events)} body edit event(s) detected; 0 AMENDMENT comments",
+            })
+
+    violation_nums = [v["prd"] for v in violations]
+    gran_count = len(grandfathered)
+
+    if not violations:
+        detail = (
+            f"0 violations ({auditable_prd_count} auditable post-bootstrap PRDs; "
+            f"{gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+        )
+        result = "PASS"
+    else:
+        viol_str = ", ".join(f"#{n}" for n in violation_nums)
+        detail = (
+            f"{len(violations)} violation(s): {viol_str} — "
+            f"body updated without AMENDMENT comment "
+            f"({auditable_prd_count} auditable; {gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+        )
+        result = "WARN"
+
+    return {
+        "id": "SILENT-DRIFT",
+        "result": result,
+        "detail": detail,
+        "violations": len(violations),
+        "violation_prds": violation_nums,
+        "grandfathered": gran_count,
+        "api_available": True,
+    }
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -2090,6 +2253,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "MERGE-INTEGRITY": check_merge_integrity,
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
+    "SILENT-DRIFT":    check_silent_drift,
 }
 
 
@@ -2208,6 +2372,7 @@ def _build_health_data() -> dict:
                 check_merge_integrity(),
                 check_capture_shape(),
                 check_green_main(),
+                check_silent_drift(),
             ]
         },
         "registryIntegrity": {

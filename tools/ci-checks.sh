@@ -484,69 +484,49 @@ fi
 
 # ---------------------------------------------------------------------------
 # CHECK 9: Dashboard check_docs* drift guard
-#   Imports the ten check_docs* functions from dashboard/server.py (safe to
-#   import: server-start is guarded by if __name__ == "__main__") and runs
-#   each against the live repo.  On a clean main all DOCS-* checks must be
-#   PASS or WARN — a FAIL means the dashboard re-implementation has drifted
-#   from canonical (the #550/#560/#557 bug class).
+#   Derives the full DOCS-* check list from the registry CLI
+#   (python3 dashboard/health.py --list | grep ^DOCS-), then runs each via
+#   python3 dashboard/health.py --check <ID>.  WARN is allowed; only FAIL
+#   trips this check.  Covers all registered DOCS-* IDs — the list grows
+#   automatically as new checks are added to the registry, so no manual
+#   update is needed here (ADR-0064 D3 single-source model).
 #
-#   Design rationale: importing server.py is the cheapest, most faithful test
-#   of the dashboard's own logic.  Re-deriving the canonical verdict in this
-#   script would duplicate logic (YAGNI) and could itself drift.  A spawned
-#   Python subprocess avoids any server-import side-effects on the shell
-#   process.  WARN-level checks (DOCS-8/DOCS-9) returning WARN is allowed;
-#   only a result=="FAIL" trips CHECK 9.
+#   Prior design imported server.py directly (DOCS-1..10 hard-coded list);
+#   that approach silently omitted DOCS-11 (check_docs11_dead_citations) and
+#   any future DOCS-N — a regression-class risk per codebase-critic CC-REF-CURRENCY.
+#   The registry-CLI approach eliminates the static enumeration entirely.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 9: dashboard check_docs* drift guard ---"
 if ! command -v python3 > /dev/null 2>&1; then
     echo "SKIP: CHECK 9 — python3 not available (soft-degrade)"
-elif [ ! -f "dashboard/server.py" ]; then
-    echo "SKIP: CHECK 9 — dashboard/server.py not found (soft-degrade)"
+elif [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 9 — dashboard/health.py not found (soft-degrade)"
 else
-python3 - << 'PYEOF'
-import sys, os
-
-# Inject dashboard/ onto the path so "import server" finds server.py
-# without starting the HTTP server (guarded by if __name__ == "__main__").
-sys.path.insert(0, os.path.join(os.getcwd(), 'dashboard'))
-import server  # noqa: E402 — dynamic path manipulation required
-
-CHECK_FNS = [
-    server.check_docs1_adr_index_forward,
-    server.check_docs2_adr_index_reverse,
-    server.check_docs3_claude_md_agents,
-    server.check_docs4_claude_md_skills,
-    server.check_docs5_n3_literal,
-    server.check_docs6_glossary_md_refs,
-    server.check_docs7_adr_citations,
-    server.check_docs8_supersession_notes,
-    server.check_docs9_glossary_cap,
-    server.check_docs10_backlog_surfacing,
-]
-
-fails = []
-for fn in CHECK_FNS:
-    r = fn()
-    if r.get('result') == 'FAIL':
-        fails.append(r)
-
-if fails:
-    for r in fails:
-        print(
-            f"FAIL: CHECK 9 — dashboard check_docs* drift "
-            f"({r['id']} reports FAIL on clean main: {r.get('detail','')})",
-            file=sys.stderr
-        )
-    sys.exit(1)
-else:
-    print('PASS: CHECK 9 — all dashboard check_docs* return non-FAIL on clean main')
-    sys.exit(0)
-PYEOF
-CHECK9_EXIT=$?
-if [ "$CHECK9_EXIT" -ne 0 ]; then
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-fi
-fi  # end python3/dashboard/server.py availability check
+    CHECK9_FAIL=0
+    # Derive all DOCS-* IDs from the registry; exit non-zero if --list fails.
+    DOCS_IDS=$(python3 dashboard/health.py --list 2>/dev/null | grep '^DOCS-' || true)
+    if [ -z "$DOCS_IDS" ]; then
+        fail "CHECK 9 — 'python3 dashboard/health.py --list' returned no DOCS-* IDs"
+        CHECK9_FAIL=1
+    else
+        while IFS= read -r doc_id; do
+            [ -z "$doc_id" ] && continue
+            # Run check via registry CLI; exit 0 = PASS/WARN, exit 1 = FAIL.
+            CHECK9_OUT=$(python3 dashboard/health.py --check "$doc_id" 2>&1)
+            CHECK9_CHECK_EXIT=$?
+            if [ "$CHECK9_CHECK_EXIT" -ne 0 ]; then
+                fail "CHECK 9 — $doc_id reports FAIL: $CHECK9_OUT"
+                CHECK9_FAIL=1
+            fi
+        done <<< "$DOCS_IDS"
+    fi
+    if [ "$CHECK9_FAIL" -eq 0 ]; then
+        DOC_COUNT=$(echo "$DOCS_IDS" | wc -l | tr -d ' ')
+        pass "CHECK 9 — all $DOC_COUNT DOCS-* checks return non-FAIL on clean main"
+    else
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+fi  # end python3/dashboard/health.py availability check
 
 # ---------------------------------------------------------------------------
 # CHECK 10: Trailer-schema completeness (ADR-0054 D2 + ADR-0059 D1/D2)

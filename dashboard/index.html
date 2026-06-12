@@ -46,6 +46,19 @@
   }
   header h1 { font-size: 15px; color: var(--text); font-weight: 600; }
   header span { color: var(--muted); font-size: 11px; }
+  /* SERVER STALE banner — shown when /api/meta stale:true; hidden otherwise */
+  #stale-banner {
+    display: none;
+    background: #7f1d1d;
+    color: #fca5a5;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    padding: 6px 20px;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #ef4444;
+  }
+  #stale-banner.visible { display: block; }
   nav { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 20px; }
   nav button {
     background: none;
@@ -859,6 +872,8 @@
   <h1>project-claude dashboard</h1>
   <span>Architecture + Health + Live event stream &mdash; PRD #345</span>
 </header>
+
+<div id="stale-banner">SERVER STALE — code has changed since this server started; restart to reflect merged changes</div>
 
 <nav>
   <button class="active" onclick="switchTab('architecture', this)">Architecture</button>
@@ -3109,6 +3124,38 @@ function _renderRollup(result, el) {
 }
 
 
+// ---------------------------------------------------------------------------
+// /api/meta stale banner — polls every ~10s on all tabs (ADR-0056/0057/0058).
+// Shows a red SERVER STALE banner when stale:true; hides it when stale:false.
+// No flicker: banner state only changes when the stale value actually changes.
+// ---------------------------------------------------------------------------
+(function initMetaPoller() {
+  let lastStale = null;
+  const banner = document.getElementById('stale-banner');
+
+  function pollMeta() {
+    fetch('/api/meta')
+      .then(r => r.json())
+      .then(data => {
+        const stale = !!data.stale;
+        if (stale !== lastStale) {
+          lastStale = stale;
+          if (stale) {
+            banner.classList.add('visible');
+          } else {
+            banner.classList.remove('visible');
+          }
+        }
+      })
+      .catch(() => {
+        // Server unreachable — don't change banner state (avoid false-positive flicker)
+      });
+  }
+
+  // Poll immediately on load, then every 10 seconds
+  pollMeta();
+  setInterval(pollMeta, 10000);
+})();
 </script>
 </body>
 </html>

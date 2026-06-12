@@ -443,6 +443,77 @@ else
     note "⚠ Playwright library: pip missing — install pip then run 'pip install playwright'"
 fi
 
+# ---- step 9: label-sync drift warning (ADR-0068 D1) -------------------------
+
+step 9 "label-sync drift check (declared vs live)"
+
+# Warn if the labels declared in LABELS[] above differ from labels present on
+# the live repo. Drift = bootstrap.sh drifted from the live label set (observed
+# twice historically). Advisory only: never blocks.
+# Per ADR-0068 D1 (hygiene registry D1 — bootstrap.sh label-sync drift).
+
+if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
+    LIVE_LABELS=$(gh label list --repo "$ORIGIN_SLUG" --limit 200 --json name 2>/dev/null \
+                  | python3 -c "import json,sys; d=json.load(sys.stdin); [print(e['name']) for e in d]" \
+                  2>/dev/null || true)
+    if [[ -z "$LIVE_LABELS" ]]; then
+        warn "label-sync: could not fetch live labels for drift check."
+        note "⚠ label-sync: drift check skipped (could not fetch live labels)"
+    else
+        DECLARED_ONLY=()
+        LIVE_ONLY=()
+        # Declared label names
+        DECLARED_NAMES=()
+        for spec in "${LABELS[@]}"; do
+            IFS='|' read -r _lname _lcolor _ldesc <<<"$spec"
+            DECLARED_NAMES+=("$_lname")
+        done
+        # Check declared-but-not-live
+        for _dname in "${DECLARED_NAMES[@]}"; do
+            if ! printf '%s\n' "$LIVE_LABELS" | grep -qxF "$_dname"; then
+                DECLARED_ONLY+=("$_dname")
+            fi
+        done
+        # Check live-but-not-declared (only project-relevant labels: known set)
+        # We warn on unexpected labels only if they look like project labels
+        # (skip GitHub auto-created labels like "bug", "documentation", etc.)
+        _GITHUB_DEFAULT_LABELS=("bug" "documentation" "duplicate" "enhancement"
+                                 "good first issue" "help wanted" "invalid"
+                                 "question" "wontfix")
+        while IFS= read -r _lname; do
+            [[ -z "$_lname" ]] && continue
+            _is_default=0
+            for _def in "${_GITHUB_DEFAULT_LABELS[@]}"; do
+                [[ "$_lname" == "$_def" ]] && { _is_default=1; break; }
+            done
+            [[ "$_is_default" -eq 1 ]] && continue
+            _is_declared=0
+            for _dname in "${DECLARED_NAMES[@]}"; do
+                [[ "$_lname" == "$_dname" ]] && { _is_declared=1; break; }
+            done
+            [[ "$_is_declared" -eq 0 ]] && LIVE_ONLY+=("$_lname")
+        done <<< "$LIVE_LABELS"
+
+        if [[ ${#DECLARED_ONLY[@]} -eq 0 && ${#LIVE_ONLY[@]} -eq 0 ]]; then
+            log "label-sync: declared labels match live repo (no drift)."
+            note "✓ label-sync: no drift"
+        else
+            if [[ ${#DECLARED_ONLY[@]} -gt 0 ]]; then
+                warn "label-sync DRIFT: declared but not on live repo: ${DECLARED_ONLY[*]}"
+                warn "  Fix: run 'bootstrap.sh' after creating missing labels, or remove from LABELS array."
+            fi
+            if [[ ${#LIVE_ONLY[@]} -gt 0 ]]; then
+                warn "label-sync DRIFT: on live repo but not declared: ${LIVE_ONLY[*]}"
+                warn "  Fix: add these to the LABELS array in bootstrap.sh."
+            fi
+            note "⚠ label-sync: DRIFT detected (declared-only: [${DECLARED_ONLY[*]}]; live-only: [${LIVE_ONLY[*]}])"
+        fi
+    fi
+else
+    warn "skipping label-sync drift check (gh not ready or origin slug unresolved)."
+    note "⚠ label-sync: skipped (gh not ready)"
+fi
+
 # ---- end-of-run summary ---------------------------------------------------
 
 printf '\n%s ---- summary ----\n' "$TAG"

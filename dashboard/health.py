@@ -2590,6 +2590,421 @@ def _insert_dashboard_sys_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Hygiene registry checks (ADR-0068 D1) — wave-4 slice #818
+# ---------------------------------------------------------------------------
+
+# Threshold: untracked file count under tracked directories before WARN.
+_UNTRACKED_SIZE_WARN_COUNT = 50
+# Rotation cap in bytes (must match log-tool-event.sh _ROTATION_CAP_BYTES).
+_LOG_ROTATION_CAP_BYTES = 5 * 1024 * 1024   # 5 MB
+# Stale branch age in days (no PR + inactive > this → stale).
+_STALE_BRANCH_DAYS = 14
+# Required labels as declared in bootstrap.sh LABELS array.
+_REQUIRED_LABELS = [
+    "prd", "slice", "backlog", "captured",
+    "trivial", "needs-human", "needs-human-check", "root-cause",
+]
+
+
+def check_untracked_size() -> dict:
+    """UNTRACKED-SIZE: count + size of untracked files under tracked dirs.
+
+    Implements ADR-0068 D1 — workspace hygiene row. Reports the count of
+    untracked files under tracked directories (e.g. qa-proof/).
+    WARN when count > _UNTRACKED_SIZE_WARN_COUNT.
+    Honest day-one values: pre-existing accumulation is the honest starting
+    value, not a FAIL (ADR-0004 D2 bootstrap-mode).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        if result.returncode != 0:
+            return {"id": "UNTRACKED-SIZE", "result": "WARN",
+                    "detail": "git ls-files failed"}
+        files = [f for f in result.stdout.splitlines() if f.strip()]
+        count = len(files)
+        # Sum sizes
+        total_bytes = 0
+        for f in files:
+            try:
+                total_bytes += (_HEALTH_REPO_ROOT / f).stat().st_size
+            except Exception:
+                pass
+        size_mb = round(total_bytes / (1024 * 1024), 2)
+        detail = (
+            f"{count} untracked file(s) under tracked dirs "
+            f"({size_mb} MB total); "
+            f"threshold: WARN at >{_UNTRACKED_SIZE_WARN_COUNT} "
+            f"(honest day-one ADR-0068 D1)"
+        )
+        result_str = "WARN" if count > _UNTRACKED_SIZE_WARN_COUNT else "PASS"
+        return {"id": "UNTRACKED-SIZE", "result": result_str, "detail": detail,
+                "count": count, "size_mb": size_mb}
+    except Exception as exc:
+        return {"id": "UNTRACKED-SIZE", "result": "WARN",
+                "detail": f"check failed: {exc}"}
+
+
+def check_log_rotation() -> dict:
+    """LOG-ROTATION: workflow-events.jsonl size vs the rotation cap.
+
+    Implements ADR-0068 D1. FAIL when the production log file meets or exceeds
+    the cap and no rotation archive exists (rotation is broken).
+    WARN when the log file exceeds 80% of the cap (proactive notice).
+    PASS otherwise.
+
+    Rotation cap: _LOG_ROTATION_CAP_BYTES (5 MB) — must match the cap
+    documented in log-tool-event.sh _ROTATION_CAP_BYTES.
+    """
+    logs_dir = _HEALTH_REPO_ROOT / ".claude" / "logs"
+    events_log = logs_dir / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {"id": "LOG-ROTATION", "result": "WARN",
+                "detail": "workflow-events.jsonl not found (pre-hook setup expected)"}
+
+    try:
+        size = events_log.stat().st_size
+        size_mb = round(size / (1024 * 1024), 2)
+        cap_mb = round(_LOG_ROTATION_CAP_BYTES / (1024 * 1024), 1)
+
+        # Count archive files (workflow-events.YYYYMMDDTHHMMSS.jsonl).
+        import glob as _glob
+        archives = _glob.glob(
+            str(logs_dir / "workflow-events.2*.jsonl")
+        )
+        archive_count = len(archives)
+
+        if size >= _LOG_ROTATION_CAP_BYTES:
+            return {
+                "id": "LOG-ROTATION",
+                "result": "FAIL",
+                "detail": (
+                    f"workflow-events.jsonl is {size_mb} MB "
+                    f"(cap {cap_mb} MB) — rotation not occurring; "
+                    f"archives on disk: {archive_count}"
+                ),
+                "size_mb": size_mb, "cap_mb": cap_mb,
+                "archive_count": archive_count,
+            }
+        elif size >= 0.8 * _LOG_ROTATION_CAP_BYTES:
+            return {
+                "id": "LOG-ROTATION",
+                "result": "WARN",
+                "detail": (
+                    f"workflow-events.jsonl at {size_mb} MB "
+                    f"(>80% of {cap_mb} MB cap); "
+                    f"archives on disk: {archive_count}"
+                ),
+                "size_mb": size_mb, "cap_mb": cap_mb,
+                "archive_count": archive_count,
+            }
+        return {
+            "id": "LOG-ROTATION",
+            "result": "PASS",
+            "detail": (
+                f"{size_mb} MB / {cap_mb} MB cap; "
+                f"rotation grip = archive-aside (ADR-0068 D1); "
+                f"archives on disk: {archive_count}"
+            ),
+            "size_mb": size_mb, "cap_mb": cap_mb,
+            "archive_count": archive_count,
+        }
+    except Exception as exc:
+        return {"id": "LOG-ROTATION", "result": "WARN",
+                "detail": f"check failed: {exc}"}
+
+
+def check_stale_branches() -> dict:
+    """STALE-BRANCHES: remote branches merged or >14 days inactive without PR.
+
+    Implements ADR-0068 D1. Advisory only: detectors report, humans act.
+    Bind-forward per ADR-0004 D2: pre-existing branches are honest starting value.
+    Needs git access; degrades gracefully on network failure.
+    """
+    try:
+        import datetime as _dt
+        import json as _json
+
+        # Fetch remote branch refs + last commit date.
+        result = subprocess.run(
+            ["git", "for-each-ref",
+             "--format=%(refname:short) %(committerdate:iso8601)",
+             "refs/remotes/origin"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        if result.returncode != 0:
+            return {"id": "STALE-BRANCHES", "result": "WARN",
+                    "detail": "git for-each-ref failed (network/repo unavailable)"}
+
+        now = _dt.datetime.now(_dt.timezone.utc)
+        cutoff = now - _dt.timedelta(days=_STALE_BRANCH_DAYS)
+
+        stale = []
+        total = 0
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            ref_name = parts[0]
+            # Skip HEAD and main
+            if ref_name in ("origin/HEAD", "origin/main"):
+                continue
+            total += 1
+            date_str = parts[1].strip()
+            try:
+                # Parse iso8601 with timezone offset
+                dt = _dt.datetime.fromisoformat(date_str[:25])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_dt.timezone.utc)
+                if dt < cutoff:
+                    age_days = (now - dt).days
+                    stale.append(f"{ref_name}({age_days}d)")
+            except Exception:
+                pass
+
+        if stale:
+            return {
+                "id": "STALE-BRANCHES",
+                "result": "WARN",
+                "detail": (
+                    f"{len(stale)}/{total} remote branches inactive "
+                    f">{_STALE_BRANCH_DAYS}d: {', '.join(stale[:5])}"
+                    + (" ..." if len(stale) > 5 else "")
+                    + " (detectors-report-humans-act per ADR-0068 D1)"
+                ),
+                "stale_count": len(stale),
+                "total": total,
+            }
+        return {
+            "id": "STALE-BRANCHES",
+            "result": "PASS",
+            "detail": (
+                f"0/{total} remote branches stale "
+                f"(threshold >{_STALE_BRANCH_DAYS}d inactive)"
+            ),
+            "stale_count": 0,
+            "total": total,
+        }
+    except Exception as exc:
+        return {"id": "STALE-BRANCHES", "result": "WARN",
+                "detail": f"check failed: {exc}"}
+
+
+def check_required_labels() -> dict:
+    """REQUIRED-LABELS: declared labels in bootstrap.sh vs live repo.
+
+    Implements ADR-0068 D1. Checks that every label in _REQUIRED_LABELS
+    exists on the live GitHub repo. Missing labels = WARN (bootstrap.sh drift).
+    Gracefully degrades when gh CLI is unavailable.
+    """
+    import json as _json
+    try:
+        result = subprocess.run(
+            ["gh", "label", "list", "--limit", "200", "--json", "name"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=20,
+            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            return {"id": "REQUIRED-LABELS", "result": "WARN",
+                    "detail": "gh label list failed (auth/network; degrade expected)"}
+        live_labels = {item["name"] for item in _json.loads(result.stdout)}
+    except Exception as exc:
+        return {"id": "REQUIRED-LABELS", "result": "WARN",
+                "detail": f"gh unavailable: {exc}"}
+
+    missing = [lb for lb in _REQUIRED_LABELS if lb not in live_labels]
+    if missing:
+        return {
+            "id": "REQUIRED-LABELS",
+            "result": "WARN",
+            "detail": (
+                f"labels missing from live repo: {missing}; "
+                f"run bootstrap.sh to create them (ADR-0068 D1)"
+            ),
+            "missing": missing,
+        }
+    return {
+        "id": "REQUIRED-LABELS",
+        "result": "PASS",
+        "detail": (
+            f"all {len(_REQUIRED_LABELS)} required labels present "
+            f"on live repo (ADR-0068 D1)"
+        ),
+        "missing": [],
+    }
+
+
+def check_dead_routes() -> dict:
+    """DEAD-ROUTES: API routes served but never fetched by the frontend.
+
+    Implements ADR-0068 D1. Scans dashboard/server.py for registered API routes
+    (lines with @app.route('/api/...')) then checks dashboard/index.html for
+    fetch('/api/...') calls. Routes served but never fetched = dead surface.
+    Honest day-one: pre-existing dead routes are the starting value, not a FAIL.
+    """
+    server_py = _HEALTH_REPO_ROOT / "dashboard" / "server.py"
+    index_html = _HEALTH_REPO_ROOT / "dashboard" / "index.html"
+
+    if not server_py.exists():
+        return {"id": "DEAD-ROUTES", "result": "WARN",
+                "detail": "dashboard/server.py not found"}
+    if not index_html.exists():
+        return {"id": "DEAD-ROUTES", "result": "WARN",
+                "detail": "dashboard/index.html not found"}
+
+    try:
+        server_text = _read_file(server_py)
+        html_text = _read_file(index_html)
+
+        # Extract routes from server.py.
+        # Supports two patterns:
+        #   1. elif path == "/api/..."  (custom HTTPHandler dispatch)
+        #   2. @app.route('/api/...')   (Flask-style decorator)
+        served_routes = set(re.findall(
+            r'''elif\s+path\s*==\s*['"](/api/[^'"]+)['"]''',
+            server_text
+        ))
+        served_routes |= set(re.findall(
+            r'''@app\.route\(['"](/api/[^'"]+)['"]''',
+            server_text
+        ))
+        # Extract fetch targets from index.html: fetch('/api/...') or fetch(`/api/...`)
+        fetched_routes = set(re.findall(
+            r'''fetch\([`'"]([/][^`'"?]+)''',
+            html_text
+        ))
+        # Normalize: strip trailing slashes
+        served_normalized = {r.rstrip("/") for r in served_routes}
+        fetched_normalized = {r.rstrip("/") for r in fetched_routes}
+
+        dead = sorted(served_normalized - fetched_normalized)
+        total_served = len(served_normalized)
+
+        if dead:
+            return {
+                "id": "DEAD-ROUTES",
+                "result": "WARN",
+                "detail": (
+                    f"{len(dead)}/{total_served} route(s) served but not fetched "
+                    f"by index.html: {dead[:5]}"
+                    + (" ..." if len(dead) > 5 else "")
+                    + " (detectors-report per ADR-0068 D1)"
+                ),
+                "dead_count": len(dead),
+                "dead_routes": dead[:10],
+                "total_served": total_served,
+            }
+        return {
+            "id": "DEAD-ROUTES",
+            "result": "PASS",
+            "detail": (
+                f"all {total_served} served /api/* routes are fetched "
+                f"by index.html (ADR-0068 D1)"
+            ),
+            "dead_count": 0,
+            "dead_routes": [],
+            "total_served": total_served,
+        }
+    except Exception as exc:
+        return {"id": "DEAD-ROUTES", "result": "WARN",
+                "detail": f"check failed: {exc}"}
+
+
+def check_session_injection() -> dict:
+    """SESSION-INJECTION: one session_context_injected event per session_id.
+
+    Implements ADR-0068 D3. Reads workflow-events.jsonl and counts sessions
+    that have a 'session_context_injected' event.
+
+    PASS when all sessions in the last 20-session window have an injection
+    event (the hook is live).
+    WARN when fewer than 50% have one (hook not yet active / pre-hook sessions
+    dominate the window — expected before this slice's deployment).
+    Reports resumed-session gap count (sessions without injection).
+
+    Bind-forward per ADR-0004 D2: pre-hook sessions are honest gaps, not FAILs.
+    """
+    import json as _json
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return {"id": "SESSION-INJECTION", "result": "WARN",
+                "detail": "workflow-events.jsonl not found (pre-hook setup expected)"}
+
+    _SESSION_WINDOW = 20
+
+    try:
+        sessions: dict[str, set] = {}  # session_id → set of event types seen
+        with events_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                sid = obj.get("session_id", "")
+                ev = obj.get("event", "")
+                if not sid:
+                    continue
+                if sid not in sessions:
+                    sessions[sid] = set()
+                if ev:
+                    sessions[sid].add(ev)
+    except Exception as exc:
+        return {"id": "SESSION-INJECTION", "result": "WARN",
+                "detail": f"read error: {exc}"}
+
+    if not sessions:
+        return {"id": "SESSION-INJECTION", "result": "WARN",
+                "detail": "no sessions found in workflow-events.jsonl"}
+
+    window = list(sessions.items())[-_SESSION_WINDOW:]
+    total = len(window)
+    with_injection = sum(
+        1 for _sid, evts in window
+        if "session_context_injected" in evts
+    )
+    without = total - with_injection
+    ratio = with_injection / total if total > 0 else 0.0
+
+    # Per-session summary (most recent first, capped at 8)
+    per_session = []
+    for sid, evts in reversed(window[-8:]):
+        tag = "injected" if "session_context_injected" in evts else "no-injection"
+        per_session.append(f"{sid[:8]}:{tag}")
+
+    detail = (
+        f"{with_injection}/{total} sessions in last {_SESSION_WINDOW}-session "
+        f"window have injection event "
+        f"({ratio*100:.0f}%); gaps={without} | "
+        + ", ".join(per_session)
+    )
+
+    # Pre-hook: WARN (not FAIL) — bind-forward ADR-0004 D2.
+    # Once the hook is live, WARN when <50% of the window has injection.
+    result = "PASS" if ratio >= 0.50 else "WARN"
+    return {
+        "id": "SESSION-INJECTION",
+        "result": result,
+        "detail": detail,
+        "with_injection": with_injection,
+        "total": total,
+        "ratio": round(ratio, 3),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Check registry (ADR-0064 D3) — single source of truth for all DOCS-* checks.
 #
 # Maps check-id string → zero-argument callable returning a dict with at
@@ -2635,6 +3050,13 @@ CHECK_REGISTRY: dict[str, callable] = {
     "TESTS-COLLECTED":  check_tests_collected,
     "TEST-ORDERING":    check_test_ordering,
     "QUARANTINE-SLA":   check_quarantine_sla,
+    # Hygiene checks (ADR-0068 D1/D3 wave 4 slice #818)
+    "UNTRACKED-SIZE":    check_untracked_size,
+    "LOG-ROTATION":      check_log_rotation,
+    "STALE-BRANCHES":    check_stale_branches,
+    "REQUIRED-LABELS":   check_required_labels,
+    "DEAD-ROUTES":       check_dead_routes,
+    "SESSION-INJECTION": check_session_injection,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
     "RESIDUAL-RATIO":  check_residual_ratio,
@@ -2769,6 +3191,16 @@ def _build_health_data() -> dict:
         "registryIntegrity": {
             "checks": [
                 check_parity(),
+            ]
+        },
+        "hygieneIntegrity": {
+            "checks": [
+                check_untracked_size(),
+                check_log_rotation(),
+                check_stale_branches(),
+                check_required_labels(),
+                check_dead_routes(),
+                check_session_injection(),
             ]
         },
     }

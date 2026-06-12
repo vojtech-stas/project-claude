@@ -905,6 +905,167 @@ def check_rule_coverage() -> dict:
     return {"id": "RULE-COVERAGE", "result": result, "detail": detail}
 
 
+# ---------------------------------------------------------------------------
+# Critic-health check (slice #779 / ADR-0059 D1 / ADR-0060 D4)
+# ---------------------------------------------------------------------------
+
+# Doubt-theater streak threshold: N consecutive first-round APPROVEs triggers amber badge.
+# Documented here per slice #779 acceptance-criterion and PRD #778 §5 open question.
+_DOUBT_THEATER_N = 10
+
+# Window: last N closed PRDs whose trails are scanned for critic verdicts.
+_CRITIC_HEALTH_PRD_WINDOW = 10
+
+
+def check_critic_health() -> dict:
+    """CRITIC-HEALTH: per-critic first-pass APPROVE rate + rounds histogram + doubt-theater streak.
+
+    Reuses the collector's existing gh-fetch/caching seam (get_trail + get_closed_prd_numbers)
+    to scan the last _CRITIC_HEALTH_PRD_WINDOW closed PRDs' comment trails.
+
+    Per-critic metrics:
+      - first_pass_approve_rate: fraction of final-APPROVE runs where round==1
+      - rounds_histogram: {1: N, 2: N, ...} — max_round for each reviewed PR
+      - doubt_theater_streak: consecutive first-round APPROVEs at the tail of the
+        chronological verdict list (amber >= _DOUBT_THEATER_N, never auto-acted on)
+
+    Pre-v2 verdicts (no CRITIC: field) → "unattributed" bucket.
+    Honest design: with no merged post-v2 PRs yet, the unattributed bucket will
+    hold all verdicts and named critics will show 0 verdicts — that is correct.
+
+    Returns a substrate-compatible check dict with id="CRITIC-HEALTH" and a
+    per-critic breakdown in the "critics" key for the dashboard card.
+    """
+    try:
+        # Lazy import to avoid circular deps (collector imports nothing from health)
+        _insert_dashboard_sys_path()
+        from collector import get_closed_prd_numbers, get_trail  # noqa: PLC0415
+        from collector import parse_critic_field  # noqa: PLC0415 (re-export)
+    except Exception as exc:
+        return {
+            "id": "CRITIC-HEALTH",
+            "result": "WARN",
+            "detail": f"collector import failed: {exc}",
+            "critics": {},
+        }
+
+    prd_numbers = get_closed_prd_numbers(_CRITIC_HEALTH_PRD_WINDOW)
+    if not prd_numbers:
+        return {
+            "id": "CRITIC-HEALTH",
+            "result": "WARN",
+            "detail": "no closed PRDs found; trail empty",
+            "critics": {},
+        }
+
+    # Collect all verdict records across the window.
+    # Each record: {"critic": str|None, "verdict": "APPROVE"|"BLOCK",
+    #               "round": int|None, "created_at": str}
+    all_verdicts: list[dict] = []
+    auth_dead = False
+
+    for prd_num in prd_numbers:
+        trail = get_trail(prd_num)
+        if trail.get("collector_status") == "auth_dead":
+            auth_dead = True
+            continue
+        for pr_trail in trail.get("prs", {}).values():
+            for v in pr_trail.get("verdicts", []):
+                all_verdicts.append(v)
+        # Also include PRD-level verdicts (prd-critic, adr-critic rounds)
+        for v in trail.get("prd_verdicts", []):
+            all_verdicts.append(v)
+
+    if not all_verdicts:
+        detail = (
+            f"0 verdicts across last {len(prd_numbers)} PRDs "
+            f"(auth_dead={auth_dead}); pre-v2 history fully unattributed — expected"
+        )
+        return {
+            "id": "CRITIC-HEALTH",
+            "result": "PASS",
+            "detail": detail,
+            "critics": {"unattributed": {"verdict_count": 0, "first_pass_approve_rate": None,
+                                          "rounds_histogram": {}, "doubt_theater_streak": 0}},
+        }
+
+    # Group verdicts by critic (None → "unattributed")
+    # Per-PR "runs": group by a (prd, pr) key to compute max-round per PR.
+    # We don't have that granularity in the flat list, so we approximate:
+    # treat each sequence of verdicts per (prd, pr) as one run.
+    # In the flat list we have them; just attribute each verdict individually.
+
+    from collections import defaultdict  # noqa: PLC0415
+    critic_verdicts: dict[str, list[dict]] = defaultdict(list)
+    for v in all_verdicts:
+        name = v.get("critic") or "unattributed"
+        critic_verdicts[name].append(v)
+
+    critics_out: dict[str, dict] = {}
+    for name, verdicts in sorted(critic_verdicts.items()):
+        total = len(verdicts)
+        # First-pass APPROVE rate: fraction where round==1 and verdict==APPROVE
+        r1_approves = sum(
+            1 for v in verdicts
+            if v.get("verdict") == "APPROVE" and v.get("round") == 1
+        )
+        # Final verdicts per run proxy: any APPROVE at any round
+        approves = sum(1 for v in verdicts if v.get("verdict") == "APPROVE")
+        first_pass_rate = round(r1_approves / total, 3) if total > 0 else None
+
+        # Rounds histogram: {round_num: count}
+        hist: dict[str, int] = {}
+        for v in verdicts:
+            r = v.get("round")
+            key = str(r) if r is not None else "unknown"
+            hist[key] = hist.get(key, 0) + 1
+
+        # Doubt-theater streak: consecutive first-round APPROVEs at tail
+        # (most recent last in the list, since they're in insertion order)
+        streak = 0
+        for v in reversed(verdicts):
+            if v.get("verdict") == "APPROVE" and v.get("round") == 1:
+                streak += 1
+            else:
+                break
+
+        critics_out[name] = {
+            "verdict_count": total,
+            "approve_count": approves,
+            "first_pass_approve_rate": first_pass_rate,
+            "rounds_histogram": hist,
+            "doubt_theater_streak": streak,
+            "doubt_theater_amber": streak >= _DOUBT_THEATER_N,
+        }
+
+    # Overall result: PASS unless auth_dead or data quality issues
+    result = "WARN" if auth_dead else "PASS"
+    total_verdicts = len(all_verdicts)
+    unattr = len(critic_verdicts.get("unattributed", []))
+    named = total_verdicts - unattr
+    detail = (
+        f"{total_verdicts} verdicts across last {len(prd_numbers)} PRDs "
+        f"({named} attributed, {unattr} unattributed); "
+        f"doubt-theater threshold N={_DOUBT_THEATER_N}"
+    )
+    if auth_dead:
+        detail += " | WARNING: some PRDs skipped (auth_dead)"
+
+    return {
+        "id": "CRITIC-HEALTH",
+        "result": result,
+        "detail": detail,
+        "critics": critics_out,
+    }
+
+
+def _insert_dashboard_sys_path() -> None:
+    """Ensure dashboard/ is on sys.path for sibling imports."""
+    dashboard_dir = str(Path(__file__).resolve().parent)
+    if dashboard_dir not in sys.path:
+        sys.path.insert(0, dashboard_dir)
+
+
 def _build_health_data() -> dict:
     """Build the full /api/health payload synchronously.
 
@@ -920,6 +1081,7 @@ def _build_health_data() -> dict:
                 check_hook_integrity(),
                 check_isolation_group(),
                 check_rule_coverage(),
+                check_critic_health(),
             ]
         },
     }

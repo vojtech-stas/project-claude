@@ -182,17 +182,54 @@ _VERDICT_RE = re.compile(
 )
 _VERDICT_FIELD_RE = re.compile(r'^VERDICT:\s*(APPROVE|BLOCK)\b', re.MULTILINE | re.IGNORECASE)
 _ROUND_FIELD_RE = re.compile(r'^ROUND:\s*(\d+)\b', re.MULTILINE)
+_CRITIC_FIELD_RE = re.compile(r'^CRITIC:\s*(\S+)', re.MULTILINE)
+
+
+def parse_critic_field(comment_body: str) -> str | None:
+    """Extract the CRITIC: <name> value from a fenced trailer block.
+
+    Searches all fenced blocks in the comment body; returns the first
+    CRITIC: value found, or None if absent (pre-v2 / unattributed verdict).
+
+    Tolerant of truncation: if a fenced block is truncated (no closing ```),
+    the regex still searches the partial block text.
+
+    Returns:
+        str  — the agent name, e.g. "reviewer", "prd-critic"
+        None — no CRITIC field found (caller treats as "unattributed")
+    """
+    # Try fenced blocks first (canonical location per ADR-0059 D1)
+    for block_m in _VERDICT_RE.finditer(comment_body):
+        block = block_m.group(1)
+        cm = _CRITIC_FIELD_RE.search(block)
+        if cm:
+            return cm.group(1).strip()
+    # Fallback: partial/truncated block — search from last ``` onward
+    last_fence = comment_body.rfind("```")
+    if last_fence != -1:
+        tail = comment_body[last_fence + 3:]
+        cm = _CRITIC_FIELD_RE.search(tail)
+        if cm:
+            return cm.group(1).strip()
+    # Bare CRITIC: line outside any fence (degraded format)
+    cm = _CRITIC_FIELD_RE.search(comment_body)
+    if cm:
+        return cm.group(1).strip()
+    return None
 
 
 def _parse_verdict_comment(body: str) -> dict | None:
-    """Extract VERDICT/ROUND from a reviewer comment body.
+    """Extract VERDICT/ROUND/CRITIC from a reviewer comment body.
 
-    Returns {"verdict": "APPROVE"|"BLOCK", "round": int|None, "round_inferred": bool}
+    Returns {"verdict": "APPROVE"|"BLOCK", "round": int|None,
+             "round_inferred": bool, "critic": str|None}
     or None if no VERDICT field found.
 
     Tolerant: accepts VERDICT in a fenced block OR bare in the comment body.
     Missing ROUND → None (caller infers from position).
+    Missing CRITIC → None (pre-v2 / unattributed; caller buckets as "unattributed").
     """
+    critic = parse_critic_field(body)
     # Try fenced blocks first (canonical trailer format)
     for block_m in _VERDICT_RE.finditer(body):
         block = block_m.group(1)
@@ -204,6 +241,7 @@ def _parse_verdict_comment(body: str) -> dict | None:
                 "verdict": verdict,
                 "round": int(rm.group(1)) if rm else None,
                 "round_inferred": rm is None,
+                "critic": critic,
             }
     # Fallback: bare VERDICT in body (e.g. older format)
     vm = _VERDICT_FIELD_RE.search(body)
@@ -214,6 +252,7 @@ def _parse_verdict_comment(body: str) -> dict | None:
             "verdict": verdict,
             "round": int(rm.group(1)) if rm else None,
             "round_inferred": rm is None,
+            "critic": critic,
         }
     return None
 

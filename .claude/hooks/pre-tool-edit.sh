@@ -39,7 +39,7 @@ STDIN_RAW=$(cat)
 _BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
 mkdir -p "$_BEACON_DIR" 2>/dev/null || true
 printf '{"hook":"pre-tool-edit","status":"attempt","ts":"%s"}\n' \
-  "$(date -Iseconds 2>/dev/null)" \
+  "$(date -u -Iseconds 2>/dev/null)" \
   >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 REASON='Main-agent write to tracked file — CLAUDE.md rule #10 says flow through PR pipeline. Confirm if this is an I3 trivial-lane edit (≤10 LoC, `trivial` label, branch `hotfix/<issue#>-…`); cancel and use /to-prd or /ship otherwise.'
@@ -103,7 +103,7 @@ if [ "$_PY_OK" != "1" ]; then
   # ADR-0057 D1b: parser failure → ERROR beacon with session_id, then fail-open.
   _ERR_MSG=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','parse-failed'))" 2>/dev/null || echo "parse-failed")
   printf '{"hook":"pre-tool-edit","status":"ERROR","ts":"%s","session_id":"%s","reason":"%s"}\n' \
-    "$(date -Iseconds 2>/dev/null)" "$_SID" "$_ERR_MSG" \
+    "$(date -u -Iseconds 2>/dev/null)" "$_SID" "$_ERR_MSG" \
     >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
   exit 0
 fi

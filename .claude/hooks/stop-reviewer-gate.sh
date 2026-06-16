@@ -4,6 +4,8 @@
 # Soft-degrades if jq/gh missing; respects STOP_GATE_BYPASS=1 override; skips subagent context.
 # ADR-0057 D2 retrofit: reads stdin, honors stop_hook_active immediately; on gh/infra failure
 # allows the stop AND emits ERROR beacon (fail-open + fail-loud).
+# #846: added emit_ok_beacon at every non-error success terminal path so HOOK-INTEGRITY
+# no longer false-flags stop-reviewer-gate as dead (was: 0/N ratio).
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
@@ -20,7 +22,7 @@ _SRG_STDIN=$(cat)
 _BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
 mkdir -p "$_BEACON_DIR" 2>/dev/null || true
 printf '{"hook":"stop-reviewer-gate","status":"attempt","ts":"%s"}\n' \
-  "$(date -Iseconds 2>/dev/null)" \
+  "$(date -u -Iseconds 2>/dev/null)" \
   >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 # Step 3: extract stop_hook_active + session_id from stdin (ADR-0057 D2 — loop guard first).
@@ -31,30 +33,43 @@ _SRG_SID=$(printf '%s' "$_SRG_STDIN" | python3 -c \
   "import sys,json; print(json.load(sys.stdin).get('session_id',''))" \
   2>/dev/null || echo "")
 
-if [ "$_SRG_ACTIVE" = "true" ]; then
-  # ADR-0057 D2: stop_hook_active → exit 0 immediately (loop guard; no blocking allowed).
-  exit 0
-fi
+# --- Beacon helpers (defined before first call site) ---
 
-# Skip subagent context — reviewer subagent's own Stop must not trigger loop.
-if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
+# emit_ok_beacon: emit ok beacon at every non-error success terminal path (#846 defect 2).
+# Fixes HOOK-INTEGRITY false-positive (was emitting attempt but never ok).
+emit_ok_beacon() {
+  printf '{"hook":"stop-reviewer-gate","status":"ok","ts":"%s","session_id":"%s"}\n' \
+    "$(date -u -Iseconds 2>/dev/null)" "$_SRG_SID" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
   exit 0
-fi
-
-# Bypass override per ADR-0029 D2.
-if [ "${STOP_GATE_BYPASS:-}" = "1" ]; then
-  echo "stop-reviewer-gate: bypass via STOP_GATE_BYPASS=1" >&2
-  exit 0
-fi
+}
 
 # emit_error_beacon: allow the stop + emit ERROR beacon (ADR-0057 D1b/D2 fail-open).
 emit_error_beacon() {
   local reason="$1"
   printf '{"hook":"stop-reviewer-gate","status":"ERROR","ts":"%s","session_id":"%s","reason":"%s"}\n' \
-    "$(date -Iseconds 2>/dev/null)" "$_SRG_SID" "$reason" \
+    "$(date -u -Iseconds 2>/dev/null)" "$_SRG_SID" "$reason" \
     >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
   exit 0
 }
+
+# --- Guard paths ---
+
+if [ "$_SRG_ACTIVE" = "true" ]; then
+  # ADR-0057 D2: stop_hook_active → exit 0 immediately (loop guard; no blocking allowed).
+  emit_ok_beacon
+fi
+
+# Skip subagent context — reviewer subagent's own Stop must not trigger loop.
+if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
+  emit_ok_beacon
+fi
+
+# Bypass override per ADR-0029 D2.
+if [ "${STOP_GATE_BYPASS:-}" = "1" ]; then
+  echo "stop-reviewer-gate: bypass via STOP_GATE_BYPASS=1" >&2
+  emit_ok_beacon
+fi
 
 # Soft-degrade if gh or jq missing (per ADR-0029 D3) — fail-open + ERROR beacon.
 if ! command -v gh >/dev/null 2>&1; then
@@ -68,7 +83,7 @@ fi
 PRS=$(gh pr list --author @me --state open --json number 2>/dev/null | jq -r '.[].number' 2>/dev/null) || \
   emit_error_beacon "gh-pr-list-failed"
 if [ -z "$PRS" ]; then
-  exit 0  # no in-flight PRs — nothing to check
+  emit_ok_beacon  # no in-flight PRs — nothing to check
 fi
 
 # For each PR, check for reviewer subagent VERDICT: APPROVE comment.
@@ -86,4 +101,4 @@ if [ -n "$UNSIGNED" ]; then
   exit 2
 fi
 
-exit 0
+emit_ok_beacon  # all in-flight PRs have reviewer APPROVE

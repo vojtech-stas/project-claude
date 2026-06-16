@@ -21,7 +21,7 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
-printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+printf '{"hook":"user-prompt-submit","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 NUDGE='User prompt matches feature-request pattern. If the design isn'\''t settled yet, consider /grill-me before /ship.'
 
@@ -43,7 +43,7 @@ if [ -n "$FIRST_TOKEN" ] && [ "${FIRST_TOKEN:0:1}" = "/" ]; then
   SKILL_CMD="${FIRST_TOKEN:1}"  # strip leading /
   if [ -n "$SKILL_CMD" ]; then
     jq -cn \
-      --arg ts "$(date -Iseconds)" \
+      --arg ts "$(date -u -Iseconds)" \
       --arg sid "$SID" \
       --arg sk "$SKILL_CMD" \
       '{ts: $ts, session_id: $sid, event: "skill_invoke", skill: $sk, source: "user_typed"}' \

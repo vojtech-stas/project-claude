@@ -67,7 +67,7 @@ if [ -n "${WORKFLOW_LOG_DIR:-}" ]; then
   mkdir -p "$LOG_DIR" 2>/dev/null || true
 fi
 
-printf '{"hook":"log-event","ts":"%s"}\n' "$(date -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+printf '{"hook":"log-event","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 TARGET_FILE="${LOGFILE:-workflow-events.jsonl}"
 printf '%s\n' "$LINE" >> "$LOG_DIR/$TARGET_FILE" 2>/dev/null || true

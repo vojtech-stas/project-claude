@@ -64,7 +64,7 @@ mkdir -p "$_BEACON_DIR" 2>/dev/null || true
 
 # Write attempt beacon (pure bash printf — no jq, no python).
 printf '{"hook":"%s","status":"attempt","ts":"%s"}\n' \
-  "$EVENT_TYPE" "$(date -Iseconds 2>/dev/null)" \
+  "$EVENT_TYPE" "$(date -u -Iseconds 2>/dev/null)" \
   >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 # Steps 3-5: parse, validate, route, write, beacon result — via python3.

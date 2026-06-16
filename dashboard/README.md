@@ -53,6 +53,41 @@ Then open `http://localhost:8765` in any modern browser.
     - **CAPTURE-SHAPE** — `root-cause`-labeled issues: 3-heading regex (`**Symptom:**` / `**Root cause:**` / `**Proposed:**`) conformance fraction + named non-conformers; evidence-presence sub-metric (fenced/quoted block in Symptom section); unlabeled-candidate counter (3-section `captured` issues missing the label — surfaced only, never auto-relabeled). Per ADR-0063 D1/D2/D3.
     - **GREEN-MAIN** — last `main_green` event sha + lag (`git rev-list <sha>..origin/main --count`) + age since event timestamp; red on lag > 0 or stale > 24h. Per ADR-0062 D3.
     - **SILENT-DRIFT** — PRDs whose body changed post-first-dispatch without a matching `## AMENDMENT <n>` comment (target 0); data from GitHub issue edit history API with graceful WARN fallback when the API is unavailable/rate-limited; PRDs predating slice #799's merge are grandfathered per ADR-0004 D2. Registry key: `SILENT-DRIFT`. Per ADR-0066 D3 / slice #799. **API reliability note:** the GitHub issues timeline API (`/issues/:number/timeline`) requires `token` scope and is subject to rate limiting; `WARN` is the expected result when the API is unavailable or returns an empty history. During the bind-forward ramp-up period (first weeks after slice #799 ships) most PRDs will show no edit history, so `WARN` is normal — `FAIL` only triggers once a body-edit-without-amendment is positively detected.
+  - **Regression-memory card** — test suite health + quarantine + eval rows (wave 4, ADR-0067; slices #822, #825, #828):
+    - **TESTS-COLLECTED** — count of test items collected in `tests/`; prefers pytest, falls back to stdlib unittest; PASS when count > 0; FAIL when suite exists but is empty; WARN when `tests/` not present. Per ADR-0067 D1.
+    - **TEST-ORDERING** — % of `fix/*` PRs (post-activation) where a test-touching commit precedes the fix commit (bias isolation per ADR-0067 D2); grandfathers PRs predating slice #816 (R-PROVE activation); WARN on no post-activation fix PRs yet. Registry key: `TEST-ORDERING`.
+    - **QUARANTINE-SLA** — quarantine register size + oldest-entry age from `tests/quarantine.txt`; FAIL when any entry is >30 days old (SLA breach); WARN when entries exist within SLA; PASS when empty. Entries carry `[quarantined: YYYY-MM-DD]` date tags for age tracking. Per ADR-0067 D4.
+    - **EVAL-REVIEWER** — last eval pass rate for `reviewer` critic from `tests/evals/results.json`; WARN on no-run (honest no-baseline bucket); WARN when stale >14 days or pass rate <1.0; PASS when rate == 1.0 and fresh. Per ADR-0067 D5.
+    - **EVAL-PRD-CRITIC** — same as EVAL-REVIEWER but for `prd-critic`. Per ADR-0067 D5.
+    - **EVAL-SLICER-CRITIC** — same as EVAL-REVIEWER but for `slicer-critic`. Per ADR-0067 D5.
+  - **Hygiene + session-start card** — workspace hygiene and session-injection rows (wave 4, ADR-0068; slice #826):
+    - **UNTRACKED-SIZE** — count + total size of untracked files under tracked dirs (e.g. `qa-proof/`); WARN when count exceeds threshold (honest day-one accumulation is the starting value per ADR-0004 D2). Per ADR-0068 D1.
+    - **LOG-ROTATION** — `workflow-events.jsonl` size vs 5 MB rotation cap; WARN when >80% of cap (proactive notice); FAIL when at or above cap with no rotation archive (rotation is broken). Per ADR-0068 D1.
+    - **STALE-BRANCHES** — remote branches that are merged or >14 days inactive without an open PR; advisory only — detectors report, humans act; graceful WARN on network failure. Per ADR-0068 D1.
+    - **REQUIRED-LABELS** — labels declared in `bootstrap.sh` vs live repo; WARN on any missing label (bootstrap.sh drift indicator). Per ADR-0068 D1.
+    - **DEAD-ROUTES** — API routes served by `dashboard/server.py` but never fetched by `dashboard/index.html`; honest day-one pre-existing dead routes are the starting value. Per ADR-0068 D1.
+    - **SESSION-INJECTION** — one `session_context_injected` event per `session_id` in the last 20-session window; PASS when all sessions have an injection event; WARN when <50% (hook not yet active or pre-hook sessions dominate). Per ADR-0068 D3.
+    - **R-SENSITIVE-DETECTOR** — enforcement-path merged PRs (post-bootstrap) without a `human-ack` signal (label or body keyword); always returns WARN (historical tally — blocking is enforced at review time by R-SENSITIVE in the reviewer rubric); activated at PRD #813 closing slice per ADR-0064 D4.
+  - **Fleet-economics card** — effort, rerun, tier, and DORA rows (wave 4, ADR-0069; slices #827, #829):
+    - **EFFORT-BUDGET** — tool-calls-per-dispatch by effort class (`trivial`, `standard`, `closing`); PASS when ≥90% of classified dispatches are within budget (2x class cap); WARN on unclassified-only history; FAIL when >10% exceed 2x budget. Pre-ADR-0069 dispatches go in an honest unclassified bucket. Per ADR-0069 D1.
+    - **REASSURANCE-RERUN** — count of consecutive identical bash commands with no Edit/Write between them per session; trend target is zero; always WARN (advisory measurement, not a gate). Per ADR-0069 D2.
+    - **FRONTMATTER-COVERAGE** — % of `.claude/agents/*.md` files with explicit `model:` frontmatter; PASS when 100%; FAIL on any missing. Per ADR-0069 D3 / ADR-0027 D1.
+    - **DECLARED-PARITY** — declared `model:` frontmatter vs observed `model` field in `agent_start` events post-baseline (slice #819 merge); PASS when all post-baseline events match; WARN on no post-baseline events yet (honest pre-baseline bucket). Per ADR-0069 D3.
+    - **DORA-PANEL** — verifies the DORA instability panel discovery function returns a valid payload with real PR ids or an honest empty-window result; WARN on gh CLI unavailability; FAIL on discovery error. Per ADR-0069 D4.
+
+## API reference
+
+| Endpoint | Description |
+|---|---|
+| `/api/pipeline` | Pipeline topology (nodes + edges) for the Architecture tab |
+| `/api/health` | All health check results (TTL-cached); powers the Health tab |
+| `/api/runs` | Workflow-event log sessions (events.py); powers the Live tab lane B |
+| `/api/live-progress` | Latest open PRD per-slice stage states (collector.py); Lane A |
+| `/api/live-poll` | Incremental event poll with opaque cursor; Lane B |
+| `/api/workitems` | GitHub Issues fetch for the Architecture tab |
+| `/api/file` | Serve repo file contents (path-traversal-protected) |
+| `/api/meta` | Server sha + session handshake (banner freshness gate per slice #773) |
+| `/api/dora` | DORA-style instability metrics — merges/day, lead time, change-failure rate, MTTR; computed from real merged PR ids over a configurable window (default 7d, override with `?window=N`); honest empty-window when no PRs found; per ADR-0069 D4 |
 
 ## Configuration
 

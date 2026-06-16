@@ -1080,6 +1080,11 @@
     <div class="card-title">registry integrity (PARITY: registry == skill-declared == CI-consumed)</div>
     <div id="registry-integrity-grid"><div class="loading">Loading...</div></div>
   </div>
+  <!-- hygiene-integrity card (slice #826 / ADR-0068 D1/D3) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">hygiene + session-start (UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS, DEAD-ROUTES, SESSION-INJECTION)</div>
+    <div id="hygiene-integrity-grid"><div class="loading">Loading...</div></div>
+  </div>
   <!-- economics-integrity card (slice #819/#820 / ADR-0069 D1/D2/D3/D4) -->
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">economics integrity (EFFORT-BUDGET, REASSURANCE-RERUN, FRONTMATTER-COVERAGE, DECLARED-PARITY, DORA-PANEL)</div>
@@ -1951,6 +1956,7 @@ async function loadHealth() {
     renderCriticHealth(data.substrateMeta);
     renderVerificationIntegrity(data.verificationIntegrity);
     renderRegistryIntegrity(data.registryIntegrity);
+    renderHygieneIntegrity(data.hygieneIntegrity);
     renderEconomicsIntegrity(data.economicsIntegrity);
     renderCascade(data.cascadeFinder);
   } catch(e) {
@@ -2174,6 +2180,33 @@ function renderRegistryIntegrity(ri) {
   }
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
   for (const c of ri.checks) {
+    const det = c.detail || '';
+    const detSnippet = det.length > 0
+      ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
+      : '';
+    html += `<tr>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
+}
+
+/**
+ * Render hygiene-integrity card (slice #826 / ADR-0068 D1/D3).
+ * Shows UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS,
+ * DEAD-ROUTES, SESSION-INJECTION, R-SENSITIVE-DETECTOR rows.
+ */
+function renderHygieneIntegrity(hi) {
+  const grid = document.getElementById('hygiene-integrity-grid');
+  if (!grid) return;
+  if (!hi || !hi.checks || !hi.checks.length) {
+    grid.innerHTML = '<span style="color:var(--muted)">No hygiene-integrity data</span>';
+    return;
+  }
+  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  for (const c of hi.checks) {
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')

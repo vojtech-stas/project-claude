@@ -1085,16 +1085,6 @@
     <div class="card-title">hygiene + session-start (UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS, DEAD-ROUTES, SESSION-INJECTION)</div>
     <div id="hygiene-integrity-grid"><div class="loading">Loading...</div></div>
   </div>
-  <!-- economics-integrity card (slice #819/#820 / ADR-0069 D1/D2/D3/D4) -->
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">economics integrity (EFFORT-BUDGET, REASSURANCE-RERUN, FRONTMATTER-COVERAGE, DECLARED-PARITY, DORA-PANEL)</div>
-    <div id="economics-integrity-grid"><div class="loading">Loading...</div></div>
-  </div>
-  <!-- DORA instability panel (slice #820 / ADR-0069 D4) -->
-  <div class="card" style="margin-bottom:16px;">
-    <div class="card-title">DORA instability panel (merges/day, lead time, change-failure rate, MTTR)</div>
-    <div id="dora-panel"><div class="loading">Loading...</div></div>
-  </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
@@ -1957,110 +1947,10 @@ async function loadHealth() {
     renderVerificationIntegrity(data.verificationIntegrity);
     renderRegistryIntegrity(data.registryIntegrity);
     renderHygieneIntegrity(data.hygieneIntegrity);
-    renderEconomicsIntegrity(data.economicsIntegrity);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
   }
-  // DORA panel loads from its own endpoint (ADR-0069 D4) independently of health cache.
-  loadDoraPanel();
-}
-
-/**
- * Load and render the DORA instability panel (slice #820 / ADR-0069 D4).
- * Fetches /api/dora?window=7 and renders merges/day, lead time, CFR, MTTR.
- * Every cell names its real data source (PR/issue ids); empty windows render honestly.
- */
-async function loadDoraPanel() {
-  const panel = document.getElementById('dora-panel');
-  if (!panel) return;
-  try {
-    const r = await fetch('/api/dora?window=7');
-    const d = await r.json();
-    renderDoraPanel(d);
-  } catch(e) {
-    panel.innerHTML = `<span style="color:var(--fail)">DORA load error: ${escHtml(e.message)}</span>`;
-  }
-}
-
-function renderDoraPanel(d) {
-  const panel = document.getElementById('dora-panel');
-  if (!panel) return;
-
-  if (d.error) {
-    panel.innerHTML = `<span style="color:var(--warn)">DORA data unavailable: ${escHtml(d.error)}</span>`;
-    return;
-  }
-
-  const total = d.total_merged ?? 0;
-  const mpd = d.merges_per_day ?? 0;
-  const cfr = d.cfr ?? 0;
-  const lead = d.lead_time_avg_h;
-  const mttr = d.mttr_avg_h;
-  const window_days = d.window_days ?? 7;
-  const window_start = d.window_start ?? '';
-  const sampleIds = d.sample_pr_ids || [];
-  const failurePrs = d.failure_pr_ids || [];
-  const dataSource = d.data_source || '';
-
-  // Metric badge colors: CFR > 20% = fail; > 10% = warn; else pass
-  function cfrColor(v) {
-    if (v > 0.20) return 'var(--fail)';
-    if (v > 0.10) return 'var(--warn)';
-    return 'var(--green)';
-  }
-
-  let html = `<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">`;
-  html += `window: last ${window_days}d (from ${escHtml(window_start.slice(0,10))}); `;
-  html += `data source: ${escHtml(dataSource.slice(0,100))}`;
-  html += `</div>`;
-
-  if (total === 0) {
-    html += `<div style="color:var(--muted);font-size:11px;">`;
-    html += `honest empty window: 0 merged PRs in last ${window_days} days. `;
-    html += `Metrics will appear once PRs merge within the window.</div>`;
-    panel.innerHTML = html;
-    return;
-  }
-
-  html += `<table><tr><th>Metric</th><th>Value</th><th>Data source (real ids)</th></tr>`;
-
-  // merges/day
-  html += `<tr>`;
-  html += `<td>merges/day</td>`;
-  html += `<td style="font-weight:bold;">${mpd}</td>`;
-  html += `<td style="color:var(--muted);font-size:10px;">${total} PRs in ${window_days}d window`;
-  if (sampleIds.length) html += `; PR ids: #${sampleIds.slice(0,3).join(', #')}`;
-  html += `</td></tr>`;
-
-  // lead time
-  const leadStr = lead !== null && lead !== undefined ? `${lead}h` : 'N/A (no slice issues in window)';
-  html += `<tr>`;
-  html += `<td>avg lead time<br><span style="font-size:9px;color:var(--muted)">slice open→merge</span></td>`;
-  html += `<td style="font-weight:bold;">${escHtml(leadStr)}</td>`;
-  html += `<td style="color:var(--muted);font-size:10px;">${d.lead_time_samples ?? 0} slice issues closed in window; `;
-  html += `gh issue list --label slice --state closed</td></tr>`;
-
-  // change-failure rate
-  const cfrPct = (cfr * 100).toFixed(1) + '%';
-  html += `<tr>`;
-  html += `<td>change-failure rate<br><span style="font-size:9px;color:var(--muted)">(reverts+hotfix+needs-human)/merged</span></td>`;
-  html += `<td style="font-weight:bold;color:${cfrColor(cfr)};">${cfrPct}</td>`;
-  html += `<td style="color:var(--muted);font-size:10px;">${d.failure_count ?? 0} failures`;
-  if (failurePrs.length) html += ` (PR ids: #${failurePrs.slice(0,4).join(', #')})`;
-  html += `; reverts=${escHtml(String(d.revert_prs?.length??0))}, hotfix=${escHtml(String(d.hotfix_prs?.length??0))}, needs-human=${escHtml(String(d.needs_human_prs?.length??0))}`;
-  html += `</td></tr>`;
-
-  // MTTR
-  const mttrStr = mttr !== null && mttr !== undefined ? `${mttr}h` : 'N/A (no root-cause issues closed in window)';
-  html += `<tr>`;
-  html += `<td>MTTR<br><span style="font-size:9px;color:var(--muted)">capture-opened→fix-merged</span></td>`;
-  html += `<td style="font-weight:bold;">${escHtml(mttrStr)}</td>`;
-  html += `<td style="color:var(--muted);font-size:10px;">${d.mttr_samples ?? 0} root-cause issues closed in window; `;
-  html += `gh issue list --label captured,root-cause --state closed</td></tr>`;
-
-  html += `</table>`;
-  panel.innerHTML = html;
 }
 
 /**
@@ -2207,32 +2097,6 @@ function renderHygieneIntegrity(hi) {
   }
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
   for (const c of hi.checks) {
-    const det = c.detail || '';
-    const detSnippet = det.length > 0
-      ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
-      : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
-  }
-  html += '</table>';
-  grid.innerHTML = html;
-}
-
-/**
- * Render economics-integrity card (slice #819 / ADR-0069 D1/D2).
- * Shows EFFORT-BUDGET and REASSURANCE-RERUN rows.
- */
-function renderEconomicsIntegrity(ei) {
-  const grid = document.getElementById('economics-integrity-grid');
-  if (!grid) return;
-  if (!ei || !ei.checks || !ei.checks.length) {
-    grid.innerHTML = '<span style="color:var(--muted)">No economics-integrity data</span>';
-    return;
-  }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
-  for (const c of ei.checks) {
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')

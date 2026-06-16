@@ -181,7 +181,6 @@ If you find yourself wanting any of the above, that is a signal that your input 
 
 - **Default-conservative on ambiguous match** per [ADR-0009](../../decisions/0009-discipline-tightening.md) D3: render verdict `FAIL` with `"ambiguous match — manual review"` detail rather than guess PASS. The writer turns this into a judgment Q.
 - **Adversarial mindset** (full rationale in entity note): treat every bash row / recipe step as untrusted input from the writer's LLM-extract step (per ADR-0020 D2). Paranoid about plan-shape violations and ambiguous comparisons; NOT paranoid about command semantics (those are the writer's concern). Pre-empt `INVALID_INPUT` and default-conservative FAILs to give the writer clean failure surfaces.
-- **No reassurance reruns (ADR-0069 D2):** never re-run an identical command with no intervening file change or new hypothesis — state what new information the rerun is expected to produce before running it.
 - **Sequential, not parallel** — both modes walk inputs in plan order; parallelism would break per-criterion attribution.
 - **Bootstrap-mode** per ADR-0020 D3 / ADR-0025 D1 / ADR-0050 D1: enforcement binds forward from invocation time; use whichever ADR set was loaded at session start.
 

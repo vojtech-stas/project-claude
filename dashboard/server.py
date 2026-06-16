@@ -7,10 +7,8 @@ Serves: GET /               -> dashboard/index.html
         GET /api/pipeline     -> JSON pipeline spec (SPEC v2 from pipeline_spec.py)
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
-        GET /api/runs?n=N     -> last-N run metadata (no events) grouped by session_id
-        GET /api/runs?before=<session_id> -> older runs cursor (metadata-only)
-        GET /api/runs?session=<id> -> one session's full events as {run:{...events:[]}}
-        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache)
+        GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
+        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache); data available via /api/status open_work
         GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
         GET /api/live-poll?cursor=N -> JSON {cursor, events[], reset} — byte-cursor incremental read (Lane B)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
@@ -119,6 +117,199 @@ def _current_head_sha() -> str:
 
 _SERVER_SHA: str = _capture_startup_sha()
 _SERVER_STARTED_AT: str = datetime.now(timezone.utc).isoformat()
+
+# ---------------------------------------------------------------------------
+# /api/status — aggregated liveness snapshot (slice #859)
+# ---------------------------------------------------------------------------
+
+def _build_status() -> dict:
+    """Build the /api/status payload synchronously.
+
+    Returns real aggregated liveness; honest nulls allowed for fields that
+    depend on unavailable data (no fixtures, no mock data).
+
+    Fields:
+      head_sha, short_sha, branch   — git HEAD at call time
+      server_sha, stale             — server startup identity (mirrors /api/meta)
+      hooks_live                    — {alive, newest_beacon_ts, age_minutes}
+      last_event                    — {ts, age_minutes} from workflow-events.jsonl
+      main_green                    — {sha, lag, age_hours} from GREEN-MAIN check
+      health_summary                — {pass, warn, fail} counts across all checks
+      open_work                     — {prs, slices, captured, backlog} open counts
+    """
+    import json as _json
+
+    # --- git HEAD ---
+    head_sha = ""
+    short_sha = ""
+    branch = ""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=5,
+        )
+        head_sha = r.stdout.strip() if r.returncode == 0 else ""
+        short_sha = head_sha[:7] if head_sha else ""
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=5,
+        )
+        branch = r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        pass
+
+    # --- server identity (mirrors /api/meta) ---
+    current_sha = head_sha
+    stale = bool(_SERVER_SHA and current_sha and current_sha != _SERVER_SHA)
+
+    # --- hooks_live: newest beacon in hook-fires.jsonl ---
+    fires_log = REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    hooks_live = {"alive": False, "newest_beacon_ts": None, "age_minutes": None}
+    if fires_log.exists():
+        beacon_ts: float = 0.0
+        newest_ts_str: str = ""
+        try:
+            with fires_log.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    ts_str = obj.get("ts", "")
+                    if ts_str:
+                        try:
+                            candidate = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            ).timestamp()
+                            if candidate > beacon_ts:
+                                beacon_ts = candidate
+                                newest_ts_str = ts_str
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        if beacon_ts > 0.0:
+            age_min = round((time.time() - beacon_ts) / 60.0, 1)
+            alive = age_min < 60.0  # mirrors _HOOK_LIVENESS_DARK_MINUTES
+            hooks_live = {
+                "alive": alive,
+                "newest_beacon_ts": newest_ts_str,
+                "age_minutes": age_min,
+            }
+
+    # --- last_event: newest entry in workflow-events.jsonl ---
+    events_log = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    last_event = {"ts": None, "age_minutes": None}
+    if events_log.exists():
+        newest_event_ts: float = 0.0
+        newest_event_str: str = ""
+        try:
+            with events_log.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    ts_str = obj.get("ts", "")
+                    if ts_str:
+                        try:
+                            candidate = datetime.fromisoformat(
+                                ts_str.replace("Z", "+00:00")
+                            ).timestamp()
+                            if candidate > newest_event_ts:
+                                newest_event_ts = candidate
+                                newest_event_str = ts_str
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        if newest_event_ts > 0.0:
+            age_min = round((time.time() - newest_event_ts) / 60.0, 1)
+            last_event = {"ts": newest_event_str, "age_minutes": age_min}
+
+    # --- main_green: reuse GREEN-MAIN check from health.py ---
+    from health import check_green_main as _check_green_main
+    gm = _check_green_main()
+    main_green = {
+        "sha": gm.get("sha", None),
+        "lag": gm.get("lag", None),
+        "age_hours": gm.get("age_hours", None),
+    }
+
+    # --- health_summary: count PASS/WARN/FAIL from cached health payload ---
+    # Use serve_health() which is TTL-cached; avoids redundant computation.
+    health_data, _ = _serve_health_cached()
+    pass_count = 0
+    warn_count = 0
+    fail_count = 0
+    for group_key, group_val in health_data.items():
+        if not isinstance(group_val, dict):
+            continue
+        checks_list = group_val.get("checks", [])
+        if isinstance(checks_list, list):
+            for chk in checks_list:
+                result = chk.get("result", "")
+                if result == "PASS":
+                    pass_count += 1
+                elif result == "WARN":
+                    warn_count += 1
+                elif result == "FAIL":
+                    fail_count += 1
+        # Also handle nested groups (auditMeta has sub-groups)
+        for sub_key, sub_val in group_val.items():
+            if sub_key == "checks":
+                continue
+            if isinstance(sub_val, dict):
+                sub_checks = sub_val.get("checks", [])
+                if isinstance(sub_checks, list):
+                    for chk in sub_checks:
+                        result = chk.get("result", "")
+                        if result == "PASS":
+                            pass_count += 1
+                        elif result == "WARN":
+                            warn_count += 1
+                        elif result == "FAIL":
+                            fail_count += 1
+    health_summary = {"pass": pass_count, "warn": warn_count, "fail": fail_count}
+
+    # --- open_work: counts from fetch_workitems() (30s cached) ---
+    wi = fetch_workitems()
+    # Count only OPEN items for prs/slices/captured/backlog
+    open_prs = sum(1 for p in wi.get("prs", []) if p.get("state", "").upper() == "OPEN")
+    open_slices = sum(
+        1 for s in wi.get("slices", []) if s.get("state", "").upper() == "OPEN"
+    )
+    open_captured = len(wi.get("captures", []))  # already filtered --state open
+    open_backlog = len(wi.get("backlog", []))    # already filtered --state open
+    open_work = {
+        "prs": open_prs,
+        "slices": open_slices,
+        "captured": open_captured,
+        "backlog": open_backlog,
+    }
+
+    return {
+        "head_sha": head_sha,
+        "short_sha": short_sha,
+        "branch": branch,
+        "server_sha": _SERVER_SHA,
+        "stale": stale,
+        "hooks_live": hooks_live,
+        "last_event": last_event,
+        "main_green": main_green,
+        "health_summary": health_summary,
+        "open_work": open_work,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Known critics (explicit allow-list per implementer note 1).
@@ -252,8 +443,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             data, _ = _serve_health_cached()
             self._send_json(data)
 
-        elif path == "/api/workitems":
-            self._send_json(fetch_workitems())
+        elif path == "/api/status":
+            # GET /api/status — aggregated liveness snapshot (slice #859).
+            # Returns real-time aggregated state: git identity, hooks liveness,
+            # last event age, main_green health, health summary counts, open-work
+            # counts. Reuses health.py TTL cache + workitems 30s cache.
+            # DEFENSIVE: try/except so a partial failure returns best-effort data.
+            try:
+                self._send_json(_build_status())
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, 500)
 
         elif path == "/api/live-progress":
             # GET /api/live-progress — Lane A run-progress for most recent open PRD.
@@ -293,9 +492,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             t.start()
             self._send_json({"status": "computing"})
-
-        elif path == "/api/runs":
-            self._send_json(self._serve_runs(query))
 
         elif path == "/api/live-poll":
             # GET /api/live-poll?cursor=<N>

@@ -323,31 +323,29 @@ gh pr diff <PR> --patch | grep -E '^\+[0-9]+\.\s+\*\*.*rule #[0-9]+' | grep -v '
 
 **Rationale:** Prose-only rules decay to near-zero compliance on this repo's own measured evidence (ADR-0056 Context: 0–17% prose-rule compliance vs 97.5% output-contract compliance). A rule with no enforcement mechanism is a wish, not a rule. The `(advisory)` tag is the opt-out: it declares "this is genuinely advisory" rather than silently leaving the rule uncheckered. Per [ADR-0056](../../decisions/0056-no-rule-without-a-check.md) D1 + CLAUDE.md rule #23. Exemption: existing rules grandfathered by bootstrap-mode (ADR-0004 D2); R-RULE-CHECK binds forward from the merge of its ship slice.
 
-### R-SENSITIVE — enforcement-path PRs require human acknowledgment
+### R-SENSITIVE — enforcement-path changes (advisory, single-branch interim)
 
-**ACTIVE — activated at PRD #813 closing slice per ADR-0064 D4. PRs touching the declared enforcement-path set require human ack before APPROVE; BLOCK without it.**
+**ADVISORY — not a blocking gate. Per [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D4, the per-PR human-ack tripwire (ADR-0064 D4) is retired. The human gate moves to promotion-time when the two-tier develop/main topology is wired; in the current single-branch interim it is dormant. Do NOT BLOCK on R-SENSITIVE. Surface as a note only.**
 
-**Mechanic:** Fires ONLY when the PR touches at least one enforcement-layer path:
+**Mechanic (advisory detection only):** When the PR touches at least one enforcement-layer path, emit an advisory note — do not block, do not require any label or body keyword.
+
+Enforcement-layer paths (for detection/reporting):
 - `.github/workflows/**`
 - `.claude/settings.json`
 - `.claude/hooks/**`
 - `tools/ci-checks.sh`
 - `.githooks/**`
+- `.claude/agents/*-critic.md`
 
-**Ack signals:** a PR is acknowledged if (a) its labels include `human-ack`, OR (b) its body contains the literal string `human-ack`.
-
-**Check:**
+**Check (advisory):**
 ```bash
-# List changed files
-gh pr diff <PR> --name-only | grep -E '^(\.github/workflows/|\.claude/settings\.json|\.claude/hooks/|tools/ci-checks\.sh|\.githooks/)'
-# Check for ack label or body keyword
-gh pr view <PR> --json labels --jq '.labels[].name' | grep human-ack
-gh pr view <PR> --json body --jq '.body' | grep human-ack
+# Detect enforcement-path files — report as advisory note, not a BLOCK
+gh pr diff <PR> --name-only | grep -E '^(\.github/workflows/|\.claude/settings\.json|\.claude/hooks/|tools/ci-checks\.sh|\.githooks/|\.claude/agents/.*-critic\.md)'
 ```
 
-If the PR touches enforcement paths AND lacks both ack signals: BLOCK with `R-SENSITIVE: enforcement-path PR lacks human-ack (label or body); add human-ack label or include "human-ack" in PR body`.
+If enforcement-path files are found: note `[NOTE] R-SENSITIVE: PR touches <N> enforcement-path file(s) — advisory only per ADR-0070 D4; no human-ack required in single-branch interim` and continue to the next rule. Do NOT BLOCK.
 
-**Rationale:** The enforcement layer (CI workflows, hook scripts, settings, pre-commit hooks) is the machinery that polices all other PRs. An agent modifying this machinery without human awareness creates a blind-spot: the policing infrastructure can be silently modified by the same pipeline it polices. R-SENSITIVE ensures a human sees these changes before they merge. Activation was deferred during the autonomous wave-3/wave-4 program that modified these paths under its own critic-gated ADR obligations; the deferred activation point is now reached. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4.
+**Rationale:** ADR-0070 D4 retires the per-PR blocking ack in favour of a promotion-time meta-tripwire that covers a strictly larger surface (the full guardrail-machinery set) at the `develop`→`main` promotion boundary. In the single-branch interim the promotion step does not yet exist, so the enforcement-path detector is repurposed as an advisory counter (mirroring the `R-SENSITIVE-DETECTOR` health check, which already returns WARN rather than FAIL). A BLOCK here would obstruct autonomous enforcement-layer improvements without providing the safety property ADR-0070 designed for (which requires the two-tier boundary). Per [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D4 (supersedes [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4).
 
 ### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
 

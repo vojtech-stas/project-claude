@@ -24,6 +24,7 @@ Exports:
     check_dora_panel() -> dict            (slice #820/ADR-0069 D4: DORA instability panel renders-with-real-ids)
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
+    check_hook_liveness() -> dict        (slice #849: hook-layer dark detection via beacon lag)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
@@ -3969,6 +3970,166 @@ def check_release_ready() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# HOOK-LIVENESS check (slice #849) — detects silent total-dark of hook layer.
+# ---------------------------------------------------------------------------
+
+# Named constant: delta threshold in minutes beyond which the hook layer is
+# considered dark. (Module constant so tests can mirror it without importing.)
+_HOOK_LIVENESS_DARK_MINUTES = 60
+
+
+def check_hook_liveness() -> dict:
+    """HOOK-LIVENESS: detect when the hook layer has gone silently dark.
+
+    Compares the newest beacon timestamp in hook-fires.jsonl against the
+    newest activity timestamp (workflow-events.jsonl OR latest git commit
+    author-time, whichever is newer).
+
+    If activity_ts - beacon_ts > _HOOK_LIVENESS_DARK_MINUTES → FAIL.
+    Idle repos where both are old produce a small delta → PASS (no false alarm).
+
+    Supports _HOOK_LIVENESS_FIRES_OVERRIDE / _HOOK_LIVENESS_EVENTS_OVERRIDE /
+    _HOOK_LIVENESS_GIT_OVERRIDE env vars for test injection.
+
+    Returns:
+        {"id": "HOOK-LIVENESS", "result": "PASS"|"WARN"|"FAIL", "detail": ...}
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    def _parse_ts(ts_str: str) -> float:
+        """Parse ISO-8601 timestamp to unix float; return 0.0 on error."""
+        if not ts_str:
+            return 0.0
+        try:
+            return _dt.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    # --- 1. Newest beacon in hook-fires.jsonl ---
+    fires_override = os.environ.get("_HOOK_LIVENESS_FIRES_OVERRIDE", "")
+    if fires_override:
+        fires_log = Path(fires_override)
+    else:
+        fires_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+
+    if not fires_log.exists():
+        return {
+            "id": "HOOK-LIVENESS",
+            "result": "WARN",
+            "detail": "hook-fires.jsonl not found — hook layer may never have fired",
+        }
+
+    beacon_ts: float = 0.0
+    try:
+        with fires_log.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    obj = _json.loads(raw)
+                except Exception:
+                    continue
+                ts_val = _parse_ts(obj.get("ts", ""))
+                if ts_val > beacon_ts:
+                    beacon_ts = ts_val
+    except Exception as exc:
+        return {"id": "HOOK-LIVENESS", "result": "WARN",
+                "detail": f"read error on hook-fires.jsonl: {exc}"}
+
+    if beacon_ts == 0.0:
+        return {
+            "id": "HOOK-LIVENESS",
+            "result": "WARN",
+            "detail": "hook-fires.jsonl exists but contains no parseable beacon timestamps",
+        }
+
+    # --- 2. Newest activity: max(workflow-events.jsonl, git commit time) ---
+    events_override = os.environ.get("_HOOK_LIVENESS_EVENTS_OVERRIDE", "")
+    if events_override:
+        events_log = Path(events_override)
+    else:
+        events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+
+    events_ts: float = 0.0
+    if events_log.exists():
+        try:
+            with events_log.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    ts_val = _parse_ts(obj.get("ts", ""))
+                    if ts_val > events_ts:
+                        events_ts = ts_val
+        except Exception:
+            pass
+
+    # Git commit author-time (fallback if no events log or env override)
+    git_override = os.environ.get("_HOOK_LIVENESS_GIT_OVERRIDE", "")
+    git_ts: float = 0.0
+    if git_override:
+        try:
+            raw_ts = Path(git_override).read_text(encoding="utf-8").strip()
+            git_ts = _parse_ts(raw_ts)
+        except Exception:
+            pass
+    else:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(_HEALTH_REPO_ROOT), "log", "-1", "--format=%cI"],
+                capture_output=True, text=True, timeout=10,
+            )
+            git_ts = _parse_ts(r.stdout.strip()) if r.returncode == 0 else 0.0
+        except Exception:
+            git_ts = 0.0
+
+    activity_ts = max(events_ts, git_ts)
+
+    if activity_ts == 0.0:
+        return {
+            "id": "HOOK-LIVENESS",
+            "result": "WARN",
+            "detail": (
+                f"could not determine activity timestamp "
+                f"(events_ts={events_ts:.0f}, git_ts={git_ts:.0f}); "
+                "check skipped"
+            ),
+        }
+
+    # --- 3. Compare ---
+    delta_minutes = (activity_ts - beacon_ts) / 60.0
+
+    beacon_iso = _dt.fromtimestamp(beacon_ts, tz=_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    activity_iso = _dt.fromtimestamp(activity_ts, tz=_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if delta_minutes > _HOOK_LIVENESS_DARK_MINUTES:
+        return {
+            "id": "HOOK-LIVENESS",
+            "result": "FAIL",
+            "detail": (
+                f"hook layer appears dark: newest beacon {beacon_iso} is "
+                f"{delta_minutes:.0f} min behind live activity {activity_iso} "
+                f"(threshold {_HOOK_LIVENESS_DARK_MINUTES} min)"
+            ),
+        }
+
+    return {
+        "id": "HOOK-LIVENESS",
+        "result": "PASS",
+        "detail": (
+            f"newest beacon {beacon_iso}; activity {activity_iso}; "
+            f"delta {delta_minutes:.1f} min (threshold {_HOOK_LIVENESS_DARK_MINUTES} min)"
+        ),
+    }
+
+
 CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-1":  check_docs1_adr_index_forward,
     "DOCS-2":  check_docs2_adr_index_reverse,
@@ -3985,6 +4146,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     # Substrate checks
     "CAPTURE-SLO":     check_capture_slo,
     "HOOK-INTEGRITY":  check_hook_integrity,
+    "HOOK-LIVENESS":   check_hook_liveness,
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
@@ -4124,6 +4286,7 @@ def _build_health_data() -> dict:
             "checks": [
                 check_capture_slo(),
                 check_hook_integrity(),
+                check_hook_liveness(),
                 check_isolation_group(),
                 check_rule_coverage(),
                 check_spec_coverage(),

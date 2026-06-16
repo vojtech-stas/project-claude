@@ -824,6 +824,25 @@ fi
 fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
+# CHECK 14: HOOK-LIVENESS (slice #849 / #849)
+#   Ensures the hook-layer dark-detection check is wired and exits cleanly.
+#   WARN is allowed (hook-fires.jsonl may not exist in CI); only FAIL trips this.
+#   Delegates to registry CLI (single-source per ADR-0064 D3).
+# ---------------------------------------------------------------------------
+echo "--- CHECK 14: HOOK-LIVENESS dark-detection check ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 14 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK14_OUTPUT=$(python3 dashboard/health.py --check HOOK-LIVENESS 2>&1)
+    CHECK14_EXIT=$?
+    if [ "$CHECK14_EXIT" -eq 0 ]; then
+        pass "CHECK 14 (HOOK-LIVENESS): $CHECK14_OUTPUT"
+    else
+        fail "CHECK 14 (HOOK-LIVENESS): $CHECK14_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

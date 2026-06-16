@@ -3346,13 +3346,15 @@ def check_session_injection() -> dict:
 # ---------------------------------------------------------------------------
 
 def check_branch_topology() -> dict:
-    """BRANCH-TOPOLOGY (WARN stub): two-tier develop/main topology assertion.
+    """BRANCH-TOPOLOGY (WARN): two-tier develop/main topology assertion.
 
-    Full implementation in slice 7 (ADR-0070 D1 + D3).
-    Stub returns WARN with honest degradation message so the registry key
-    exists and --check BRANCH-TOPOLOGY exits 0 from day one.
+    Two-tier delivery (ADR-0070 D1/D3) is DORMANT per ADR-0071 D4.
+    The develop branch, promote.sh, and the full topology enforcement
+    are retained as inert scaffolding and are NOT operational.
+    This check remains registered so the ID is stable when the
+    implementation is wired; until then it reports honestly dormant.
 
-    Full check will verify:
+    Full check will verify (when wired):
     - origin/develop exists
     - slice PRs base develop (not main) — via gh pr list + base field
     - main advances only via promotion events in workflow-events.jsonl
@@ -3361,61 +3363,38 @@ def check_branch_topology() -> dict:
     return {
         "id": "BRANCH-TOPOLOGY",
         "result": "WARN",
-        "detail": "stub — full check in slice 7 (ADR-0070 D1/D3); develop branch not yet created (orchestrator post-merge step)",
+        "detail": (
+            "dormant (deferred per ADR-0071 D4) — two-tier develop/main topology "
+            "is scaffolded but not operational; develop branch does not yet exist; "
+            "full wiring is a future PRD"
+        ),
     }
 
 
 def check_release_ready() -> dict:
-    """RELEASE-READY (WARN stub): deterministic promotion gate (ADR-0070 D2).
+    """RELEASE-READY (WARN): deterministic promotion gate (ADR-0070 D2).
 
-    Full implementation in slice 2 (six conditions a–f).
-    Stub evaluates what it can cheaply check for real today; reports honest
-    degradation for conditions requiring develop-branch existence.
+    Two-tier delivery (ADR-0070) is DORMANT per ADR-0071 D4.
+    The six-condition gate (a–f) requires a develop branch + promotion
+    machinery that are not yet operational. This check remains registered
+    so the ID is stable when the implementation is wired; until then it
+    reports honestly dormant.
 
-    Six conditions (ADR-0070 D2):
-    (a) CI green on develop HEAD — stub/degraded: develop branch not yet created
-    (b) full test suite passes (ADR-0067 D1) — stub/degraded: full impl slice 2
-    (c) latest production-verify PASS with DOM-attested proof (ADR-0070 D5) — stub/degraded: D5 impl later slice
-    (d) green-develop streak intact — stub/degraded: no develop branch yet
-    (e) zero open needs-human items — checked for real below
-    (f) unpromoted batch touches no guardrail-machinery path — stub/degraded: full impl slice 2
+    When two-tier is wired, the six conditions (ADR-0070 D2) will be:
+    (a) CI green on develop HEAD
+    (b) full test suite passes (ADR-0067 D1)
+    (c) latest production-verify PASS with DOM-attested proof (ADR-0070 D5)
+    (d) green-develop streak intact
+    (e) zero open needs-human items
+    (f) unpromoted batch touches no guardrail-machinery path
     """
-    import json as _json
-    import subprocess as _sp
-
-    # Condition (e): zero open needs-human items — cheap real check
-    needs_human_count = -1
-    try:
-        r = _sp.run(
-            ["gh", "issue", "list", "--label", "needs-human", "--state", "open",
-             "--json", "number", "--limit", "50"],
-            capture_output=True, text=True, timeout=20,
-            cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
-        )
-        if r.returncode == 0:
-            items = _json.loads(r.stdout)
-            needs_human_count = len(items)
-    except Exception:
-        pass
-
-    if needs_human_count > 0:
-        return {
-            "id": "RELEASE-READY",
-            "result": "WARN",
-            "detail": (
-                f"(e) {needs_human_count} open needs-human items — promotion would be held; "
-                "other conditions stub/degraded — full impl slice 2 (ADR-0070 D2)"
-            ),
-        }
-
-    nh_str = str(needs_human_count) if needs_human_count >= 0 else "unavailable"
     return {
         "id": "RELEASE-READY",
         "result": "WARN",
         "detail": (
-            f"stub/degraded — full impl slice 2 (ADR-0070 D2); "
-            f"(e) needs-human={nh_str}; "
-            "(a)(b)(c)(d)(f) stub: develop branch not yet created (orchestrator post-merge step)"
+            "dormant (deferred per ADR-0071 D4) — two-tier promotion gate "
+            "is scaffolded but not operational; develop branch does not yet exist; "
+            "full six-condition gate (ADR-0070 D2) wiring is a future PRD"
         ),
     }
 

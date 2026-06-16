@@ -1037,25 +1037,90 @@ def check_isolation_group() -> dict:
     return {"id": "ISOLATION-GROUP", "result": result, "detail": detail}
 
 
+# ---------------------------------------------------------------------------
+# Rule→enforcer map (slice #851 — make RULE-COVERAGE count real enforcers)
+#
+# Each entry maps a CLAUDE.md section-1 rule number to one or more enforcers.
+# Enforcer strings must be one of:
+#   "R-XXX"   — reviewer.md hard-block rule (verified by check_rule_coverage)
+#   "SC-XXX"  — slicer-critic.md rubric rule (verified by check_rule_coverage)
+#   "CHECK-ID" — a key in CHECK_REGISTRY (verified by check_rule_coverage)
+#   "advisory" — rule is explicitly advisory; no mechanical enforcer required
+#
+# IMPORTANT: check_rule_coverage() VERIFIES each entry against the actual file
+# content at runtime — a mapped R-XXX that disappears from reviewer.md causes
+# the mapped rule to fall back to unchecked.  The map cannot silently drift.
+# ---------------------------------------------------------------------------
+RULE_ENFORCER_MAP: dict[int, list[str]] = {
+    # #1 YAGNI — reviewer hard-blocks scope drift / YAGNI violations
+    1:  ["R-YAGNI", "R-SCOPE"],
+    # #2 Walking-skeleton — slicer-critic enforces at decomposition time
+    2:  ["SC-WALKING-SKELETON"],
+    # #3 Build primitives first — no mechanical check; purely advisory discipline
+    3:  ["advisory"],
+    # #4 Never push to main — reviewer detects commits directly on main
+    4:  ["R-NO-MAIN"],
+    # #5 Conventional Commits — reviewer hard-blocks format violations
+    5:  ["R-CONV-COMMITS"],
+    # #6 git log as changelog — advisory; no mechanical enforcement feasible
+    6:  ["advisory"],
+    # #8 One PR per slice — reviewer enforces via Closes + LOC cap
+    8:  ["R-CLOSES", "R-LOC"],
+    # #9 DRY for docs — advisory; codebase-critic catches egregious duplication
+    9:  ["advisory"],
+    # #10 Main-agent meta-output discipline — advisory; enforced behaviorally
+    10: ["advisory"],
+    # #11 Surface deferred work as captured issues — CAPTURE-SHAPE health row
+    11: ["CAPTURE-SHAPE"],
+    # #12 Hooks five authorized categories — HOOK-INTEGRITY health row
+    12: ["HOOK-INTEGRITY"],
+    # #13 Root-cause workflow capture — CAPTURE-SHAPE (shape) + TEST-ORDERING (regression rider)
+    13: ["CAPTURE-SHAPE", "TEST-ORDERING"],
+    # #15 Every feature production-verified — PROOF-PRESENCE health row
+    15: ["PROOF-PRESENCE"],
+    # #16 Slice-decomposition is slicer's job — advisory; no mechanical check
+    16: ["advisory"],
+    # #17 Skill-vs-subagent litmus — advisory; audit-subagents skill checks shape
+    17: ["advisory"],
+    # #18 Never cite ADR from memory — advisory; adr-critic catches violations
+    18: ["advisory"],
+    # #19 Revise the whole flagged class — advisory; round-3 escalation is behavioral
+    19: ["advisory"],
+    # #20 Proof-per-claim in wrap-up summaries — PROOF-PRESENCE health row
+    20: ["PROOF-PRESENCE"],
+    # #21 Fixture discipline — reviewer hard-blocks fixture writes to logs
+    21: ["R-FIXTURE"],
+    # #22 System skeleton — slicer-critic enforces at decomposition time
+    22: ["SC-SYSTEM-SKELETON"],
+    # #23 No rule without a check — reviewer hard-blocks new rules without enforcement
+    23: ["R-RULE-CHECK"],
+}
+
+
 def check_rule_coverage() -> dict:
-    """RULE-COVERAGE (WARN): ratio of CLAUDE.md section-1 rules that name a check or are (advisory).
+    """RULE-COVERAGE (WARN): ratio of CLAUDE.md section-1 rules that have a
+    verified enforcer (reviewer R- rule, health check ID, or advisory tag).
 
-    Heuristic: scans for bold "rule #N" entries in section 1 (stops at the first H2
-    after section 1's opening list).  A rule is considered "covered" when its text
-    contains any of the coverage signals below, OR the entry carries the literal
-    string "(advisory)".
+    Two complementary coverage paths — a rule is "covered" when EITHER holds:
 
-    Coverage signals (simple substring search — honest heuristic, not exhaustive):
+    Path A — inline signal in CLAUDE.md text (legacy heuristic, preserved):
       - "CI grep", "ci-checks", "tools/ci-checks"
       - "hook validation", "pre-commit", ".claude/hooks"
       - "dashboard evaluator", "health check", "trail evaluator"
       - "output-contract", "trailer schema"
-      - "reviewer rule", "R-", "AC-", "SC-", "PC-"  (named critic rubric rules)
-      - "(Mechanized by", "(Enforced at", "(enforced by"
+      - "reviewer rule", "R-RULE", "(Mechanized by", "(Enforced at", "(enforced by"
+      - Named critic rubric pattern matching \b(R|AC|SC|PC)-[A-Z]{2,}
 
-    Pre-existing rules (those numbered ≤22) are grandfathered per ADR-0008 D8
-    (bootstrap-mode); they are reported in the ratio but not flagged as newly
-    violating.  Only rules #23+ are flagged as unchecked-and-untagged.
+    Path B — verified RULE_ENFORCER_MAP entry (slice #851 addition):
+      Each enforcer in RULE_ENFORCER_MAP is verified at runtime:
+        - "R-XXX"    → must appear as "### R-XXX" in .claude/agents/reviewer.md
+        - "SC-XXX"   → must appear in .claude/agents/slicer-critic.md
+        - "advisory" → always counts as covered (explicitly tagged)
+        - other      → must be a key in CHECK_REGISTRY
+
+    Pre-existing rules (≤22) are grandfathered per ADR-0008 D8 (bootstrap-mode);
+    reported in the ratio but not flagged as newly violating.
+    Only rules #23+ are flagged as unchecked-and-untagged.
 
     Always WARNs (never FAILs) until the wave-3 retrofit pass; per ADR-0056 D3.
     """
@@ -1074,7 +1139,7 @@ def check_rule_coverage() -> dict:
     sec1_end = sec1_m.end() + next_h2.start() if next_h2 else len(text)
     section1 = text[sec1_m.start():sec1_end]
 
-    # Coverage signals — one match anywhere in the rule's line-block is sufficient.
+    # Path A: Coverage signals — one match anywhere in the rule's line-block is sufficient.
     _COVERAGE_SIGNALS = (
         "CI grep", "ci-checks", "tools/ci-checks",
         "hook validation", "pre-commit", ".claude/hooks",
@@ -1084,6 +1149,32 @@ def check_rule_coverage() -> dict:
     )
     # Named critic rubric patterns (R-XXX, AC-XXX, SC-XXX, PC-XXX) — minimum 2 uppercase letters
     _RUBRIC_PAT = re.compile(r'\b(R|AC|SC|PC)-[A-Z]{2,}')
+
+    # Path B: Load side-files for enforcer verification (once per call).
+    reviewer_md_path = _HEALTH_REPO_ROOT / ".claude" / "agents" / "reviewer.md"
+    slicer_critic_path = _HEALTH_REPO_ROOT / ".claude" / "agents" / "slicer-critic.md"
+    reviewer_text = _read_file(reviewer_md_path) if reviewer_md_path.exists() else ""
+    slicer_text = _read_file(slicer_critic_path) if slicer_critic_path.exists() else ""
+
+    def _enforcer_verified(enforcer: str) -> bool:
+        """Return True if the enforcer string resolves to a real artifact."""
+        if enforcer == "advisory":
+            return True
+        if enforcer.startswith("R-"):
+            # Must appear as a ### heading in reviewer.md
+            return f"### {enforcer}" in reviewer_text
+        if enforcer.startswith("SC-"):
+            return enforcer in slicer_text
+        if enforcer.startswith(("PC-", "AC-")):
+            return True  # prd-critic / adr-critic rules; not read here
+        # Otherwise treat as a CHECK_REGISTRY ID (verified after registry is built)
+        return enforcer in CHECK_REGISTRY
+
+    def _map_covers(rnum: int) -> tuple[bool, list[str]]:
+        """Return (covered_by_map, verified_enforcers) for the given rule number."""
+        enforcers = RULE_ENFORCER_MAP.get(rnum, [])
+        verified = [e for e in enforcers if _enforcer_verified(e)]
+        return bool(verified), verified
 
     # Parse numbered rule entries.  Each entry may span multiple lines (sub-bullets).
     # Strategy: split on the rule-entry pattern and capture each block.
@@ -1108,6 +1199,7 @@ def check_rule_coverage() -> dict:
                 "detail": "no numbered rules found in section 1"}
 
     covered_nums = []
+    covered_detail: dict[int, str] = {}  # rnum → enforcer description
     unchecked_grandfathered = []
     unchecked_new = []
 
@@ -1117,9 +1209,17 @@ def check_rule_coverage() -> dict:
         is_advisory = "(advisory)" in block
         has_signal = any(sig in block for sig in _COVERAGE_SIGNALS)
         has_rubric = bool(_RUBRIC_PAT.search(block))
-        covered = is_advisory or has_signal or has_rubric
+        inline_covered = is_advisory or has_signal or has_rubric
+
+        map_covered, verified_enforcers = _map_covers(rnum)
+        covered = inline_covered or map_covered
+
         if covered:
             covered_nums.append(rnum)
+            if map_covered:
+                covered_detail[rnum] = ",".join(verified_enforcers)
+            else:
+                covered_detail[rnum] = "inline-signal"
         elif rnum <= _BOOTSTRAP_CUTOFF:
             unchecked_grandfathered.append(rnum)
         else:
@@ -1129,6 +1229,16 @@ def check_rule_coverage() -> dict:
     ratio_pct = int(covered_count * 100 / total)
 
     parts = [f"{covered_count}/{total} covered ({ratio_pct}%)"]
+
+    # Emit per-rule enforcer summary for load-bearing mapped rules
+    mapped_lines = []
+    for rnum in sorted(covered_nums):
+        desc = covered_detail.get(rnum, "")
+        if desc and desc != "inline-signal":
+            mapped_lines.append(f"#{rnum}:{desc}")
+    if mapped_lines:
+        parts.append("map-enforced: " + " ".join(mapped_lines))
+
     if unchecked_grandfathered:
         parts.append(f"grandfathered-unchecked: {unchecked_grandfathered}")
     if unchecked_new:
@@ -4178,6 +4288,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "MERGE-INTEGRITY": check_merge_integrity,
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
+    "PROOF-PRESENCE":  check_proof_presence,
     "SILENT-DRIFT":    check_silent_drift,
     # Two-tier topology stubs (ADR-0070 wave 5 — slice 1)
     "BRANCH-TOPOLOGY": check_branch_topology,

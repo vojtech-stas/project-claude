@@ -118,7 +118,6 @@ finally:
 import sys, json
 sys.path.insert(0, r'{REPO_ROOT / "dashboard"}')
 import server
-import health as _health_mod
 
 synthetic_payload = {{
     "auditMeta": {{"checks": [
@@ -145,14 +144,15 @@ synthetic_payload = {{
     "cascadeFinder": {{"available": True, "detail": "ok"}},
 }}
 
-_orig = _health_mod.serve_health
-_health_mod.serve_health = lambda: (synthetic_payload, False)
+# Patch the module-level alias used by _build_status (imported as _serve_health_cached)
+_orig = server._serve_health_cached
+server._serve_health_cached = lambda: (synthetic_payload, False)
 try:
     result = server._build_status()
     summary = result.get("health_summary", {{}})
     print(json.dumps(summary))
 finally:
-    _health_mod.serve_health = _orig
+    server._serve_health_cached = _orig
 """
         proc = _run_dashboard_script(actual_script, timeout=60)
         self.assertEqual(0, proc.returncode, f"script failed: {proc.stderr[:300]}")

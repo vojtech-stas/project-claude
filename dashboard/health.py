@@ -316,7 +316,12 @@ def check_docs8_supersession_notes() -> dict:
                     row_found = False
                     row_has_annotation = False
                     for line in readme_lines:
-                        if line.startswith("|") and f"({sid}-" in line:
+                        # Match the CANONICAL row for this ADR: starts with "| [NNNN]"
+                        # not just any row that links to ADR-NNNN (which would false-positive
+                        # on other ADRs that reference the superseded ADR in their annotations).
+                        if line.startswith("|") and re.match(
+                            r'^\|\s*\[' + re.escape(sid) + r'\]', line
+                        ):
                             row_found = True
                             if "superseded by" in line.lower():
                                 row_has_annotation = True
@@ -527,17 +532,16 @@ _ACK_LABEL = "human-ack"
 
 
 def check_r_sensitive_detector() -> dict:
-    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack.
+    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack (advisory).
 
-    Implements ADR-0064 D4. R-SENSITIVE is now ACTIVE (activated at PRD #813
-    closing slice). This detector counts enforcement-path PRs that were merged
-    without a human-ack signal, as a historical violation tally.  The detector
-    itself always returns WARN (not FAIL) — blocking is enforced at review time
-    by the reviewer rubric rule R-SENSITIVE, not here.
+    Implements ADR-0064 D4; updated to advisory-interim per ADR-0071 D3 (slice #853).
+    R-SENSITIVE was rescoped to advisory: the reviewer rubric no longer hard-blocks on
+    enforcement-path changes; this detector counts advisory violations only.
 
     Scans the last _R_SENSITIVE_WINDOW merged PRs (post-bootstrap) for PRs that
     touched at least one enforcement-layer path and lacked a human-ack signal
     (label "human-ack" OR body containing "human-ack").
+    Always returns WARN — advisory only; not a blocking gate.
     """
     try:
         from collector import get_recent_merged_prs  # noqa: PLC0415
@@ -547,7 +551,7 @@ def check_r_sensitive_detector() -> dict:
             "id": "R-SENSITIVE-DETECTOR",
             "result": "WARN",
             "detail": (
-                f"R-SENSITIVE ACTIVE (ADR-0064 D4); "
+                f"R-SENSITIVE advisory (ADR-0071 D3); "
                 f"could not fetch PRs: {e}"
             ),
         }
@@ -582,7 +586,7 @@ def check_r_sensitive_detector() -> dict:
 
     count = len(violations)
     detail = (
-        f"R-SENSITIVE ACTIVE (ADR-0064 D4): "
+        f"R-SENSITIVE advisory (ADR-0071 D3): "
         f"{count} enforcement-path PR(s) without human-ack in last "
         f"{_R_SENSITIVE_WINDOW} post-bootstrap merged PRs; "
         f"PRs: {violations[:10]}"
@@ -878,12 +882,29 @@ def check_capture_slo() -> dict:
     return {"id": "CAPTURE-SLO", "result": result, "detail": detail}
 
 
+# Rolling window for HOOK-INTEGRITY — only beacons within this many days are counted.
+# Beacons older than this are ignored so pre-fix historical drift never causes a
+# permanent FAIL.  Dark-hook detection for hooks silent beyond this window is
+# HOOK-LIVENESS's responsibility, not this check's.
+_HOOK_INTEGRITY_WINDOW_DAYS = 7
+
+
 def check_hook_integrity() -> dict:
     """HOOK-INTEGRITY: attempt-vs-ok beacon ratio per hook + ERROR beacon count.
 
-    Reads hook-fires.jsonl (read-only).  Red when any hook's ok rate < attempt rate
-    (i.e. some attempts never produced an ok) or when ERROR beacons are present.
+    Reads hook-fires.jsonl (read-only).  Uses a rolling window of
+    _HOOK_INTEGRITY_WINDOW_DAYS so stale pre-fix history never causes a
+    permanent FAIL.
+
+    Semantics:
+    - hook with recent attempts but missing ok → FAIL (genuine drift)
+    - hook with NO recent beacons → not counted (dark-detection = HOOK-LIVENESS)
+    - all recent attempts have matching ok → PASS
+    - ERROR beacons in any window → FAIL
     """
+    import json as _json
+    from datetime import datetime, timezone, timedelta
+
     fires_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
     if not fires_log.exists():
         return {
@@ -892,8 +913,9 @@ def check_hook_integrity() -> dict:
             "detail": "hook-fires.jsonl not found",
         }
 
+    window_cutoff = datetime.now(timezone.utc) - timedelta(days=_HOOK_INTEGRITY_WINDOW_DAYS)
+
     try:
-        import json as _json
         attempts: dict[str, int] = {}
         oks: dict[str, int] = {}
         error_count = 0
@@ -910,17 +932,37 @@ def check_hook_integrity() -> dict:
                 status = obj.get("status", "")
                 if not hook:
                     continue
+                # Rolling-window filter: skip beacons older than _HOOK_INTEGRITY_WINDOW_DAYS.
+                ts_str = obj.get("ts", "")
+                if ts_str:
+                    try:
+                        beacon_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        if beacon_dt < window_cutoff:
+                            continue  # outside rolling window — skip
+                    except Exception:
+                        pass  # unparseable ts: include conservatively
                 if status == "attempt":
                     attempts[hook] = attempts.get(hook, 0) + 1
                 elif status == "ok":
                     oks[hook] = oks.get(hook, 0) + 1
-                elif status == "ERROR" or status == "error":
+                elif status in ("ERROR", "error"):
                     error_count += 1
     except Exception as exc:
         return {"id": "HOOK-INTEGRITY", "result": "WARN",
                 "detail": f"read error: {exc}"}
 
-    # Compute per-hook ratios (only hooks that have attempt beacons)
+    # If no beacons at all in the rolling window, defer to HOOK-LIVENESS.
+    if not attempts and not error_count:
+        return {
+            "id": "HOOK-INTEGRITY",
+            "result": "WARN",
+            "detail": (
+                f"no attempt beacons in last {_HOOK_INTEGRITY_WINDOW_DAYS}d window; "
+                f"dark-detection deferred to HOOK-LIVENESS"
+            ),
+        }
+
+    # Compute per-hook ratios (only hooks that have attempt beacons in window)
     drift_hooks = []
     ratio_parts = []
     for hook, att in sorted(attempts.items()):
@@ -929,7 +971,7 @@ def check_hook_integrity() -> dict:
         if ok < att:
             drift_hooks.append(f"{hook}({ok}/{att})")
 
-    detail_parts = []
+    detail_parts = [f"window={_HOOK_INTEGRITY_WINDOW_DAYS}d"]
     if ratio_parts:
         detail_parts.append("ratios: " + ", ".join(ratio_parts))
     if error_count:
@@ -937,7 +979,7 @@ def check_hook_integrity() -> dict:
     if drift_hooks:
         detail_parts.append(f"drift: {', '.join(drift_hooks)}")
 
-    detail = " | ".join(detail_parts) if detail_parts else "no attempt beacons found"
+    detail = " | ".join(detail_parts)
     result = "FAIL" if (drift_hooks or error_count > 0) else "PASS"
     return {"id": "HOOK-INTEGRITY", "result": result, "detail": detail}
 

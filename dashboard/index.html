@@ -59,6 +59,43 @@
     border-bottom: 1px solid #ef4444;
   }
   #stale-banner.visible { display: block; }
+  /* STATUS HEADER — always-visible workflow liveness bar (slice #859) */
+  #status-bar {
+    background: #0d1117;
+    border-bottom: 1px solid var(--border);
+    padding: 7px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--muted);
+    min-height: 32px;
+  }
+  #status-bar .sb-item { display: flex; align-items: center; gap: 5px; }
+  #status-bar .sb-sep { color: var(--border); user-select: none; }
+  .hook-pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: default;
+  }
+  .hook-pill.live  { background: var(--pass); color: #fff; }
+  .hook-pill.dark  { background: var(--fail); color: #fff; }
+  .hook-pill.unknown { background: var(--border); color: var(--muted); }
+  .sb-chip {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .sb-chip-pass { background: var(--pass); color: #fff; }
+  .sb-chip-warn { background: var(--warn); color: #fff; }
+  .sb-chip-fail { background: var(--fail); color: #fff; }
   nav { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 20px; }
   nav button {
     background: none;
@@ -874,6 +911,11 @@
 </header>
 
 <div id="stale-banner">SERVER STALE — code has changed since this server started; restart to reflect merged changes</div>
+
+<!-- STATUS BAR — always-visible workflow liveness header (slice #859) -->
+<div id="status-bar">
+  <span id="sb-loading" style="color:var(--muted);">loading status…</span>
+</div>
 
 <nav>
   <button class="active" onclick="switchTab('architecture', this)">Architecture</button>
@@ -3310,6 +3352,132 @@ function _renderRollup(result, el) {
   el.innerHTML = html;
 }
 
+
+// ---------------------------------------------------------------------------
+// /api/status liveness header — polls on load + every ~15s (slice #859).
+// DEFENSIVE: entire block in try/catch; broken header never breaks the page.
+// ---------------------------------------------------------------------------
+(function initStatusBar() {
+  try {
+    const bar = document.getElementById('status-bar');
+    if (!bar) return;
+
+    function escS(s) {
+      // Minimal HTML-escape for status bar text values
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function ageStr(minutes) {
+      if (minutes == null) return '?';
+      if (minutes < 1) return '<1 min ago';
+      if (minutes < 60) return Math.round(minutes) + ' min ago';
+      const h = (minutes / 60).toFixed(1);
+      return h + 'h ago';
+    }
+
+    function renderStatus(d) {
+      try {
+        // --- branch@sha pill ---
+        const branchSha = (d.branch && d.short_sha)
+          ? escS(d.branch) + '@' + escS(d.short_sha)
+          : (d.short_sha ? escS(d.short_sha) : '?');
+
+        // --- HOOKS pill ---
+        const hl = d.hooks_live || {};
+        let hookClass = 'unknown';
+        let hookLabel = 'HOOKS ?';
+        let hookTitle = 'hook-fires.jsonl not found or no data yet';
+        if (typeof hl.alive === 'boolean') {
+          if (hl.alive) {
+            hookClass = 'live';
+            hookLabel = 'HOOKS LIVE';
+            hookTitle = 'newest beacon ' + ageStr(hl.age_minutes);
+          } else {
+            hookClass = 'dark';
+            hookLabel = 'HOOKS DARK';
+            const age = hl.age_minutes != null ? Math.round(hl.age_minutes) : '?';
+            hookTitle = 'no hook events in ' + age + ' min — start a fresh session / check CLAUDE_PROJECT_DIR';
+          }
+        }
+
+        // --- last event age ---
+        const le = d.last_event || {};
+        const lastEvText = le.age_minutes != null
+          ? 'event ' + ageStr(le.age_minutes)
+          : 'no events';
+
+        // --- main_green ---
+        const mg = d.main_green || {};
+        let greenText = 'GREEN-MAIN ?';
+        if (mg.sha) {
+          const sha7 = String(mg.sha).slice(0, 7);
+          const lagStr = mg.lag != null ? (mg.lag === 0 ? 'lag=0' : 'lag=' + mg.lag) : '';
+          const ageH = mg.age_hours != null ? mg.age_hours + 'h' : '';
+          greenText = 'green ' + sha7 + (lagStr ? ' ' + lagStr : '') + (ageH ? ' ' + ageH : '');
+        }
+
+        // --- health chips ---
+        const hs = d.health_summary || {};
+        const p = hs.pass != null ? hs.pass : '?';
+        const w = hs.warn != null ? hs.warn : '?';
+        const f = hs.fail != null ? hs.fail : '?';
+        const healthHtml =
+          '<span class="sb-chip sb-chip-pass">' + p + ' PASS</span> ' +
+          '<span class="sb-chip sb-chip-warn">' + w + ' WARN</span> ' +
+          '<span class="sb-chip sb-chip-fail">' + f + ' FAIL</span>';
+
+        // --- open work ---
+        const ow = d.open_work || {};
+        const workText = [
+          'PRs ' + (ow.prs != null ? ow.prs : '?'),
+          'slices ' + (ow.slices != null ? ow.slices : '?'),
+          'captured ' + (ow.captured != null ? ow.captured : '?'),
+        ].join(' · ');
+
+        bar.innerHTML =
+          '<span class="sb-item">' + branchSha + '</span>' +
+          '<span class="sb-sep">|</span>' +
+          '<span class="sb-item"><span class="hook-pill ' + hookClass + '" title="' + escS(hookTitle) + '">' + hookLabel + '</span></span>' +
+          '<span class="sb-sep">|</span>' +
+          '<span class="sb-item">' + escS(lastEvText) + '</span>' +
+          '<span class="sb-sep">|</span>' +
+          '<span class="sb-item">' + escS(greenText) + '</span>' +
+          '<span class="sb-sep">|</span>' +
+          '<span class="sb-item">' + healthHtml + '</span>' +
+          '<span class="sb-sep">|</span>' +
+          '<span class="sb-item">' + escS(workText) + '</span>';
+      } catch (renderErr) {
+        // Render error — degrade to plain text, never throw
+        bar.textContent = 'status render error';
+      }
+    }
+
+    function pollStatus() {
+      try {
+        fetch('/api/status')
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            try { renderStatus(d); } catch(e) { /* swallow */ }
+          })
+          .catch(function() {
+            // Fetch failed — show 'status unavailable' but never throw
+            try { bar.textContent = 'status unavailable'; } catch(e) {}
+          });
+      } catch(e) {
+        // Defensive: even fetch() itself throwing must not surface
+        try { bar.textContent = 'status unavailable'; } catch(e2) {}
+      }
+    }
+
+    pollStatus();
+    setInterval(pollStatus, 15000);
+  } catch(outerErr) {
+    // Outermost catch: broken init must not break the page
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // /api/meta stale banner — polls every ~10s on all tabs (ADR-0056/0057/0058).

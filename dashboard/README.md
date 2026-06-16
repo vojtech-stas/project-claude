@@ -68,12 +68,7 @@ Then open `http://localhost:8765` in any modern browser.
     - **DEAD-ROUTES** — API routes served by `dashboard/server.py` but never fetched by `dashboard/index.html`; honest day-one pre-existing dead routes are the starting value. Per ADR-0068 D1.
     - **SESSION-INJECTION** — one `session_context_injected` event per `session_id` in the last 20-session window; PASS when all sessions have an injection event; WARN when <50% (hook not yet active or pre-hook sessions dominate). Per ADR-0068 D3.
     - **R-SENSITIVE-DETECTOR** — enforcement-path merged PRs (post-bootstrap) without a `human-ack` signal (label or body keyword); always returns WARN (historical tally — blocking is enforced at review time by R-SENSITIVE in the reviewer rubric); activated at PRD #813 closing slice per ADR-0064 D4.
-  - **Fleet-economics card** — effort, rerun, tier, and DORA rows (wave 4, ADR-0069; slices #827, #829):
-    - **EFFORT-BUDGET** — tool-calls-per-dispatch by effort class (`trivial`, `standard`, `closing`); PASS when ≥90% of classified dispatches are within budget (2x class cap); WARN on unclassified-only history; FAIL when >10% exceed 2x budget. Pre-ADR-0069 dispatches go in an honest unclassified bucket. Per ADR-0069 D1.
-    - **REASSURANCE-RERUN** — count of consecutive identical bash commands with no Edit/Write between them per session; trend target is zero; always WARN (advisory measurement, not a gate). Per ADR-0069 D2.
-    - **FRONTMATTER-COVERAGE** — % of `.claude/agents/*.md` files with explicit `model:` frontmatter; PASS when 100%; FAIL on any missing. Per ADR-0069 D3 / ADR-0027 D1.
-    - **DECLARED-PARITY** — declared `model:` frontmatter vs observed `model` field in `agent_start` events post-baseline (slice #819 merge); PASS when all post-baseline events match; WARN on no post-baseline events yet (honest pre-baseline bucket). Per ADR-0069 D3.
-    - **DORA-PANEL** — verifies the DORA instability panel discovery function returns a valid payload with real PR ids or an honest empty-window result; WARN on gh CLI unavailability; FAIL on discovery error. Per ADR-0069 D4.
+  - **FRONTMATTER-COVERAGE** — % of `.claude/agents/*.md` files with explicit `model:` frontmatter; PASS when 100%; FAIL on any missing. Per ADR-0027 D1 / ADR-0069 D3 (solo-operator model invariant; fleet-economics machinery removed per slice #854).
 
 ## API reference
 
@@ -87,7 +82,6 @@ Then open `http://localhost:8765` in any modern browser.
 | `/api/workitems` | GitHub Issues fetch for the Architecture tab |
 | `/api/file` | Serve repo file contents (path-traversal-protected) |
 | `/api/meta` | Server sha + session handshake (banner freshness gate per slice #773) |
-| `/api/dora` | DORA-style instability metrics — merges/day, lead time, change-failure rate, MTTR; computed from real merged PR ids over a configurable window (default 7d, override with `?window=N`); honest empty-window when no PRs found; per ADR-0069 D4 |
 
 ## Configuration
 

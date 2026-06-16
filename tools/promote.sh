@@ -1,0 +1,64 @@
+#!/bin/bash
+# promote.sh — fast-forward develop HEAD into main + record promotion event.
+#
+# USAGE:
+#   bash tools/promote.sh
+#
+# What it does (ADR-0070 D3):
+#   1. Resolves develop HEAD sha.
+#   2. Verifies the fast-forward condition: main must be an ancestor of develop.
+#      If not, aborts — promotion is ff-only (linear history invariant).
+#   3. Pushes develop HEAD to main on origin (ff-only via --force-with-lease
+#      + merge=ff pre-check).
+#   4. Appends one {"v":2,"event":"promotion",...} line to
+#      .claude/logs/workflow-events.jsonl (creates the file if absent).
+#
+# Idempotent-safe: if main already equals develop HEAD, records the event and
+# exits 0 (no-op push, honest log entry).
+#
+# Run by the ORCHESTRATOR post-merge; NOT by the implementer.
+# This script only gets committed here — the orchestrator invokes it.
+#
+# Requires: git, date (ISO-8601), GITHUB_TOKEN or gh auth (for push).
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+EVENTS_LOG="$REPO_ROOT/.claude/logs/workflow-events.jsonl"
+
+# --- 1. Resolve develop HEAD sha ---
+DEVELOP_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
+  echo "ERROR: cannot resolve develop HEAD — branch does not exist yet" >&2
+  exit 1
+}
+
+# --- 2. Verify fast-forward condition ---
+MAIN_SHA="$(git rev-parse origin/main 2>/dev/null || git rev-parse main 2>/dev/null)" || {
+  echo "ERROR: cannot resolve main HEAD" >&2
+  exit 1
+}
+
+if [ "$MAIN_SHA" = "$DEVELOP_SHA" ]; then
+  echo "INFO: main already equals develop HEAD ($DEVELOP_SHA) — idempotent no-op push"
+else
+  # main must be an ancestor of develop (ff-only check)
+  if ! git merge-base --is-ancestor "$MAIN_SHA" "$DEVELOP_SHA" 2>/dev/null; then
+    echo "ERROR: main ($MAIN_SHA) is NOT an ancestor of develop ($DEVELOP_SHA)" >&2
+    echo "ERROR: cannot fast-forward; promotion aborted (linear history invariant)" >&2
+    exit 1
+  fi
+
+  # --- 3. Fast-forward push ---
+  echo "INFO: fast-forwarding main to develop HEAD $DEVELOP_SHA"
+  git push origin "refs/remotes/origin/develop:refs/heads/main" --force-with-lease="refs/heads/main:$MAIN_SHA"
+  echo "INFO: push complete"
+fi
+
+# --- 4. Append promotion event ---
+TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
+SESSION_ID="${CLAUDE_SESSION_ID:-orchestrator}"
+
+mkdir -p "$(dirname "$EVENTS_LOG")"
+EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"develop\",\"to\":\"main\",\"sha\":\"$DEVELOP_SHA\"}"
+echo "$EVENT" >> "$EVENTS_LOG"
+echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"

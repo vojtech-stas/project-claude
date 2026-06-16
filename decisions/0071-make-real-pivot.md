@@ -25,7 +25,7 @@ This ADR records the 2026-06-16 strategic reset: tighten what exists; defer what
 
 The program's disposition is to make existing mechanisms genuinely operational and honest before adding new ones. Ceremony scales to change risk. A new check, rule, or mechanism earns its place by observing something real; if it cannot yet observe anything real, its registered check must say so honestly (WARN with a dormant/deferred label) — not imply readiness via a detail string that presupposes a shipped implementation.
 
-**Enforcement:** The measurement-honesty health rows that ship in this wave (RELEASE-READY and BRANCH-TOPOLOGY with explicit dormant detail strings, HOOK-LIVENESS, RULE-COVERAGE honest counting) are the direct mechanization of this posture. The adr-critic AC-POSTURE check (advisory) confirms future ADRs record honest implementation status.
+**Enforcement (advisory):** The measurement-honesty health rows that ship in this wave (RELEASE-READY and BRANCH-TOPOLOGY with explicit dormant detail strings, HOOK-LIVENESS, RULE-COVERAGE honest counting) are the direct mechanization of this posture. This decision is tagged `(advisory)` per CLAUDE.md rule #23 — the make-real posture is a meta-principle with no single deterministic check; the wave's health rows and tests are evidence, but the posture itself is not backed by a dedicated adr-critic rule.
 
 ### D2 — fleet economics retired
 
@@ -85,7 +85,7 @@ Each is a registered health check (STALE-SERVER, HOOK-LIVENESS, RULE-COVERAGE re
 
 ### Enforcement (rule #23)
 
-Per decision: D1 — the RELEASE-READY and BRANCH-TOPOLOGY dormant detail strings + this ADR's own AC-POSTURE annotation (advisory, per adr-critic); D2 — the four removed check IDs' absence from CHECK_REGISTRY (mechanized by existing test_fleet_economics_removal_854.py); D3 — the R-SENSITIVE advisory annotation in reviewer.md (mechanized by existing test_rsensitive_advisory_848.py) tagged `(advisory)` per rule #23; D4 — the dormant detail strings in RELEASE-READY and BRANCH-TOPOLOGY (mechanized by test_make_real_pivot_856.py); D5 — each named check present in CHECK_REGISTRY (verifiable via `python dashboard/health.py --list`).
+Per decision: D1 — tagged `(advisory)` per rule #23; direct evidence is the wave's health rows (RELEASE-READY and BRANCH-TOPOLOGY dormant detail strings, HOOK-LIVENESS, RULE-COVERAGE honest counting); no dedicated adr-critic rule backs this meta-principle; D2 — the four removed check IDs' absence from CHECK_REGISTRY (mechanized by existing test_fleet_economics_removal_854.py); D3 — the R-SENSITIVE advisory annotation in reviewer.md (mechanized by existing test_rsensitive_advisory_848.py) tagged `(advisory)` per rule #23; D4 — the dormant detail strings in RELEASE-READY and BRANCH-TOPOLOGY (mechanized by test_make_real_pivot_856.py); D5 — each named check present in CHECK_REGISTRY (verifiable via `python dashboard/health.py --list`).
 
 ## Alternatives considered
 
@@ -105,7 +105,7 @@ Tracked files citing the superseded ADR-0069 D1–D4 decisions or implying two-t
 
 - `dashboard/health.py` — **update-in-this-wave**: RELEASE-READY and BRANCH-TOPOLOGY detail strings changed to say "dormant (deferred per ADR-0071 D4)"; fleet-economics check IDs were removed in slice #854 (already landed).
 - `decisions/README.md` — **update-in-this-wave**: ADR-0069 status cell annotated "D1–D4 superseded by ADR-0071 D2"; ADR-0070 status cell annotated "Dormant per ADR-0071 D4 (deferred, not operational)"; new ADR-0071 row added.
-- `CLAUDE.md` — **update-in-this-wave**: rule #4 text and Map entries that reference two-tier branch model or fleet economics updated to reflect dormant/removed status.
+- `CLAUDE.md` — **grandfather**: verified clean — no ADR-0069/ADR-0070 or two-tier/fleet-economics references in rule #4 or Map; no edit needed.
 - `.claude/agents/reviewer.md` — **grandfather**: R-SENSITIVE is already annotated advisory per slice #848 (already landed before this ADR is written); the existing annotation satisfies the D3 requirement. No edit needed.
 - `.claude/skills/ship/SKILL.md`, `.claude/skills/build/SKILL.md`, `.claude/hooks/session-start.sh`, `tools/promote.sh` — **grandfather**: references to `develop`/`main` promotion were never fully wired; the code is inert. Updating references is a task for the full two-tier implementation PRD, not this pivot ADR. The dormant annotations in the health checks are the honest signal.
 - `tests/test_make_real_pivot_856.py` — **created-in-this-wave**: regression tests for D4 dormant detail strings + ADR-0071 structure.

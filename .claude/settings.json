@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/session-start.sh\""
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/dashboard-autostart.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/dashboard-autostart.sh\""
           }
         ]
       },
@@ -24,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" session_start"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" session_start"
           }
         ]
       }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/user-prompt-submit.sh\""
           }
         ]
       },
@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" user_prompt"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" user_prompt"
           }
         ]
       }
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-edit.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/pre-tool-edit.sh\""
           }
         ]
       },
@@ -64,7 +64,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-bash.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/pre-tool-bash.sh\""
           }
         ]
       },
@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" agent_start"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" agent_start"
           }
         ]
       },
@@ -82,7 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" skill_invoke"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" skill_invoke"
           }
         ]
       }
@@ -93,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "STDIN=$(cat); FILE_PATH=$(echo \"$STDIN\" | jq -r '.tool_input.file_path // \"\"' 2>/dev/null); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then echo \"$(date -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" | LOGFILE=subagent-edits.log bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh\"; fi"
+            "command": "STDIN=$(cat); FILE_PATH=$(echo \"$STDIN\" | jq -r '.tool_input.file_path // \"\"' 2>/dev/null); if echo \"$FILE_PATH\" | grep -qE '\\.claude/agents/.*\\.md$'; then echo \"$(date -u -Iseconds) $FILE_PATH (edit detected; consider running /audit-subagents)\" | LOGFILE=subagent-edits.log bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-event.sh\"; fi"
           }
         ]
       },
@@ -102,7 +102,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" agent_complete"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" agent_complete"
           }
         ]
       },
@@ -111,7 +111,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" bash_complete"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" bash_complete"
           }
         ]
       },
@@ -120,7 +120,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" grill_qa"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" grill_qa"
           }
         ]
       }
@@ -131,11 +131,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh\" session_stop"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/log-tool-event.sh\" session_stop"
           },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-reviewer-gate.sh\""
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/stop-reviewer-gate.sh\""
           }
         ]
       }

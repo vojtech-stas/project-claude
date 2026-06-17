@@ -9,8 +9,8 @@ Per ADR-0067 D2 (test-first discipline: test commit precedes fix commit).
 Tests assert:
 1. decisions/0071-make-real-pivot.md exists with required headings
    (Status, Supersedes, Extends, D1–D5 headings, Propagation section)
-2. RELEASE-READY check detail string contains "dormant"
-3. BRANCH-TOPOLOGY check detail string contains "dormant"
+2. RELEASE-READY check detail string does NOT contain "dormant" (wired by slice #838)
+3. BRANCH-TOPOLOGY check detail string does NOT contain "dormant" (wired by slice #843)
 
 All assertions are offline / headless (no network required).
 Runner: stdlib unittest + pytest compatible.
@@ -214,16 +214,27 @@ class TestDormantDetailStrings(unittest.TestCase):
             f"got: {detail!r}",
         )
 
-    def test_branch_topology_detail_contains_dormant(self):
-        """BRANCH-TOPOLOGY check detail must contain the word 'dormant'."""
+    def test_branch_topology_detail_not_dormant(self):
+        """BRANCH-TOPOLOGY check detail must NOT contain 'dormant' — slice #843 wired real check.
+
+        Slice #843 replaced the ADR-0071 D4 stub with a real implementation that
+        reports the actual develop/main relationship.  The detail must mention real
+        topology data (develop sha, main sha, ahead/behind counts) rather than 'dormant'.
+        """
         health = self._load_health()
         result = health.check_branch_topology()
         detail = result.get("detail", "")
-        self.assertIn(
+        self.assertNotIn(
             "dormant",
             detail.lower(),
-            f"BRANCH-TOPOLOGY detail must contain 'dormant' per ADR-0071 D4; "
+            f"BRANCH-TOPOLOGY detail must not say 'dormant' — slice #843 wired the real check; "
             f"got: {detail!r}",
+        )
+        # Must report real topology: id correct, result is a known verdict
+        self.assertIn(
+            result.get("result"),
+            ("PASS", "WARN", "FAIL"),
+            f"BRANCH-TOPOLOGY result must be PASS/WARN/FAIL; got: {result.get('result')!r}",
         )
 
     def test_release_ready_id_correct(self):

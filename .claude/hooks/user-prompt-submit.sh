@@ -38,18 +38,29 @@ SID=$(echo "$STDIN" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 # --- Skill-invoke logging (ADR-0015/0016): detect leading /command ---
 # Extract the first non-space token; if it starts with /, capture the command word.
 # Soft-degrade: empty prompt, no leading /, empty command word → log nothing, exit 0.
+# PRD #876: routes through log-tool-event.sh (log-event.sh deleted).
 FIRST_TOKEN=$(echo "$PROMPT" | sed 's/^[[:space:]]*//' | awk '{print $1}')
 if [ -n "$FIRST_TOKEN" ] && [ "${FIRST_TOKEN:0:1}" = "/" ]; then
   SKILL_CMD="${FIRST_TOKEN:1}"  # strip leading /
   if [ -n "$SKILL_CMD" ]; then
-    jq -cn \
-      --arg ts "$(date -u -Iseconds)" \
-      --arg sid "$SID" \
-      --arg sk "$SKILL_CMD" \
-      '{ts: $ts, session_id: $sid, event: "skill_invoke", skill: $sk, source: "user_typed"}' \
-      2>/dev/null | bash "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-event.sh" 2>/dev/null || true
+    # Synthesise a minimal payload that log-tool-event.sh skill_invoke branch can parse.
+    _SKILL_PAYLOAD=$(python3 -c "
+import json, sys
+sid = sys.argv[1]; sk = sys.argv[2]
+print(json.dumps({'session_id': sid, 'tool_input': {'skill': sk},
+                  'hook_event_name': 'PreToolUse', 'tool_name': 'Skill'}))" \
+      "$SID" "$SKILL_CMD" 2>/dev/null || echo "")
+    if [ -n "$_SKILL_PAYLOAD" ]; then
+      _LTE_DIR="${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")}"
+      printf '%s' "$_SKILL_PAYLOAD" | bash "$_LTE_DIR/.claude/hooks/log-tool-event.sh" skill_invoke 2>/dev/null || true
+    fi
   fi
 fi
+
+# --- User-prompt logging (PRD #876 consolidation) ---
+# Replaces the standalone settings.json UserPromptSubmit log-tool-event.sh entry.
+_LTE_DIR="${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")}"
+printf '%s' "$STDIN" | bash "$_LTE_DIR/.claude/hooks/log-tool-event.sh" user_prompt 2>/dev/null || true
 
 [ -z "$PROMPT" ] && exit 0
 

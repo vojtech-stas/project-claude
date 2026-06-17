@@ -25,6 +25,12 @@ printf '{"hook":"stop-reviewer-gate","status":"attempt","ts":"%s"}\n' \
   "$(date -u -Iseconds 2>/dev/null)" \
   >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
+# Step 2b: emit session_stop workflow event (PRD #876 consolidation).
+# Replaces the standalone settings.json Stop log-tool-event.sh entry.
+# Fires unconditionally here (before gate logic) so the event is always recorded,
+# even when the gate blocks the session (exit 2 path).
+printf '%s' "$_SRG_STDIN" | bash "$SCRIPT_DIR/log-tool-event.sh" session_stop 2>/dev/null || true
+
 # Step 3: extract stop_hook_active + session_id from stdin (ADR-0057 D2 — loop guard first).
 _SRG_ACTIVE=$(printf '%s' "$_SRG_STDIN" | python3 -c \
   "import sys,json; d=json.load(sys.stdin); print(str(d.get('stop_hook_active',False)).lower())" \

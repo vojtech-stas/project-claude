@@ -131,6 +131,11 @@ CTX=$(printf "Branch: %s | %s commit(s) behind origin/main\n\nRecent commits:\n%
   "$HOOKS_WARN" "$JQ_WARN" "$GH_WARN" \
   | head -c 6144 | head -n 60)
 
+# ---- Emit session_start event (PRD #876 consolidation) ----------------------
+# Replaces the standalone settings.json SessionStart log-tool-event.sh entry.
+# Pass SESSION_STDIN (already captured above) as stdin to the logger.
+printf '%s' "$SESSION_STDIN" | bash "$SCRIPT_DIR/log-tool-event.sh" session_start 2>/dev/null || true
+
 # ---- Emit session_context_injected event via canonical logger pattern --------
 export LTE_STDIN="$SESSION_STDIN"
 export LTE_EVENT_TYPE="session_context_injected"

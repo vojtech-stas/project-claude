@@ -41,6 +41,8 @@ class TestUTCTimestamps(unittest.TestCase):
     BARE_DATE_PATTERN = re.compile(r'date -Iseconds')
 
     # Hook files that must not contain bare `date -Iseconds`
+    # Hook files that must not contain bare `date -Iseconds`
+    # Note: log-event.sh removed from list (deleted per PRD #876 slice #877)
     HOOK_FILES = [
         "dashboard-autostart.sh",
         "user-prompt-submit.sh",
@@ -49,7 +51,6 @@ class TestUTCTimestamps(unittest.TestCase):
         "stop-reviewer-gate.sh",
         "pre-tool-bash.sh",
         "session-start.sh",
-        "log-event.sh",
         "lib-root.sh",
     ]
 
@@ -86,9 +87,6 @@ class TestUTCTimestamps(unittest.TestCase):
 
     def test_session_start_utc(self):
         self._assert_no_bare_date("session-start.sh")
-
-    def test_log_event_utc(self):
-        self._assert_no_bare_date("log-event.sh")
 
     def test_lib_root_utc(self):
         # lib-root.sh currently has no date calls; assert stays clean.

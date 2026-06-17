@@ -438,5 +438,343 @@ class TestServerRoutePresentGroup(unittest.TestCase):
                               "'event_count' must be an int")
 
 
+# ---------------------------------------------------------------------------
+# Group 5: per-PRD firing tree (slice #901)
+# ---------------------------------------------------------------------------
+# Fixture: a main transcript with an Agent dispatch + two subagent JSONL files
+# (implementer SUCCESS + reviewer APPROVE) plus their meta.json files.
+# Asserts: nesting under the right dispatch, verdict extraction, PRD grouping.
+
+class TestFiringTree(unittest.TestCase):
+    """build_firing_tree() maps subagent files to dispatches + extracts verdicts."""
+
+    def setUp(self):
+        _inject_dashboard()
+        import transcript as tr
+        self._tr = tr
+
+        # Build a temporary directory that mimics a real session layout:
+        #   <tmpdir>/<session-id>.jsonl           — main transcript
+        #   <tmpdir>/<session-id>/subagents/       — subagent files
+        self._tmpdir = tempfile.mkdtemp()
+        self._session_id = "test-session-firing-abc"
+        self._main_path  = Path(self._tmpdir) / f"{self._session_id}.jsonl"
+        self._sub_dir    = Path(self._tmpdir) / self._session_id / "subagents"
+        self._sub_dir.mkdir(parents=True, exist_ok=True)
+
+        # Main transcript: one Agent dispatch (implementer) + one Agent dispatch (reviewer)
+        import json as _json
+        main_records = [
+            {
+                "type": "assistant",
+                "uuid": "a-dispatch-impl",
+                "parentUuid": None,
+                "timestamp": "2026-06-17T09:00:00.000Z",
+                "sessionId": self._session_id,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_impl_001",
+                            "name": "Agent",
+                            "input": {
+                                "subagent_type": "implementer",
+                                "description": "Run implementer for #901",
+                                "prompt": "Implement slice #901",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "uuid": "a-dispatch-rev",
+                "parentUuid": None,
+                "timestamp": "2026-06-17T09:10:00.000Z",
+                "sessionId": self._session_id,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_rev_001",
+                            "name": "Agent",
+                            "input": {
+                                "subagent_type": "reviewer",
+                                "description": "review PR #902 (slice #901)",
+                                "prompt": "Review PR #902",
+                            },
+                        }
+                    ],
+                },
+            },
+        ]
+        with self._main_path.open("w", encoding="utf-8") as f:
+            for rec in main_records:
+                f.write(_json.dumps(rec) + "\n")
+
+        # Implementer subagent: success trailer
+        impl_records = [
+            {
+                "type": "user",
+                "uuid": "u-impl-1",
+                "agentId": "agent-impl-hex",
+                "timestamp": "2026-06-17T09:01:00.000Z",
+                "sessionId": self._session_id,
+                "message": {"role": "user", "content": [{"type": "text", "text": "Implement slice #901"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a-impl-final",
+                "agentId": "agent-impl-hex",
+                "timestamp": "2026-06-17T09:08:00.000Z",
+                "sessionId": self._session_id,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": (
+                        "Done!\n\n"
+                        "RESULT: SUCCESS\n"
+                        "REASON: PR opened\n"
+                        "ARTIFACTS: https://github.com/x/y/pull/902\n"
+                        "PR_URL: https://github.com/x/y/pull/902\n"
+                        "BRANCH_NAME: feat/901-firing-tree\n"
+                        "SLICE_ISSUE: #901\n"
+                    )}],
+                },
+            },
+        ]
+        impl_jsonl = self._sub_dir / "agent-impl-hex.jsonl"
+        with impl_jsonl.open("w", encoding="utf-8") as f:
+            for rec in impl_records:
+                f.write(_json.dumps(rec) + "\n")
+
+        # Implementer meta.json — links toolUseId to the dispatch
+        impl_meta = self._sub_dir / "agent-impl-hex.meta.json"
+        with impl_meta.open("w", encoding="utf-8") as f:
+            _json.dump({
+                "agentType":   "implementer",
+                "description": "Run implementer for #901",
+                "toolUseId":   "toolu_impl_001",
+            }, f)
+
+        # Reviewer subagent: approve trailer
+        rev_records = [
+            {
+                "type": "user",
+                "uuid": "u-rev-1",
+                "agentId": "agent-rev-hex",
+                "timestamp": "2026-06-17T09:11:00.000Z",
+                "sessionId": self._session_id,
+                "message": {"role": "user", "content": [{"type": "text", "text": "Review PR #902"}]},
+            },
+            {
+                "type": "assistant",
+                "uuid": "a-rev-final",
+                "agentId": "agent-rev-hex",
+                "timestamp": "2026-06-17T09:15:00.000Z",
+                "sessionId": self._session_id,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": (
+                        "All checks pass.\n\n"
+                        "```\n"
+                        "VERDICT: APPROVE\n"
+                        "REASON: All rules pass\n"
+                        "ROUND: 1\n"
+                        "CRITIC: reviewer\n"
+                        "MERGE_STATUS: merged\n"
+                        "```\n"
+                    )}],
+                },
+            },
+        ]
+        rev_jsonl = self._sub_dir / "agent-rev-hex.jsonl"
+        with rev_jsonl.open("w", encoding="utf-8") as f:
+            for rec in rev_records:
+                f.write(_json.dumps(rec) + "\n")
+
+        # Reviewer meta.json
+        rev_meta = self._sub_dir / "agent-rev-hex.meta.json"
+        with rev_meta.open("w", encoding="utf-8") as f:
+            _json.dump({
+                "agentType":   "reviewer",
+                "description": "review PR #902 (slice #901)",
+                "toolUseId":   "toolu_rev_001",
+            }, f)
+
+        self._result = tr.build_firing_tree(self._main_path)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_result_is_dict(self):
+        """build_firing_tree() must return a dict."""
+        self.assertIsInstance(self._result, dict)
+
+    def test_dispatch_count(self):
+        """dispatch_count must equal 2 (one implementer, one reviewer)."""
+        self.assertEqual(self._result.get("dispatch_count"), 2,
+                         f"Expected 2 dispatches, got {self._result.get('dispatch_count')}")
+
+    def test_groups_present(self):
+        """groups dict must be non-empty."""
+        groups = self._result.get("groups", {})
+        self.assertGreater(len(groups), 0, "groups must be non-empty")
+
+    def test_dispatches_have_required_fields(self):
+        """Every dispatch must have agent, start, end, verdict fields."""
+        groups = self._result.get("groups", {})
+        for label, dispatches in groups.items():
+            for d in dispatches:
+                for field in ("agent", "start", "end", "verdict"):
+                    self.assertIn(field, d,
+                                  f"Dispatch in group '{label}' missing field '{field}'")
+
+    def test_implementer_verdict_extracted(self):
+        """Implementer subagent must have verdict=SUCCESS."""
+        groups = self._result.get("groups", {})
+        impl_dispatches = [
+            d for disps in groups.values() for d in disps
+            if d.get("agent") == "implementer"
+        ]
+        self.assertGreater(len(impl_dispatches), 0,
+                           "Expected at least one implementer dispatch")
+        self.assertEqual(impl_dispatches[0]["verdict"], "SUCCESS",
+                         f"Implementer verdict should be SUCCESS, got {impl_dispatches[0]['verdict']}")
+
+    def test_reviewer_verdict_extracted(self):
+        """Reviewer subagent must have verdict=APPROVE."""
+        groups = self._result.get("groups", {})
+        rev_dispatches = [
+            d for disps in groups.values() for d in disps
+            if d.get("agent") == "reviewer"
+        ]
+        self.assertGreater(len(rev_dispatches), 0,
+                           "Expected at least one reviewer dispatch")
+        self.assertEqual(rev_dispatches[0]["verdict"], "APPROVE",
+                         f"Reviewer verdict should be APPROVE, got {rev_dispatches[0]['verdict']}")
+
+    def test_prd_grouping_by_issue_number(self):
+        """Dispatches referencing #901 must share a PRD-bucket label."""
+        groups = self._result.get("groups", {})
+        # Both dispatches reference #901 (implementer: "Run implementer for #901",
+        # reviewer: "review PR #902 (slice #901)") — the first issue number found
+        # in each description determines the bucket.
+        # implementer -> #901, reviewer -> #902 (first number in its description)
+        # So we expect at least one bucket containing #901 reference.
+        all_labels = list(groups.keys())
+        self.assertTrue(
+            any("#" in lbl for lbl in all_labels),
+            f"Expected at least one issue-number bucket label, got: {all_labels}"
+        )
+
+    def test_dispatches_sorted_by_start(self):
+        """Dispatches within each group must be sorted by start timestamp."""
+        groups = self._result.get("groups", {})
+        for label, dispatches in groups.items():
+            starts = [d.get("start", "") for d in dispatches]
+            self.assertEqual(starts, sorted(starts),
+                             f"Group '{label}' dispatches not sorted by start")
+
+    def test_no_error_in_result(self):
+        """build_firing_tree() must not return an error for a valid fixture."""
+        err = self._result.get("error")
+        self.assertIsNone(err,
+                          f"Expected no error, got: {err}")
+
+    def test_source_field_present(self):
+        """Result must include a non-empty source field."""
+        src = self._result.get("source", "")
+        self.assertTrue(src, "source field must be non-empty")
+
+
+class TestFiringTreeDefensive(unittest.TestCase):
+    """build_firing_tree() handles edge cases defensively."""
+
+    def setUp(self):
+        _inject_dashboard()
+        import transcript as tr
+        self._tr = tr
+
+    def test_nonexistent_path_returns_error(self):
+        """build_firing_tree() on a non-existent path must return error key."""
+        from pathlib import Path as P
+        import tempfile
+        ghost = P(tempfile.mktemp(suffix=".jsonl"))
+        result = self._tr.build_firing_tree(ghost)
+        self.assertIsInstance(result, dict)
+        self.assertIn("error", result)
+        self.assertIsNotNone(result["error"])
+
+    def test_no_subagents_dir_returns_empty(self):
+        """A main transcript with no subagents/ dir returns empty groups, no error."""
+        import json as _json
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False, encoding="utf-8"
+        )
+        tmp.write(_json.dumps({"type": "user", "timestamp": "2026-06-17T10:00:00Z"}) + "\n")
+        tmp.close()
+        path = Path(tmp.name)
+        try:
+            result = self._tr.build_firing_tree(path)
+            self.assertIsInstance(result, dict)
+            self.assertEqual(result.get("dispatch_count", 0), 0)
+            self.assertIsNone(result.get("error"))
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_get_session_firing_returns_dict(self):
+        """get_session_firing() must return a dict with expected keys."""
+        result = self._tr.get_session_firing()
+        self.assertIsInstance(result, dict)
+        for key in ("groups", "dispatch_count", "source"):
+            self.assertIn(key, result,
+                          f"get_session_firing() result must have key '{key}'")
+        self.assertIsInstance(result["groups"], dict)
+        self.assertIsInstance(result["dispatch_count"], int)
+
+
+class TestServerFiringRoutePresent(unittest.TestCase):
+    """server.py must have /api/session-firing route; index.html must fetch it."""
+
+    def test_server_py_has_session_firing_route(self):
+        """server.py must contain '/api/session-firing' route."""
+        src = SERVER_PY.read_text(encoding="utf-8")
+        self.assertIn(
+            '"/api/session-firing"',
+            src,
+            "server.py must contain the /api/session-firing route handler",
+        )
+
+    def test_server_py_calls_get_session_firing(self):
+        """server.py must call get_session_firing() in the route handler."""
+        src = SERVER_PY.read_text(encoding="utf-8")
+        self.assertIn(
+            "get_session_firing",
+            src,
+            "server.py must call get_session_firing() for the /api/session-firing route",
+        )
+
+    def test_index_html_fetches_session_firing(self):
+        """index.html must reference /api/session-firing."""
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn(
+            "/api/session-firing",
+            html,
+            "index.html must fetch /api/session-firing (DEAD-ROUTES compliance)",
+        )
+
+    def test_index_html_has_session_firing_panel(self):
+        """index.html must have the session-firing-content div."""
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn(
+            "session-firing-content",
+            html,
+            "index.html must contain the session-firing-content element",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

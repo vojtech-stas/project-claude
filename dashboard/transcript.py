@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dashboard/transcript.py — session transcript reader (PRD #898, slice #899).
+dashboard/transcript.py — session transcript reader (PRD #898, slices #899/#901).
 
 Resolves the active Claude Code session transcript JSONL, parses it together
 with per-subagent JSONL files, and normalises every record into the event shape
@@ -26,9 +26,12 @@ Public API:
   resolve_transcript() -> Path | None
   parse_transcript(path: Path) -> list[dict]
   get_session_events() -> dict  (for /api/session-live)
+  build_firing_tree(path: Path) -> dict  (for /api/session-firing)
+  get_session_firing() -> dict  (cached, for /api/session-firing)
 
 CLI:
   python dashboard/transcript.py --self
+  python dashboard/transcript.py --firing
 """
 
 from __future__ import annotations
@@ -478,6 +481,294 @@ def _parse_file_into(
 
 
 # ---------------------------------------------------------------------------
+# Per-PRD firing tree (slice #901)
+# ---------------------------------------------------------------------------
+# Maps each subagent transcript (subagents/agent-*.jsonl) to its parent Agent
+# dispatch in the MAIN transcript via the meta.json toolUseId field.
+# Extracts: agent type, start/end timestamps, verdict (CRITIC/GENERATOR trailer).
+# Groups dispatches by PRD label derived from the description field.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+# Patterns for extracting trailers from subagent final assistant messages
+_VERDICT_RE = _re.compile(r"^\s*VERDICT\s*:\s*(\w+)\s*$", _re.IGNORECASE | _re.MULTILINE)
+_RESULT_RE  = _re.compile(r"^\s*RESULT\s*:\s*(\w+)\s*$", _re.IGNORECASE | _re.MULTILINE)
+# Pattern for extracting issue numbers from description strings
+# e.g. "implementer for #901", "reviewer PR #823 (closing slice)", "backlog-critic for #725"
+_ISSUE_RE   = _re.compile(r"#(\d+)")
+
+
+def _read_subagent_meta(subagents_dir: Path) -> dict:
+    """Read all agent-*.meta.json files in subagents_dir.
+
+    Returns a dict keyed by toolUseId:
+      {
+        tool_use_id: {
+          "agent_type":    str,   # from agentType field
+          "description":   str,   # from description field
+          "subagent_file": Path,  # path to the .jsonl file
+          "meta_file":     Path,  # path to the .meta.json file
+        }
+      }
+
+    Defensive: missing or malformed meta files are silently skipped.
+    """
+    result: dict = {}
+    if not subagents_dir.is_dir():
+        return result
+    try:
+        meta_files = [
+            f for f in subagents_dir.iterdir()
+            if f.is_file() and f.name.endswith(".meta.json")
+        ]
+    except Exception:
+        return result
+
+    for mf in meta_files:
+        try:
+            with mf.open(encoding="utf-8", errors="replace") as fh:
+                meta = json.loads(fh.read())
+            if not isinstance(meta, dict):
+                continue
+            tool_use_id = meta.get("toolUseId", "").strip()
+            if not tool_use_id:
+                continue
+            # Derive the corresponding .jsonl file path
+            stem = mf.name[: -len(".meta.json")]  # agent-<hex>
+            jsonl_path = subagents_dir / (stem + ".jsonl")
+            result[tool_use_id] = {
+                "agent_type":    meta.get("agentType", ""),
+                "description":   meta.get("description", ""),
+                "subagent_file": jsonl_path,
+                "meta_file":     mf,
+            }
+        except Exception:
+            continue
+    return result
+
+
+def _parse_subagent_outcome(subagent_path: Path) -> dict:
+    """Parse a subagent's JSONL to extract start/end timestamps and verdict.
+
+    Returns:
+      {
+        "start": str,   # ISO timestamp of first record
+        "end":   str,   # ISO timestamp of last assistant record
+        "verdict": str, # VERDICT (APPROVE/BLOCK) or RESULT (SUCCESS/BLOCKED/…)
+                        #  or "" if not found
+      }
+
+    Defensive: returns {"start":"","end":"","verdict":""} on any error.
+    """
+    empty: dict = {"start": "", "end": "", "verdict": ""}
+    if not subagent_path.exists():
+        return empty
+
+    records = _read_jsonl_records(subagent_path)
+    if not records:
+        return empty
+
+    # Start = timestamp of first record
+    start = records[0].get("timestamp", "")
+
+    # End + verdict = from last assistant message with text content
+    end = ""
+    verdict = ""
+    for rec in reversed(records):
+        ts = rec.get("timestamp", "")
+        if ts and not end:
+            end = ts
+        if rec.get("type") == "assistant":
+            msg = rec.get("message", {})
+            if not isinstance(msg, dict):
+                msg = {}
+            content = msg.get("content", [])
+            if not isinstance(content, list):
+                content = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text":
+                    text = item.get("text", "")
+                    # Try VERDICT (critic subagents)
+                    vm = _VERDICT_RE.search(text)
+                    if vm:
+                        verdict = vm.group(1).upper()
+                        break
+                    # Try RESULT (generator subagents like implementer)
+                    rm = _RESULT_RE.search(text)
+                    if rm:
+                        verdict = rm.group(1).upper()
+                        break
+            if verdict:
+                break
+
+    return {"start": start, "end": end, "verdict": verdict}
+
+
+def _derive_prd_label(description: str, agent_type: str) -> str:
+    """Derive a PRD-bucket label from a dispatch description.
+
+    Strategy:
+      1. Extract the first issue number #N from the description.
+         For implementer/reviewer dispatches these are typically slice numbers.
+         The label is used for grouping — exact PRD mapping via gh would be
+         round-trip expensive; we use the issue reference as a bucket label.
+      2. Fall back to the agent_type as the bucket.
+      3. Ultimate fallback: "unattributed (this session)".
+
+    This keeps the function stdlib-only and fast (no gh calls in the hot path).
+    The UI shows the label as-is; the caller can enrich it if desired.
+    """
+    if description:
+        m = _ISSUE_RE.search(description)
+        if m:
+            return f"#{m.group(1)}"
+    if agent_type:
+        return agent_type
+    return "unattributed (this session)"
+
+
+def build_firing_tree(path: Path) -> dict:
+    """Build the per-PRD firing tree for the session at *path*.
+
+    1. Reads meta.json files from the subagents directory to build a
+       toolUseId → dispatch map.
+    2. For each dispatch, parses the subagent JSONL to extract
+       start/end/verdict.
+    3. Groups dispatches by the PRD label derived from their description.
+
+    Returns:
+      {
+        "groups": {
+          "<prd-label>": [
+            {
+              "agent":       str,   # agent type (implementer, reviewer, …)
+              "description": str,   # raw description from meta.json
+              "start":       str,   # ISO timestamp
+              "end":         str,   # ISO timestamp
+              "verdict":     str,   # APPROVE / BLOCK / SUCCESS / … or ""
+              "tool_use_id": str,   # for cross-referencing
+            },
+            …
+          ],
+          …
+        },
+        "dispatch_count": int,
+        "source": str,   # transcript path
+        "error": str | None,
+      }
+
+    Defensive: never raises; returns error key on failure.
+    """
+    empty_result: dict = {
+        "groups": {},
+        "dispatch_count": 0,
+        "source": str(path) if path else "",
+        "error": None,
+    }
+
+    if not path or not path.exists():
+        empty_result["error"] = "transcript path not found"
+        return empty_result
+
+    # Locate subagents directory: <session-id>/subagents/ next to main transcript
+    subagents_dir = path.parent / path.stem / "subagents"
+
+    meta_map = _read_subagent_meta(subagents_dir)
+    if not meta_map:
+        empty_result["source"] = str(path)
+        # Not an error — session may have no subagent dispatches yet
+        return empty_result
+
+    # Also collect dispatches from the main transcript for ordering/timestamps
+    # (the meta_map already has toolUseId, so we use that as the primary key)
+    groups: dict = {}
+    dispatch_count = 0
+
+    for tool_use_id, meta in meta_map.items():
+        agent_type   = meta["agent_type"]
+        description  = meta["description"]
+        sub_path     = meta["subagent_file"]
+
+        outcome = _parse_subagent_outcome(sub_path)
+        label   = _derive_prd_label(description, agent_type)
+
+        dispatch = {
+            "agent":       agent_type,
+            "description": description,
+            "start":       outcome["start"],
+            "end":         outcome["end"],
+            "verdict":     outcome["verdict"],
+            "tool_use_id": tool_use_id,
+        }
+
+        if label not in groups:
+            groups[label] = []
+        groups[label].append(dispatch)
+        dispatch_count += 1
+
+    # Sort dispatches within each group by start timestamp
+    for label in groups:
+        groups[label].sort(key=lambda d: d.get("start") or "")
+
+    return {
+        "groups": groups,
+        "dispatch_count": dispatch_count,
+        "source": str(path),
+        "error": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Mtime cache for /api/session-firing
+# ---------------------------------------------------------------------------
+
+_firing_cache: dict = {
+    "path":   None,   # Path | None
+    "mtime":  None,   # float | None
+    "result": None,   # dict | None
+}
+
+
+def get_session_firing() -> dict:
+    """Return the firing tree dict for /api/session-firing.
+
+    Caches by transcript file mtime — no full re-parse if unchanged.
+    """
+    global _firing_cache
+
+    path = resolve_transcript()
+    if path is None:
+        return {
+            "groups": {},
+            "dispatch_count": 0,
+            "source": "",
+            "error": "no transcript file found",
+        }
+
+    try:
+        mtime = path.stat().st_mtime
+    except Exception as exc:
+        return {
+            "groups": {},
+            "dispatch_count": 0,
+            "source": str(path),
+            "error": f"stat failed: {exc}",
+        }
+
+    if _firing_cache["path"] == path and _firing_cache["mtime"] == mtime:
+        return _firing_cache["result"]  # type: ignore[return-value]
+
+    result = build_firing_tree(path)
+    _firing_cache["path"]   = path
+    _firing_cache["mtime"]  = mtime
+    _firing_cache["result"] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Mtime cache for /api/session-live
 # ---------------------------------------------------------------------------
 
@@ -596,9 +887,50 @@ def _cli_self() -> None:
     sys.exit(0)
 
 
+def _cli_firing() -> None:
+    """Print the per-PRD firing tree from the current session transcript."""
+    path = resolve_transcript()
+    if path is None:
+        print("ERROR: no transcript file found", file=sys.stderr)
+        print(f"Searched: {_candidate_project_dirs()}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Transcript path  : {path}")
+    result = build_firing_tree(path)
+    err = result.get("error")
+    if err:
+        print(f"Error            : {err}", file=sys.stderr)
+
+    groups = result.get("groups", {})
+    total = result.get("dispatch_count", 0)
+    print(f"Dispatch count   : {total}")
+    print(f"PRD buckets      : {len(groups)}")
+
+    if not groups:
+        print("(no dispatches found — subagents/ directory may be empty or missing)")
+        sys.exit(0)
+
+    print()
+    for label in sorted(groups.keys()):
+        dispatches = groups[label]
+        print(f"  [{label}]  ({len(dispatches)} dispatch{'es' if len(dispatches) != 1 else ''})")
+        for d in dispatches:
+            start = (d.get("start") or "")[:19]
+            end   = (d.get("end")   or "")[:19]
+            agent   = (d.get("agent") or "?")[:20]
+            verdict = d.get("verdict") or "—"
+            desc    = (d.get("description") or "")[:60]
+            print(f"    {start}  {agent:<20}  verdict={verdict:<10}  {desc}")
+        print()
+
+    sys.exit(0)
+
+
 if __name__ == "__main__":
     if "--self" in sys.argv:
         _cli_self()
+    elif "--firing" in sys.argv:
+        _cli_firing()
     else:
-        print("Usage: python dashboard/transcript.py --self")
+        print("Usage: python dashboard/transcript.py --self | --firing")
         sys.exit(1)

@@ -114,6 +114,18 @@ DASH_PORT=9876 python dashboard/server.py
 
 Solo developer (you). Observation tool; advisory only. Does not replace `/audit-meta`, `/audit-subagents`, or `tools/cascade-finder.py` — it displays their output.
 
+## Two-tier delivery model (PRD #836 / ADR-0070 D1)
+
+The project uses a `develop`/`main` two-tier model (wave 5 of workflow v2). Agents merge slices to `develop`; `main` advances only via the deterministic promotion gate (`tools/promote.sh` + `RELEASE-READY`). The Health tab surfaces two new monitoring areas for this model:
+
+**Promotion panel** (Health tab, `RELEASE-READY` + `BRANCH-TOPOLOGY` rows):
+- **RELEASE-READY** — evaluates all six conditions from ADR-0070 D2: (a) CI green on `develop` HEAD; (b) full test suite passes; (c) latest production-verify PASS with DOM-attested proof; (d) green-develop streak intact; (e) zero open `needs-human` items; (f) unpromoted batch touches no guardrail-machinery path. A `verdict="true"` means `tools/promote.sh` may advance `main`. Details report the first failing condition when held. Per ADR-0070 D2 / ADR-0072 D1.
+- **BRANCH-TOPOLOGY** — confirms slice PRs target `develop` (not `main`) and that `main` advances only via recorded `promotion` events. Dormant until slice #843 wires full branch-protection. Per ADR-0070 D1 / ADR-0072 D3.
+
+**Promotion event log** (`/api/runs`, Live tab lane B): each promotion appends a `{"v":2,"event":"promotion","from":"develop","to":"main","sha":"..."}` event to `.claude/logs/workflow-events.jsonl`; the Green-develop row shows `main`↔`develop` lag (commits-behind + age) and the last promotion sha.
+
+The sole human-blocking role in this model is acking guardrail-machinery promotions (batches touching `.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or the promotion gate itself). The `R-SENSITIVE-DETECTOR` health row tallies these and their ack status. Per ADR-0070 D4.
+
 ## Fixtures
 
 `dashboard/fixtures/` contains sample payloads used by `tools/ci-checks.sh` CHECK 8 to mechanically validate the Agent-hook payload schema. CHECK 8 uses a python3 parser (not jq): it loads the fixture via `json.load()` and asserts that `tool_input.subagent_type` resolves to a non-empty value — proving the python3 path handles the canonical `PostToolUse·Agent` payload correctly. Regenerate `dashboard/fixtures/agent-payload-sample.json` from a real `PostToolUse·Agent` payload if Claude Code's hook schema changes.

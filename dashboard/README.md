@@ -68,7 +68,7 @@ Then open `http://localhost:8765` in any modern browser.
     - **DEAD-ROUTES** — API routes served by `dashboard/server.py` but never fetched by `dashboard/index.html`; honest day-one pre-existing dead routes are the starting value. Per ADR-0068 D1.
     - **SESSION-INJECTION** — one `session_context_injected` event per `session_id` in the last 20-session window; PASS when all sessions have an injection event; WARN when <50% (hook not yet active or pre-hook sessions dominate). Per ADR-0068 D3.
     - **R-SENSITIVE-DETECTOR** — enforcement-path merged PRs (post-bootstrap) without a `human-ack` signal (label or body keyword); always returns WARN (historical tally — blocking is enforced at review time by R-SENSITIVE in the reviewer rubric); activated at PRD #813 closing slice per ADR-0064 D4.
-  - **FRONTMATTER-COVERAGE** — % of `.claude/agents/*.md` files with explicit `model:` frontmatter; PASS when 100%; FAIL on any missing. Per ADR-0027 D1 / ADR-0069 D3 (solo-operator model invariant; fleet-economics machinery removed per slice #854).
+  - **FRONTMATTER-COVERAGE** — % of `.claude/agents/*.md` files with explicit `model:` frontmatter; PASS when 100%; FAIL on any missing. Per ADR-0027 D1 (fleet-economics machinery removed per ADR-0071 D2; FRONTMATTER-COVERAGE retained as the ADR-0027 D1 `model:` invariant).
 
 ## API reference
 

@@ -4,7 +4,7 @@
 # Runnable locally and in GitHub Actions (see .github/workflows/ci.yml).
 # Exits 0 if all checks pass; exits 1 if any check fails.
 # ADR-0042 D1 — mechanical CI gate; mirrors audit-meta DOCS-1/DOCS-2/DOCS-7
-# logic + ADR-0041 D2 origin/main base for commit-range checks.
+# logic + ADR-0070 D1 origin/develop base for commit-range checks.
 #
 # Usage: bash tools/ci-checks.sh
 #   (run from the repo root)
@@ -63,12 +63,12 @@ fi
 # ---------------------------------------------------------------------------
 # CHECK 3: Commit subjects — ≤72 chars + Conventional Commits format
 # ---------------------------------------------------------------------------
-echo "--- CHECK 3: commit subjects over origin/main..HEAD ---"
-# Fetch origin/main so the range is available in CI (ADR-0041 D2).
-git fetch origin main --quiet 2>/dev/null || true
+echo "--- CHECK 3: commit subjects over origin/develop..HEAD ---"
+# Fetch origin/develop so the range is available in CI (ADR-0070 D1).
+git fetch origin develop --quiet 2>/dev/null || true
 
 CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci)(\(.+\))?: .+'
-RANGE_COMMITS=$(git log --no-merges --format='%s' origin/main..HEAD 2>/dev/null || true)
+RANGE_COMMITS=$(git log --no-merges --format='%s' origin/develop..HEAD 2>/dev/null || true)
 
 if [ -z "$RANGE_COMMITS" ]; then
     echo "CHECK 3 VACUOUS — no commits in range; subject-format not verified"
@@ -777,7 +777,7 @@ def check_file(filepath):
     return violations
 
 
-# Get tracked files from git diff (HEAD range: staged + committed since origin/main).
+# Get tracked files from git diff (HEAD range: staged + committed since origin/develop).
 # We scan the full file content of any file in the diff rather than just the diff lines,
 # since secrets in context lines are also dangerous.
 try:

@@ -5,10 +5,10 @@
 #   NOT a Claude Code event hook (per ADR-0015). Three modes (mode as $1):
 #
 #   branch-restore <expected-branch>
-#     git fetch origin main (soft-degrade on failure); if the current worktree
+#     git fetch origin develop (soft-degrade on failure); if the current worktree
 #     drifted off <expected-branch> AND the tree is clean, attempts ff-restore via
-#     `git checkout -B <expected> origin/main`.
-#     FF-ONLY (ADR-0058 D3): if the current HEAD is NOT an ancestor of origin/main
+#     `git checkout -B <expected> origin/develop`.
+#     FF-ONLY (ADR-0058 D3): if the current HEAD is NOT an ancestor of origin/develop
 #     (local commits exist), exits NON-ZERO with a divergence message — does NOT
 #     force-reset. The silent reset --hard behaviour is RETIRED.
 #     No-op (exit 0) if tree is dirty or already on the correct branch.
@@ -16,10 +16,11 @@
 #
 #   root-sync
 #     Resolves the root repo via `git --git-common-dir` → dirname (same pattern as
-#     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to origin/main:
-#     `git -C <root> checkout main && git -C <root> merge --ff-only origin/main`.
+#     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to origin/develop:
+#     `git -C <root> checkout develop && git -C <root> merge --ff-only origin/develop`.
 #     STRICT: ff-only, clean-only, non-zero on failure. Never reset/force/non-ff.
 #     Implements ADR-0041 D3 carve-out: orchestrator MAY ff-sync root post-merge.
+#     Per ADR-0070 D1: integration branch is develop; main advances only by promotion.
 #     Exits NON-ZERO if an unrepaired violation (cannot ff-sync) remains.
 #
 #   prune
@@ -35,7 +36,7 @@
 #     NO-PR RECLAMATION (ADR-0058 D3): a dispatch worktree with NO PR of any kind
 #     (no open, no merged) is reclaimed when ALL THREE conditions hold:
 #       1. Working tree is clean (no uncommitted changes, no untracked files)
-#       2. Branch is 0-ahead of origin/main (no local commits beyond main)
+#       2. Branch is 0-ahead of origin/develop (no local commits beyond develop)
 #       3. Age threshold: worktree directory mtime > 24 hours ago
 #     This prevents accumulation of agent worktrees abandoned before opening a PR.
 #     The age threshold avoids racing a dispatch in progress.
@@ -60,7 +61,7 @@ case "$MODE" in
       exit 0
     fi
 
-    git fetch origin main 2>/dev/null || true
+    git fetch origin develop 2>/dev/null || true
 
     CURRENT=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
     if [ "$CURRENT" = "$EXPECTED" ]; then
@@ -75,18 +76,18 @@ case "$MODE" in
     fi
 
     # FF-ONLY CHECK (ADR-0058 D3): refuse non-ff restore.
-    # Check if current HEAD is an ancestor of origin/main.
+    # Check if current HEAD is an ancestor of origin/develop.
     # If not, local commits exist that would be lost by a force-reset.
-    if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+    if ! git merge-base --is-ancestor HEAD origin/develop 2>/dev/null; then
       DIVERGED_SHA=$(git rev-parse --short HEAD 2>/dev/null)
-      ORIGIN_SHA=$(git rev-parse --short origin/main 2>/dev/null)
-      echo "ERROR: branch-restore: HEAD ${DIVERGED_SHA} is not an ancestor of origin/main ${ORIGIN_SHA} — branch '${CURRENT}' has diverged (expected '${EXPECTED}'). Silent force-reset RETIRED per ADR-0058 D3. Manual intervention required." >&2
+      ORIGIN_SHA=$(git rev-parse --short origin/develop 2>/dev/null)
+      echo "ERROR: branch-restore: HEAD ${DIVERGED_SHA} is not an ancestor of origin/develop ${ORIGIN_SHA} — branch '${CURRENT}' has diverged (expected '${EXPECTED}'). Silent force-reset RETIRED per ADR-0058 D3. Manual intervention required." >&2
       exit 1
     fi
 
-    # Safe to ff-restore: HEAD is an ancestor of origin/main.
-    git checkout -B "$EXPECTED" origin/main 2>/dev/null || {
-      echo "ERROR: branch-restore: git checkout -B '$EXPECTED' origin/main failed" >&2
+    # Safe to ff-restore: HEAD is an ancestor of origin/develop.
+    git checkout -B "$EXPECTED" origin/develop 2>/dev/null || {
+      echo "ERROR: branch-restore: git checkout -B '$EXPECTED' origin/develop failed" >&2
       exit 1
     }
     exit 0
@@ -110,16 +111,16 @@ case "$MODE" in
       exit 1
     fi
 
-    git -C "$MAIN" fetch origin main 2>/dev/null || {
+    git -C "$MAIN" fetch origin develop 2>/dev/null || {
       echo "WARNING: root-sync: fetch failed; skipping ff-sync" >&2
       exit 0
     }
-    git -C "$MAIN" checkout main 2>/dev/null || {
-      echo "ERROR: root-sync: checkout main failed" >&2
+    git -C "$MAIN" checkout develop 2>/dev/null || {
+      echo "ERROR: root-sync: checkout develop failed" >&2
       exit 1
     }
-    git -C "$MAIN" merge --ff-only origin/main 2>/dev/null || {
-      echo "ERROR: root-sync: merge --ff-only failed; root repo has diverged from origin/main" >&2
+    git -C "$MAIN" merge --ff-only origin/develop 2>/dev/null || {
+      echo "ERROR: root-sync: merge --ff-only failed; root repo has diverged from origin/develop" >&2
       exit 1
     }
     exit 0
@@ -199,11 +200,11 @@ case "$MODE" in
     }
 
     # is_branch_zero_ahead <path>
-    #   Returns 0 (true) iff branch at <path> has 0 commits ahead of origin/main.
+    #   Returns 0 (true) iff branch at <path> has 0 commits ahead of origin/develop.
     is_branch_zero_ahead() {
       local wt="$1"
       local ahead
-      ahead=$(git -C "$wt" rev-list --count "origin/main..HEAD" 2>/dev/null) || return 1
+      ahead=$(git -C "$wt" rev-list --count "origin/develop..HEAD" 2>/dev/null) || return 1
       if [ -z "$ahead" ]; then
         return 1
       fi

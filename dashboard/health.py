@@ -29,6 +29,7 @@ Exports:
     check_blind_dispatch_rate() -> dict  (slice #783/ADR-0060 D1: BLIND-REVIEW prefix rate)
     check_residual_ratio() -> dict       (slice #797/ADR-0066 D1: JUDGMENT+EXTRACT_FAILED / total QA-plan rows)
     check_proof_presence() -> dict       (slice #783/ADR-0061 D1: route+proof-token per merged PR)
+    check_proof_integrity() -> dict      (slice #839/ADR-0070 D5: DOM inner_text attestation check)
     check_merge_integrity() -> dict      (slice #783/ADR-0062 D1: BEHIND encountered/recovered)
     check_capture_shape() -> dict        (slice #783/ADR-0063 D2: 3-heading regex over root-cause issues)
     check_green_main() -> dict           (slice #783/ADR-0062 D3: last main_green sha + lag + age)
@@ -3442,6 +3443,199 @@ def check_release_ready() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# PROOF-INTEGRITY check (slice #839 / ADR-0070 D5)
+#
+# Validates that browser-route proof artifacts are genuinely DOM-attested,
+# NOT API-layer-only.  The #811/#833 class shipped because the API-layer proof
+# passed while the rendered DOM was empty; this check closes that gap.
+#
+# Sub-checks per ADR-0070 D5:
+#   (1) Browser-route PRs: the claimed proof string must appear in a captured
+#       rendered-DOM inner_text assertion (inner_text: <text> token in body or
+#       comments).  A proof with only a .png screenshot or an API JSON blob but
+#       no inner_text: line FAILS.
+#   (2) All routes: PROOF_SOURCE must name a live non-fixture session
+#       (must not contain "fixture" per rule #21).
+#   (3) All routes: ENV: field must be non-empty (sha freshness attestation).
+#
+# Test injection: set _PROOF_INTEGRITY_PR_OVERRIDE to a JSON array of PR dicts
+# (each with keys: number, headRefName, labels, files, body, comments).
+# When set, the network fetch is bypassed entirely.
+# ---------------------------------------------------------------------------
+
+# Bootstrap cutoff — PRs at or below this number are grandfathered.
+# Bind-forward per ADR-0004 D2; slice #839 is the implementing merge.
+_PROOF_INTEGRITY_BOOTSTRAP_PR = 839
+
+# Regex tokens that indicate DOM inner_text attestation in a PR body/comment.
+_INNER_TEXT_RE = re.compile(r'inner_text\s*:', re.IGNORECASE)
+
+# PROOF_SOURCE fixture-marker: presence of "fixture" anywhere in the value.
+_FIXTURE_SOURCE_RE = re.compile(r'PROOF_SOURCE\s*:\s*([^\n]+)', re.IGNORECASE)
+
+# ENV field: must be non-empty after the colon.
+_ENV_FIELD_RE = re.compile(r'\bENV\s*:\s*(\S+)', re.IGNORECASE)
+
+
+def _pr_has_inner_text_attestation(pr_body: str, comments: list[str]) -> bool:
+    """Return True if inner_text: appears in the PR body or any comment."""
+    if _INNER_TEXT_RE.search(pr_body):
+        return True
+    for comment in comments:
+        if _INNER_TEXT_RE.search(comment):
+            return True
+    return False
+
+
+def _proof_source_is_fixture(pr_body: str, comments: list[str]) -> bool:
+    """Return True if any PROOF_SOURCE: line contains 'fixture' (rule #21)."""
+    all_text = pr_body + "\n" + "\n".join(comments)
+    for m in _FIXTURE_SOURCE_RE.finditer(all_text):
+        value = m.group(1).strip()
+        if "fixture" in value.lower():
+            return True
+    return False
+
+
+def _env_field_is_empty(pr_body: str, comments: list[str]) -> bool:
+    """Return True when ENV: is present but has no non-whitespace value."""
+    all_text = pr_body + "\n" + "\n".join(comments)
+    # Look for ENV: lines — bare "ENV:" or "ENV: " with nothing after it.
+    env_bare_re = re.compile(r'^\s*ENV\s*:\s*$', re.IGNORECASE | re.MULTILINE)
+    if env_bare_re.search(all_text):
+        return True
+    return False
+
+
+def check_proof_integrity() -> dict:
+    """PROOF-INTEGRITY: validate DOM-attestation of browser-route proof artifacts.
+
+    Per ADR-0070 D5: for browser-route proof, asserts the claimed string appears
+    in captured rendered-DOM inner_text (NOT API JSON — the #811/#833 class
+    shipped because API-layer proof passed while the DOM was empty).
+
+    Sub-checks (applied to each qualifying browser-route PR):
+      (1) inner_text: token present in body or comments (DOM-attested)
+      (2) PROOF_SOURCE does not contain 'fixture' (rule #21 live-source rule)
+      (3) ENV: field is non-empty (sha freshness attestation)
+
+    Honest day-one: evaluates over recent merged non-trivial browser-route PRs.
+    Grandfathers PRs <= _PROOF_INTEGRITY_BOOTSTRAP_PR.
+
+    WARN when no qualifying browser-route PRs found (no data yet).
+    FAIL when any PR fails a sub-check (genuine DOM-attestation violation).
+    PASS when all evaluated PRs pass all sub-checks.
+
+    Test injection: set env var _PROOF_INTEGRITY_PR_OVERRIDE to a JSON list of
+    PR dicts (keys: number, headRefName, labels, files, body, comments).
+    """
+    import json as _json
+
+    # --- Test-injection path ---
+    override_raw = os.environ.get("_PROOF_INTEGRITY_PR_OVERRIDE", "")
+    if override_raw:
+        try:
+            all_prs = _json.loads(override_raw)
+        except Exception as exc:
+            return {
+                "id": "PROOF-INTEGRITY",
+                "result": "WARN",
+                "detail": f"_PROOF_INTEGRITY_PR_OVERRIDE parse error: {exc}",
+            }
+    else:
+        # --- Production path: fetch recent merged PRs via collector ---
+        try:
+            _insert_dashboard_sys_path()
+            from collector import get_recent_merged_prs  # noqa: PLC0415
+        except Exception as exc:
+            return {
+                "id": "PROOF-INTEGRITY",
+                "result": "WARN",
+                "detail": f"collector import failed: {exc}",
+            }
+        all_prs = get_recent_merged_prs(limit=_PROOF_PRESENCE_WINDOW + 5)
+
+    # --- Filter to qualifying PRs ---
+    # Skip trivial-lane; skip grandfathered; keep only browser-route PRs.
+    browser_prs = []
+    for pr in all_prs:
+        ref = pr.get("headRefName", "")
+        labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
+        if "trivial" in labels or ref.startswith("hotfix/"):
+            continue
+        if pr.get("number", 0) <= _PROOF_INTEGRITY_BOOTSTRAP_PR:
+            continue
+        # Determine route: only evaluate browser-route PRs.
+        changed_files = [f.get("path", "") for f in (pr.get("files") or [])]
+        route_classes = _classify_route(changed_files)
+        if "browser" not in route_classes:
+            continue
+        browser_prs.append(pr)
+
+    if not browser_prs:
+        return {
+            "id": "PROOF-INTEGRITY",
+            "result": "WARN",
+            "detail": (
+                f"no qualifying browser-route PRs found above bootstrap "
+                f"threshold #{_PROOF_INTEGRITY_BOOTSTRAP_PR} — honest no-data"
+            ),
+        }
+
+    # --- Evaluate each PR against the three sub-checks ---
+    violations: list[str] = []
+    passed = 0
+
+    for pr in browser_prs:
+        pr_num = pr.get("number", "?")
+        pr_body = pr.get("body", "") or ""
+        comments = [c.get("body", "") for c in (pr.get("comments") or [])]
+
+        # Sub-check (1): browser route requires inner_text: attestation
+        if not _pr_has_inner_text_attestation(pr_body, comments):
+            violations.append(
+                f"PR #{pr_num}: browser-route proof lacks inner_text: "
+                f"attestation (API-only or screenshot-only proof — #811/#833 class)"
+            )
+            continue
+
+        # Sub-check (2): PROOF_SOURCE must not be fixture-tagged (rule #21)
+        if _proof_source_is_fixture(pr_body, comments):
+            violations.append(
+                f"PR #{pr_num}: PROOF_SOURCE contains 'fixture' "
+                f"(live non-fixture session required per rule #21)"
+            )
+            continue
+
+        # Sub-check (3): ENV: field must be non-empty
+        if _env_field_is_empty(pr_body, comments):
+            violations.append(
+                f"PR #{pr_num}: ENV: field is empty "
+                f"(sha freshness attestation required per ADR-0070 D5)"
+            )
+            continue
+
+        passed += 1
+
+    total = len(browser_prs)
+    if violations:
+        detail = (
+            f"{len(violations)}/{total} browser-route PRs fail DOM-attestation: "
+            + "; ".join(violations[:3])
+            + (" [truncated]" if len(violations) > 3 else "")
+        )
+        return {"id": "PROOF-INTEGRITY", "result": "FAIL", "detail": detail,
+                "passed": passed, "failed": len(violations), "total": total}
+
+    detail = (
+        f"{passed}/{total} browser-route PRs pass DOM-attestation "
+        f"(inner_text:-attested, live PROOF_SOURCE, non-empty ENV)"
+    )
+    return {"id": "PROOF-INTEGRITY", "result": "PASS", "detail": detail,
+            "passed": passed, "failed": 0, "total": total}
+
+
+# ---------------------------------------------------------------------------
 # HOOK-LIVENESS check (slice #849) — detects silent total-dark of hook layer.
 # ---------------------------------------------------------------------------
 
@@ -3649,6 +3843,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     # Two-tier topology stubs (ADR-0070 wave 5 — slice 1)
     "BRANCH-TOPOLOGY": check_branch_topology,
     "RELEASE-READY":   check_release_ready,
+    # DOM-attestation integrity (ADR-0070 D5 — slice #839)
+    "PROOF-INTEGRITY": check_proof_integrity,
 }
 
 
@@ -3772,6 +3968,7 @@ def _build_health_data() -> dict:
                 check_blind_dispatch_rate(),
                 check_residual_ratio(),
                 check_proof_presence(),
+                check_proof_integrity(),
                 check_merge_integrity(),
                 check_capture_shape(),
                 check_green_main(),

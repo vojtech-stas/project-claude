@@ -862,6 +862,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 16: META-TRIPWIRE (slice #840 / ADR-0070 D4)
+#   Guardrail-machinery promotion meta-tripwire.
+#   WARN is allowed (day-one: no promotions yet); only FAIL trips this.
+#   FAIL means: unpromoted batch touches guardrail-machinery path(s) without
+#   a promotion-ack — must be acknowledged before promoting to main.
+#   Delegates to registry CLI (single-source per ADR-0064 D3).
+# ---------------------------------------------------------------------------
+echo "--- CHECK 16: META-TRIPWIRE guardrail-machinery check ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 16 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK16_OUTPUT=$(python3 dashboard/health.py --check META-TRIPWIRE 2>&1)
+    CHECK16_EXIT=$?
+    if [ "$CHECK16_EXIT" -eq 0 ]; then
+        pass "CHECK 16 (META-TRIPWIRE): $CHECK16_OUTPUT"
+    else
+        fail "CHECK 16 (META-TRIPWIRE): $CHECK16_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

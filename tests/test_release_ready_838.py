@@ -191,28 +191,45 @@ class TestConditionE_NeedsHuman(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestConditionF_GuardrailStub(unittest.TestCase):
-    """Condition (f): guardrail-path batch check is STUBBED until #840."""
+    """Condition (f): guardrail-path batch check — wired by slice #840.
 
-    def test_condition_f_not_blocking(self):
-        """Condition (f) stub must not block the gate (deferred to #840)."""
-        r = _call_check()
+    Updated by slice #840: the stub is replaced by check_meta_tripwire().
+    The 'stub' / 'deferred to #840' assertions are superseded.
+    """
+
+    def test_condition_f_not_blocking_with_pass_injection(self):
+        """Condition (f) must not block when meta-tripwire is injected as PASS."""
+        # Inject _META_TRIPWIRE_RESULT_OVERRIDE=PASS so (f) does not block.
+        old = os.environ.get("_META_TRIPWIRE_RESULT_OVERRIDE")
+        os.environ["_META_TRIPWIRE_RESULT_OVERRIDE"] = "PASS"
+        try:
+            r = _call_check()
+        finally:
+            if old is None:
+                os.environ.pop("_META_TRIPWIRE_RESULT_OVERRIDE", None)
+            else:
+                os.environ["_META_TRIPWIRE_RESULT_OVERRIDE"] = old
         first_fail = r.get("first_failing_condition", "")
         self.assertNotEqual(
             first_fail, "f",
-            f"Condition (f) is a stub until #840 and must not block; "
+            f"Condition (f) must not block when meta-tripwire=PASS; "
             f"got first_failing_condition={first_fail!r}",
         )
 
-    def test_detail_or_field_acknowledges_stub(self):
-        """check_release_ready() must note (f) is deferred/stub."""
-        r = _call_check()
-        detail = r.get("detail", "")
-        condition_f_note = r.get("condition_f", "")
-        combined = (detail + " " + condition_f_note).lower()
-        self.assertTrue(
-            "#840" in combined or "stub" in combined or "deferred" in combined,
-            f"RELEASE-READY must note (f) is deferred/stub until #840; "
-            f"detail={detail!r}, condition_f={condition_f_note!r}",
+    def test_condition_f_field_present(self):
+        """check_release_ready() must return a condition_f field."""
+        old = os.environ.get("_META_TRIPWIRE_RESULT_OVERRIDE")
+        os.environ["_META_TRIPWIRE_RESULT_OVERRIDE"] = "PASS"
+        try:
+            r = _call_check()
+        finally:
+            if old is None:
+                os.environ.pop("_META_TRIPWIRE_RESULT_OVERRIDE", None)
+            else:
+                os.environ["_META_TRIPWIRE_RESULT_OVERRIDE"] = old
+        self.assertIn(
+            "condition_f", r,
+            "RELEASE-READY must return a 'condition_f' field for (f) detail.",
         )
 
 

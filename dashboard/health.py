@@ -2325,10 +2325,13 @@ def check_capture_shape() -> dict:
 
 
 def check_green_main() -> dict:
-    """GREEN-MAIN: last main_green event sha + lag vs origin/main + age.
+    """GREEN-MAIN: last develop_green (or backward-compat main_green) sha + lag + age.
 
-    Reads workflow-events.jsonl for the last 'main_green' event (ADR-0062 D3).
-    lag = git rev-list <sha>..origin/main --count
+    Reads workflow-events.jsonl for the last 'develop_green' event (ADR-0062 D3,
+    two-tier migration: slices merge to develop; green gate tracks develop HEAD).
+    Falls back to 'main_green' for backward compatibility with pre-migration history
+    (avoids a false-WARN window while historical logs still only carry main_green).
+    lag = git rev-list <sha>..origin/develop --count
     age = seconds since the event timestamp
     Red on lag > 0 or stale > 24h.
     """
@@ -2336,9 +2339,10 @@ def check_green_main() -> dict:
     events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "GREEN-MAIN", "result": "WARN",
-                "detail": "workflow-events.jsonl not found; no main_green events yet"}
+                "detail": "workflow-events.jsonl not found; no develop_green events yet"}
 
     last_green: dict | None = None
+    last_green_compat: dict | None = None  # backward-compat main_green fallback
     try:
         with events_log.open(encoding="utf-8", errors="replace") as fh:
             for raw in fh:
@@ -2349,24 +2353,31 @@ def check_green_main() -> dict:
                     obj = _json.loads(raw)
                 except Exception:
                     continue
-                if obj.get("event") == "main_green":
+                if obj.get("event") == "develop_green":
                     last_green = obj
+                elif obj.get("event") == "main_green":
+                    last_green_compat = obj
     except Exception as exc:
         return {"id": "GREEN-MAIN", "result": "WARN",
                 "detail": f"read error: {exc}"}
 
+    # Prefer develop_green; fall back to main_green for backward compat
+    event_used = "develop_green"
     if last_green is None:
-        return {"id": "GREEN-MAIN", "result": "WARN",
-                "detail": "no main_green events found in workflow-events.jsonl"}
+        if last_green_compat is None:
+            return {"id": "GREEN-MAIN", "result": "WARN",
+                    "detail": "no develop_green events found in workflow-events.jsonl"}
+        last_green = last_green_compat
+        event_used = "main_green"
 
     sha = last_green.get("sha", "")
     ts_str = last_green.get("ts", "")
 
-    # Compute lag: commits on origin/main since the green sha
+    # Compute lag: commits on origin/develop since the green sha
     lag = -1
     try:
         r = subprocess.run(
-            ["git", "rev-list", "--count", f"{sha}..origin/main"],
+            ["git", "rev-list", "--count", f"{sha}..origin/develop"],
             capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
         )
         if r.returncode == 0:
@@ -2387,17 +2398,17 @@ def check_green_main() -> dict:
 
     sha_short = sha[:8] if sha else "?"
     age_str = f"{age_h}h ago" if age_h is not None else "age unknown"
-    lag_str = str(lag) if lag >= 0 else "?"
+    compat_note = f" (compat:{event_used})" if event_used == "main_green" else ""
 
     if lag > 0:
         result = "FAIL"
-        detail = f"GREEN-MAIN lag={lag} commits behind; last green sha={sha_short} ({age_str})"
+        detail = f"GREEN-MAIN lag={lag} commits behind; last green sha={sha_short} ({age_str}){compat_note}"
     elif age_h is not None and age_h > 24:
         result = "WARN"
-        detail = f"GREEN-MAIN stale ({age_str}); lag=0; sha={sha_short}"
+        detail = f"GREEN-MAIN stale ({age_str}); lag=0; sha={sha_short}{compat_note}"
     else:
         result = "PASS"
-        detail = f"sha={sha_short} lag=0 ({age_str})"
+        detail = f"sha={sha_short} lag=0 ({age_str}){compat_note}"
 
     return {"id": "GREEN-MAIN", "result": result, "detail": detail,
             "sha": sha, "lag": lag, "age_hours": age_h}

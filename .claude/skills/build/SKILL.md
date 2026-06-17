@@ -92,7 +92,7 @@ Concreteness signals (any combination suffices):
 
 ### Step 3 — Ship (autonomous middle)
 
-**Guard:** Before invoking `/ship`, capture `EXPECTED=$(git rev-parse --abbrev-ref HEAD)`. After `/ship` returns, run `bash tools/worktree-guard.sh branch-restore "$EXPECTED"` to ff-restore the orchestrator's worktree if it drifted (per [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) D1). After `/ship` reports slices merged, run `bash tools/worktree-guard.sh root-sync` to ff-sync the root repo to `origin/main` so the dashboard reflects live state (per ADR-0041 D3). Both guard calls soft-degrade — a guard failure is logged and execution continues.
+**Guard:** Before invoking `/ship`, capture `EXPECTED=$(git rev-parse --abbrev-ref HEAD)`. After `/ship` returns, run `bash tools/worktree-guard.sh branch-restore "$EXPECTED"` to ff-restore the orchestrator's worktree if it drifted (per [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) D1). After `/ship` reports slices merged, run `bash tools/worktree-guard.sh root-sync` to ff-sync the root repo to `origin/develop` so the dashboard reflects live state (per ADR-0041 D3). Both guard calls soft-degrade — a guard failure is logged and execution continues.
 
 Invoke [`.claude/skills/ship/SKILL.md`](../ship/SKILL.md) with the grilled/concrete input as context. Pass `invoked_by: build` so `/ship` skips its own production-verify gate (dedup rule — step 5 owns the gate here).
 
@@ -185,14 +185,14 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
   - **hook-fire / command-run / static-check routes:** no file to send (no image); instead print the `PROOF:` string inline in the summary beside the verified claim.
 - **Visible-surface screenshot floor (run-to-done complement):** Regardless of proof route, if the shipped work has ANY user-visible surface — a dashboard tab, panel, graph, or report view — the wrap-up MUST capture a post-merge production screenshot from a fresh (restarted/live) environment per rule #20's freshness clause and `SendUserFile` it with a claim-tied caption. The route-scoped SendUserFile items above are the per-route minimum; this floor-raises them for visual work. Non-visual work: send the nearest visible artifact if one exists (e.g. a CLI output excerpt as an inline code block), else state honestly "no visual surface — nearest artifact: [quoted output]". Do NOT send a screenshot of a stale or pre-merge environment; restart the relevant server/dashboard before capturing.
-- **Post-merge green-main step (ADR-0062 D3):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged main:
+- **Post-merge green-develop step (ADR-0062 D3):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged develop:
   1. `bash tools/ci-checks.sh` — must exit 0.
   2. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
-  3. On success, append a `main_green` event to the workflow event log via the canonical logger pattern:
+  3. On success, append a `develop_green` event to the workflow event log via the canonical logger pattern:
      ```bash
-     python3 -c "import json,datetime,subprocess; sha=subprocess.check_output(['git','rev-parse','origin/main']).decode().strip(); line=json.dumps({'v':2,'ts':datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),'event':'main_green','sha':sha,'src':'orchestrator'}); open('$(git rev-parse --show-toplevel)/.claude/logs/workflow-events.jsonl','a').write(line+'\n')"
+     python3 -c "import json,datetime,subprocess; sha=subprocess.check_output(['git','rev-parse','origin/develop']).decode().strip(); line=json.dumps({'v':2,'ts':datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),'event':'develop_green','sha':sha,'src':'orchestrator'}); open('$(git rev-parse --show-toplevel)/.claude/logs/workflow-events.jsonl','a').write(line+'\n')"
      ```
-  4. On failure: the suspect set = squash commits since the last `main_green` event (≤300 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
+  4. On failure: the suspect set = squash commits since the last `develop_green` event (≤300 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
   Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3.
 - Mark the feature done; proceed to output.
 

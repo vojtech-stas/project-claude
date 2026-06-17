@@ -1,3 +1,16 @@
+---
+id: "ADR-0003"
+status: "accepted"
+supersedes:
+  - "ADR-0001"
+superseded_by: []
+scope: "pipeline"
+rule_ids:
+  - "PIP-002"
+  - "PIP-003"
+  - "PIP-004"
+  - "PIP-005"
+---
 # ADR-0003: Autonomous multi-stage pipeline with adversarial critics
 
 - **Status:** Accepted

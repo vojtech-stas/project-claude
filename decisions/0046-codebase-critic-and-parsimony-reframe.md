@@ -1,3 +1,16 @@
+---
+id: "ADR-0046"
+status: "accepted"
+supersedes:
+  - "ADR-0008"
+  - "ADR-0018"
+superseded_by: []
+scope: "pipeline"
+rule_ids:
+  - "PIP-011"
+  - "PIP-012"
+  - "PIP-013"
+---
 # ADR-0046: Post-PRD codebase-critic + critic-parsimony reframe (retire R-BOY-SCOUT)
 
 - **Status:** Accepted

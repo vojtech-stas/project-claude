@@ -1,3 +1,16 @@
+---
+id: "ADR-0010"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "pipeline"
+rule_ids:
+  - "PIP-006"
+  - "PIP-007"
+  - "PIP-008"
+  - "PIP-009"
+  - "PIP-010"
+---
 # ADR-0010: Implementer subagent + /ship auto-invoke closes ADR-0003 D4's autonomy gap
 
 - **Status:** Accepted

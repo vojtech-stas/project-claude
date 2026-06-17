@@ -9,6 +9,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
         GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache); data available via /api/status open_work
+        GET /api/runs[?n=N]       -> JSON recent session runs metadata from workflow-events.jsonl (slice #864)
         GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
         GET /api/live-poll?cursor=N -> JSON {cursor, events[], reset} — byte-cursor incremental read (Lane B)
         GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
@@ -446,6 +447,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # DEFENSIVE: try/except so a partial failure returns best-effort data.
             try:
                 self._send_json(_build_status())
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, 500)
+
+        elif path == "/api/runs":
+            # GET /api/runs[?n=N][?before=<cursor>][?session=<id>]
+            # Returns recent session runs metadata from workflow-events.jsonl.
+            # Delegates to events.serve_runs; filter applied by _serve_runs helper.
+            # Restored in slice #864: route was removed in #860 as "dead" because
+            # the Live tab never fetched it — re-added here with wired index.html.
+            try:
+                self._send_json(self._serve_runs(query))
             except Exception as exc:
                 self._send_json({"error": str(exc)}, 500)
 

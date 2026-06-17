@@ -5,7 +5,7 @@
 # NEVER invokes skills or subagents (rule #12's hard line).
 #
 # What it injects:
-#   - Branch name + divergence vs origin/main
+#   - Branch name + divergence vs origin/develop
 #   - Recent commits (last 5)
 #   - Open needs-human PRs/issues (I5 escalation surface)
 #   - In-flight assigned slices
@@ -46,7 +46,7 @@ printf '{"hook":"session-start","status":"python3_selftest","result":"%s","ts":"
 # ---- git state (always available) ------------------------------------------
 BR=$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")
 DIV="(fetch failed)"
-git fetch origin main 2>/dev/null && DIV=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+git fetch origin develop 2>/dev/null && DIV=$(git rev-list --count HEAD..origin/develop 2>/dev/null || echo "?")
 LOG=$(git log --oneline -5 2>/dev/null || echo "(no log)")
 
 # ---- hooks path warning -------------------------------------------------------
@@ -125,7 +125,7 @@ except Exception as e:
 fi
 
 # ---- Build context string ---------------------------------------------------
-CTX=$(printf "Branch: %s | %s commit(s) behind origin/main\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
+CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
   "$BR" "$DIV" "$LOG" \
   "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" "$DASH_FRESH" \
   "$HOOKS_WARN" "$JQ_WARN" "$GH_WARN" \

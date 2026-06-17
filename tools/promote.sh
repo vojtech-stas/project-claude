@@ -26,6 +26,49 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 EVENTS_LOG="$REPO_ROOT/.claude/logs/workflow-events.jsonl"
 
+# --- 0. RELEASE-READY pre-flight guard (slice #838 / ADR-0070 D2) ---
+# Refuse to promote unless the six-condition gate reports verdict=true.
+# The gate exits 0 regardless (WARN = held is not a script error); we parse
+# the verdict field from the JSON output.
+echo "INFO: checking RELEASE-READY gate..."
+RELEASE_READY_OUT="$(python3 "$REPO_ROOT/dashboard/health.py" --check RELEASE-READY 2>&1)" || true
+# Extract verdict from JSON output (last line starting with '{')
+VERDICT="$(echo "$RELEASE_READY_OUT" | python3 -c "
+import sys, json
+for line in reversed(sys.stdin.read().splitlines()):
+    line = line.strip()
+    if line.startswith('{'):
+        try:
+            d = json.loads(line)
+            print(d.get('verdict', ''))
+            sys.exit(0)
+        except Exception:
+            pass
+print('')
+" 2>/dev/null || echo "")"
+
+if [ "$VERDICT" != "true" ]; then
+  # Extract detail for a helpful error message
+  DETAIL="$(echo "$RELEASE_READY_OUT" | python3 -c "
+import sys, json
+for line in reversed(sys.stdin.read().splitlines()):
+    line = line.strip()
+    if line.startswith('{'):
+        try:
+            d = json.loads(line)
+            print(d.get('detail', 'gate not ready'))
+            sys.exit(0)
+        except Exception:
+            pass
+print('gate not ready (could not parse RELEASE-READY output)')
+" 2>/dev/null || echo "gate not ready")"
+  echo "ERROR: RELEASE-READY gate is not open — promotion refused" >&2
+  echo "ERROR: $DETAIL" >&2
+  echo "INFO: Resolve all failing conditions before promoting develop → main." >&2
+  exit 1
+fi
+echo "INFO: RELEASE-READY gate: $VERDICT — proceeding with promotion"
+
 # --- 1. Resolve develop HEAD sha ---
 DEVELOP_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
   echo "ERROR: cannot resolve develop HEAD — branch does not exist yet" >&2

@@ -175,15 +175,42 @@ class TestDormantDetailStrings(unittest.TestCase):
         importlib.reload(health)
         return health
 
-    def test_release_ready_detail_contains_dormant(self):
-        """RELEASE-READY check detail must contain the word 'dormant'."""
-        health = self._load_health()
-        result = health.check_release_ready()
+    def test_release_ready_detail_not_dormant(self):
+        """RELEASE-READY check detail must NOT contain 'dormant' — slice #838 wired
+        the six-condition gate (ADR-0070 D2), superseding the dormant period.
+
+        ADR-0071 D4 marked RELEASE-READY dormant while develop was absent.
+        Develop now exists and the gate is operational per slice #838.
+
+        Uses env-var injection to avoid real CI/pytest/gh calls (fast test).
+        """
+        import os
+        # Fast-path injection: bypass real CI/test/gh subprocesses.
+        env_patch = {
+            "_RELEASE_READY_CI_RESULT": "PASS",
+            "_RELEASE_READY_TESTS_RESULT": "PASS",
+            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
+            "_RELEASE_READY_STREAK_RESULT": "PASS",
+            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
+        }
+        old_vals = {}
+        for k, v in env_patch.items():
+            old_vals[k] = os.environ.get(k)
+            os.environ[k] = v
+        try:
+            health = self._load_health()
+            result = health.check_release_ready()
+        finally:
+            for k, old_v in old_vals.items():
+                if old_v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = old_v
         detail = result.get("detail", "")
-        self.assertIn(
+        self.assertNotIn(
             "dormant",
             detail.lower(),
-            f"RELEASE-READY detail must contain 'dormant' per ADR-0071 D4; "
+            f"RELEASE-READY detail must not say 'dormant' — slice #838 wired the gate; "
             f"got: {detail!r}",
         )
 
@@ -201,8 +228,28 @@ class TestDormantDetailStrings(unittest.TestCase):
 
     def test_release_ready_id_correct(self):
         """RELEASE-READY check must return the correct id field."""
-        health = self._load_health()
-        result = health.check_release_ready()
+        import os
+        # Fast-path injection to avoid real subprocesses.
+        env_patch = {
+            "_RELEASE_READY_CI_RESULT": "PASS",
+            "_RELEASE_READY_TESTS_RESULT": "PASS",
+            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
+            "_RELEASE_READY_STREAK_RESULT": "PASS",
+            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
+        }
+        old_vals = {}
+        for k, v in env_patch.items():
+            old_vals[k] = os.environ.get(k)
+            os.environ[k] = v
+        try:
+            health = self._load_health()
+            result = health.check_release_ready()
+        finally:
+            for k, old_v in old_vals.items():
+                if old_v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = old_v
         self.assertEqual(
             result.get("id"),
             "RELEASE-READY",

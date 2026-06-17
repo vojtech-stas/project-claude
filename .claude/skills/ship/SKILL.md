@@ -179,6 +179,23 @@ evidence for this run; note it explicitly in the step 7 final report.
    - **5d. Forward-block** (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4). Apply `needs-human` to the failed slice; move transitive-downstream slices from `pending` → `blocked`; post one summary comment per failure event on the parent PRD (mirrors reviewer's I5 surface). **In-flight parallel siblings finish normally** — do NOT cancel. **Slices with other unmet deps proceed normally** through their natural batches; failure is locally contained to the failed slice's downstream cone.
    - **5e. Terminal-state collection.** Capture each `PR_URL` from SUCCESS slices (merged or under-review), the `blocked` set, and the snapshot of `in_flight` at the moment the FIRST failure was observed.
 
+   - **5f. Green-develop checkpoint → RELEASE-READY → auto-promote (ADR-0070 D2/D3, slice #838).** After all slices in the current batch are in `merged`, run the post-merge green-develop verification step (mirrors the green-main step at step 5c-4, with target `develop`):
+     1. `bash tools/ci-checks.sh` — must exit 0.
+     2. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
+     3. On success, evaluate the RELEASE-READY gate:
+        ```bash
+        python3 dashboard/health.py --check RELEASE-READY
+        ```
+        Parse the `verdict` field from the JSON output.
+     4. **If `verdict == "true"`** (all six conditions hold):
+        - Run `bash tools/promote.sh` to fast-forward `main` to `develop` HEAD and append the `promotion` event. The script performs its own RELEASE-READY pre-flight guard and emits: `INFO: promotion event appended — sha=<sha>`.
+        - Log: `"green-develop checkpoint PASS + RELEASE-READY true → auto-promoted main to <sha>"`.
+     5. **If `verdict != "true"`** (gate held):
+        - Log: `"green-develop checkpoint PASS but RELEASE-READY held: <first_failing_condition>. Main NOT advanced. Develop continues independently."`.
+        - Do NOT run `promote.sh`. Continue to step 6.
+     6. On CI or SHA-smoke failure (green-develop step fails): revert via trivial lane; do NOT mark PRD done until green-develop is clean.
+     **Note on condition (e):** `needs-human` open items commonly hold the gate (e.g. during a wave's own slices). This is correct and honest — the gate reports the true state; promotion waits. The develop integration branch continues to accept PRs normally while the gate is held.
+
 6. **Production-verify gate (MANDATORY when `/ship` is invoked standalone — per ADR-0037 D1).**
 
    **Dedup rule:** When `/build` calls `/ship` internally (step 3 of `/build`), the production-verify gate is owned by `/build` step 5 — `/ship` does NOT run it. Standalone `/ship` runs it; `/build`-nested `/ship` does NOT. Distinguish by whether the caller is `/build` (caller passes `invoked_by: build` context) or a direct user invocation.

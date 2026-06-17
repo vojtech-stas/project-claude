@@ -12,75 +12,77 @@ Six conditions (ADR-0070 D2):
   (c) latest production-verify PASS — wired to PROOF-INTEGRITY check
   (d) green-develop streak intact (no failing checkpoint since last promotion)
   (e) zero open needs-human items
-  (f) guardrail-path batch check — STUB until #840 (returns pass/"deferred to #840")
-
-Implementation contract:
-- check_release_ready() exits 0 (check ran; PASS/WARN/FAIL result)
-- When all conditions pass: result="PASS", verdict="true"
-- When any condition fails: result="WARN" (gate held), detail names the first failing condition
-- The check does NOT hard-FAIL (exit 1) — it always exits 0 when it ran; honest held state
-- promote.sh gains a RELEASE-READY pre-flight guard: refuses to promote when not ready
+  (f) guardrail-path batch check — STUB until #840 (returns pass)
 
 Test injection:
-  Each condition is injectable via env vars so tests run offline and deterministically.
-  See check_release_ready() docstring for env var names.
+  check_release_ready() honours env vars:
+    _RELEASE_READY_CI_RESULT           PASS|FAIL
+    _RELEASE_READY_TESTS_RESULT        PASS|FAIL
+    _RELEASE_READY_PROOF_INTEGRITY_RESULT  PASS|WARN|FAIL
+    _RELEASE_READY_STREAK_RESULT       PASS|FAIL
+    _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>
+    _RELEASE_READY_FORCE_FAIL          1
+
+Tests use direct import (not subprocess) for speed.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_release_ready_838.py -v
 """
 
-import json
+import importlib
 import os
 import subprocess
 import sys
-import tempfile
-import textwrap
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 PROMOTE_SH = REPO_ROOT / "tools" / "promote.sh"
+SHIP_SKILL = REPO_ROOT / ".claude" / "skills" / "ship" / "SKILL.md"
+
+# Ensure dashboard/ is importable.
+_DASHBOARD_DIR = str(REPO_ROOT / "dashboard")
+if _DASHBOARD_DIR not in sys.path:
+    sys.path.insert(0, _DASHBOARD_DIR)
+
 
 # ---------------------------------------------------------------------------
-# Helper: run check_release_ready() via subprocess with env-var injection.
+# Helper: load/reload health module and call check_release_ready() with
+# temporary env-var overrides.
 # ---------------------------------------------------------------------------
 
-def _run_release_ready_check(env_overrides: dict | None = None) -> dict:
-    """Invoke check_release_ready() via subprocess with optional env overrides.
+def _call_check(env_overrides: dict | None = None) -> dict:
+    """Reload health module and call check_release_ready() with env overrides.
 
-    Returns the parsed JSON result dict (id, result, detail, ...).
-    On parse failure returns {"id": "RELEASE-READY", "result": "ERROR",
-                              "detail": <raw output>}.
+    All conditions are defaulted to PASS (fast-path — avoids real CI/pytest/gh).
+    Pass env_overrides to override specific conditions.
     """
-    env = os.environ.copy()
-    env.pop("PYTHONDONTWRITEBYTECODE", None)
-    if env_overrides:
-        for k, v in env_overrides.items():
-            env[k] = v
+    # Default fast-path: all conditions injected as PASS.
+    defaults = {
+        "_RELEASE_READY_CI_RESULT": "PASS",
+        "_RELEASE_READY_TESTS_RESULT": "PASS",
+        "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
+        "_RELEASE_READY_STREAK_RESULT": "PASS",
+        "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
+    }
+    env_patch = {**defaults, **(env_overrides or {})}
 
-    result = subprocess.run(
-        [sys.executable, str(HEALTH_PY), "--check", "RELEASE-READY"],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(REPO_ROOT),
-        timeout=30,
-    )
-    raw = (result.stdout or "").strip()
-    # The CLI prints the check result as JSON on stdout.
-    # Try to extract the JSON blob (the last non-empty line starting with '{').
-    json_line = ""
-    for line in raw.splitlines():
-        line = line.strip()
-        if line.startswith("{"):
-            json_line = line
-    if not json_line:
-        return {"id": "RELEASE-READY", "result": "ERROR", "detail": raw}
+    # Temporarily set env vars, reload module, call, restore.
+    old_vals = {}
+    for k, v in env_patch.items():
+        old_vals[k] = os.environ.get(k)
+        os.environ[k] = v
     try:
-        return json.loads(json_line)
-    except json.JSONDecodeError:
-        return {"id": "RELEASE-READY", "result": "ERROR", "detail": raw}
+        import health as _h
+        importlib.reload(_h)
+        return _h.check_release_ready()
+    finally:
+        for k, old_v in old_vals.items():
+            if old_v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old_v
 
 
 # ---------------------------------------------------------------------------
@@ -93,33 +95,49 @@ class TestReleaseReadyNotDormant(unittest.TestCase):
 
     def test_id_is_correct(self):
         """check_release_ready() must return id='RELEASE-READY'."""
-        r = _run_release_ready_check()
+        r = _call_check()
         self.assertEqual(
             r.get("id"), "RELEASE-READY",
             f"Expected id='RELEASE-READY', got: {r.get('id')!r}",
         )
 
-    def test_exits_0(self):
-        """check_release_ready() CLI must exit 0 (check ran, gate may be held)."""
-        result = subprocess.run(
-            [sys.executable, str(HEALTH_PY), "--check", "RELEASE-READY"],
-            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=30,
-        )
-        self.assertEqual(
-            result.returncode, 0,
-            f"--check RELEASE-READY must exit 0; got {result.returncode}. "
-            f"stderr: {result.stderr[:300]!r}",
+    def test_result_field_present(self):
+        """check_release_ready() must return a 'result' field."""
+        r = _call_check()
+        self.assertIn(
+            "result", r,
+            "check_release_ready() must return a 'result' field",
         )
 
     def test_detail_not_dormant(self):
         """RELEASE-READY detail must NOT say 'dormant' — the gate is now wired."""
-        r = _run_release_ready_check()
+        r = _call_check()
         detail = r.get("detail", "")
         self.assertNotIn(
             "dormant",
             detail.lower(),
             f"RELEASE-READY detail must not say 'dormant' — slice #838 wires the "
             f"six-condition gate (ADR-0070 D2). got: {detail!r}",
+        )
+
+    def test_cli_exits_0_when_gate_held(self):
+        """--check RELEASE-READY must exit 0 even when gate is held (honest WARN)."""
+        env = os.environ.copy()
+        # Inject a held condition (needs-human = 1) but bypass all real subprocesses.
+        env["_RELEASE_READY_CI_RESULT"] = "PASS"
+        env["_RELEASE_READY_TESTS_RESULT"] = "PASS"
+        env["_RELEASE_READY_PROOF_INTEGRITY_RESULT"] = "PASS"
+        env["_RELEASE_READY_STREAK_RESULT"] = "PASS"
+        env["_RELEASE_READY_NEEDS_HUMAN_COUNT"] = "1"
+        result = subprocess.run(
+            [sys.executable, str(HEALTH_PY), "--check", "RELEASE-READY"],
+            capture_output=True, text=True, env=env,
+            cwd=str(REPO_ROOT), timeout=30,
+        )
+        self.assertEqual(
+            result.returncode, 0,
+            f"--check RELEASE-READY must exit 0 even when gate is held; "
+            f"got {result.returncode}. stderr: {result.stderr[:300]!r}",
         )
 
 
@@ -131,45 +149,41 @@ class TestConditionE_NeedsHuman(unittest.TestCase):
     """Condition (e): zero open needs-human items must hold for gate to pass."""
 
     def test_held_when_needs_human_open(self):
-        """Gate must report held when _RELEASE_READY_NEEDS_HUMAN_COUNT > 0."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "3",
-        })
+        """Gate must report held when needs-human count > 0."""
+        r = _call_check({"_RELEASE_READY_NEEDS_HUMAN_COUNT": "3"})
         detail = r.get("detail", "")
         result = r.get("result", "")
-        # Result should be WARN (held) or FAIL but NOT PASS
+        # Result should be WARN (held) not PASS
         self.assertNotEqual(
             result, "PASS",
             f"Gate should not PASS when needs-human count=3; got result={result!r}, "
             f"detail={detail!r}",
         )
-        # Detail should mention the condition (e) or needs-human
+        # Detail should mention the condition
         self.assertTrue(
             "needs-human" in detail.lower() or "(e)" in detail.lower(),
             f"Detail should mention needs-human condition; got: {detail!r}",
         )
 
-    def test_not_held_when_needs_human_zero(self):
-        """Gate must not hold on condition (e) when needs-human count=0.
+    def test_first_failing_condition_is_e(self):
+        """first_failing_condition must be 'e' when needs-human holds the gate."""
+        r = _call_check({"_RELEASE_READY_NEEDS_HUMAN_COUNT": "2"})
+        self.assertEqual(
+            r.get("first_failing_condition"), "e",
+            f"first_failing_condition must be 'e' when needs-human=2; "
+            f"got: {r.get('first_failing_condition')!r}",
+        )
 
-        NOTE: Other conditions may still hold the gate; we just verify (e) doesn't.
-        The detail should NOT name (e)/needs-human as the blocking condition when
-        count=0.
-        """
-        r = _run_release_ready_check({
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
-        detail = r.get("detail", "")
-        # If the gate is held, it should not be because of condition (e)
-        # (other conditions may still hold it — that's ok)
-        if r.get("result") != "PASS":
-            # Verify the blocking condition is NOT (e)
-            first_fail = r.get("first_failing_condition", "")
-            self.assertNotEqual(
-                first_fail, "e",
-                f"Condition (e) should pass when needs-human=0; "
-                f"first_failing_condition={first_fail!r}, detail={detail!r}",
-            )
+    def test_passes_condition_e_when_zero(self):
+        """Condition (e) must pass when needs-human count is 0."""
+        r = _call_check({"_RELEASE_READY_NEEDS_HUMAN_COUNT": "0"})
+        # (e) should not be the failing condition
+        first_fail = r.get("first_failing_condition", "")
+        self.assertNotEqual(
+            first_fail, "e",
+            f"Condition (e) must pass when needs-human=0; "
+            f"first_failing_condition={first_fail!r}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -177,29 +191,23 @@ class TestConditionE_NeedsHuman(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestConditionF_GuardrailStub(unittest.TestCase):
-    """Condition (f): guardrail-path batch check is STUBBED until #840.
-
-    The stub must pass (return pass or skip, not block the gate).
-    """
+    """Condition (f): guardrail-path batch check is STUBBED until #840."""
 
     def test_condition_f_not_blocking(self):
         """Condition (f) stub must not block the gate (deferred to #840)."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+        r = _call_check()
         first_fail = r.get("first_failing_condition", "")
         self.assertNotEqual(
             first_fail, "f",
             f"Condition (f) is a stub until #840 and must not block; "
-            f"got first_failing_condition={first_fail!r}, detail={r.get('detail')!r}",
+            f"got first_failing_condition={first_fail!r}",
         )
 
-    def test_detail_mentions_f_stub(self):
-        """check_release_ready() detail or a sub-key must note (f) is deferred/stub."""
-        r = _run_release_ready_check()
+    def test_detail_or_field_acknowledges_stub(self):
+        """check_release_ready() must note (f) is deferred/stub."""
+        r = _call_check()
         detail = r.get("detail", "")
         condition_f_note = r.get("condition_f", "")
-        # Either the detail or condition_f field should acknowledge the stub
         combined = (detail + " " + condition_f_note).lower()
         self.assertTrue(
             "#840" in combined or "stub" in combined or "deferred" in combined,
@@ -216,11 +224,8 @@ class TestConditionC_ProofIntegrity(unittest.TestCase):
     """Condition (c): wired to PROOF-INTEGRITY check result."""
 
     def test_held_when_proof_integrity_fail(self):
-        """Gate must report held (c) when _RELEASE_READY_PROOF_INTEGRITY_RESULT=FAIL."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "FAIL",
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+        """Gate must report held on condition (c) when PROOF-INTEGRITY=FAIL."""
+        r = _call_check({"_RELEASE_READY_PROOF_INTEGRITY_RESULT": "FAIL"})
         result = r.get("result", "")
         self.assertNotEqual(
             result, "PASS",
@@ -228,16 +233,18 @@ class TestConditionC_ProofIntegrity(unittest.TestCase):
             f"got result={result!r}, detail={r.get('detail')!r}",
         )
 
-    def test_not_blocked_when_proof_integrity_warn(self):
-        """Gate should not block on WARN from proof-integrity (WARN = no data yet).
+    def test_first_failing_is_c_on_fail(self):
+        """first_failing_condition must be 'c' when PROOF-INTEGRITY=FAIL."""
+        r = _call_check({"_RELEASE_READY_PROOF_INTEGRITY_RESULT": "FAIL"})
+        self.assertEqual(
+            r.get("first_failing_condition"), "c",
+            f"first_failing_condition must be 'c' on PROOF-INTEGRITY FAIL; "
+            f"got {r.get('first_failing_condition')!r}",
+        )
 
-        WARN means no qualifying PRs found — honest no-data is not a blocker.
-        (Other conditions may still hold the gate.)
-        """
-        r = _run_release_ready_check({
-            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "WARN",
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+    def test_warn_does_not_block_condition_c(self):
+        """PROOF-INTEGRITY WARN (no data) must not block condition (c)."""
+        r = _call_check({"_RELEASE_READY_PROOF_INTEGRITY_RESULT": "WARN"})
         first_fail = r.get("first_failing_condition", "")
         self.assertNotEqual(
             first_fail, "c",
@@ -251,39 +258,35 @@ class TestConditionC_ProofIntegrity(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestAllPassScenario(unittest.TestCase):
-    """With all injectable conditions forced to pass, gate should PASS."""
+    """With all conditions injected as pass, gate should PASS with verdict=true."""
 
-    def test_pass_when_all_injectable_conditions_pass(self):
-        """Gate must PASS when all injectable conditions are forced to pass."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
-            "_RELEASE_READY_CI_RESULT": "PASS",
-            "_RELEASE_READY_TESTS_RESULT": "PASS",
-            "_RELEASE_READY_STREAK_RESULT": "PASS",
-        })
+    def test_pass_when_all_conditions_pass(self):
+        """Gate must PASS when all conditions forced to pass via env injection."""
+        r = _call_check()  # defaults inject all as PASS
         result = r.get("result", "")
         self.assertEqual(
             result, "PASS",
-            f"Gate must PASS when all injectable conditions forced to pass; "
+            f"Gate must PASS when all conditions forced to pass; "
             f"got result={result!r}, detail={r.get('detail')!r}",
         )
 
     def test_verdict_true_when_pass(self):
-        """When gate PASSes, verdict field (or detail) must say 'true'."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
-            "_RELEASE_READY_CI_RESULT": "PASS",
-            "_RELEASE_READY_TESTS_RESULT": "PASS",
-            "_RELEASE_READY_STREAK_RESULT": "PASS",
-        })
+        """verdict field must be 'true' when gate PASSes."""
+        r = _call_check()
         if r.get("result") == "PASS":
-            combined = (r.get("detail", "") + " " + str(r.get("verdict", ""))).lower()
-            self.assertTrue(
-                "true" in combined or "ready" in combined,
-                f"PASS result should indicate gate is true/ready; "
-                f"detail={r.get('detail')!r}, verdict={r.get('verdict')!r}",
+            self.assertEqual(
+                r.get("verdict"), "true",
+                f"verdict must be 'true' on PASS; got {r.get('verdict')!r}",
+            )
+
+    def test_first_failing_empty_when_pass(self):
+        """first_failing_condition must be empty string when gate PASSes."""
+        r = _call_check()
+        if r.get("result") == "PASS":
+            self.assertEqual(
+                r.get("first_failing_condition", ""), "",
+                f"first_failing_condition must be '' on PASS; "
+                f"got {r.get('first_failing_condition')!r}",
             )
 
 
@@ -296,13 +299,19 @@ class TestConditionA_CI(unittest.TestCase):
 
     def test_held_when_ci_fail(self):
         """Gate must hold when CI result is forced to FAIL."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_CI_RESULT": "FAIL",
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+        r = _call_check({"_RELEASE_READY_CI_RESULT": "FAIL"})
         self.assertNotEqual(
             r.get("result"), "PASS",
             f"Gate should not PASS when CI=FAIL; got {r.get('result')!r}",
+        )
+
+    def test_first_failing_is_a_on_ci_fail(self):
+        """first_failing_condition must be 'a' when CI fails first."""
+        r = _call_check({"_RELEASE_READY_CI_RESULT": "FAIL"})
+        self.assertEqual(
+            r.get("first_failing_condition"), "a",
+            f"first_failing_condition must be 'a' when CI=FAIL; "
+            f"got {r.get('first_failing_condition')!r}",
         )
 
 
@@ -315,13 +324,19 @@ class TestConditionB_TestSuite(unittest.TestCase):
 
     def test_held_when_tests_fail(self):
         """Gate must hold when test suite result is forced to FAIL."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_TESTS_RESULT": "FAIL",
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+        r = _call_check({"_RELEASE_READY_TESTS_RESULT": "FAIL"})
         self.assertNotEqual(
             r.get("result"), "PASS",
             f"Gate should not PASS when tests=FAIL; got {r.get('result')!r}",
+        )
+
+    def test_first_failing_is_b_on_tests_fail(self):
+        """first_failing_condition must be 'b' when tests fail (CI passes)."""
+        r = _call_check({"_RELEASE_READY_TESTS_RESULT": "FAIL"})
+        self.assertEqual(
+            r.get("first_failing_condition"), "b",
+            f"first_failing_condition must be 'b' when tests=FAIL (CI pass); "
+            f"got {r.get('first_failing_condition')!r}",
         )
 
 
@@ -334,25 +349,61 @@ class TestConditionD_Streak(unittest.TestCase):
 
     def test_held_when_streak_fail(self):
         """Gate must hold when streak result is forced to FAIL."""
-        r = _run_release_ready_check({
-            "_RELEASE_READY_STREAK_RESULT": "FAIL",
-            "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
-        })
+        r = _call_check({"_RELEASE_READY_STREAK_RESULT": "FAIL"})
         self.assertNotEqual(
             r.get("result"), "PASS",
             f"Gate should not PASS when streak=FAIL; got {r.get('result')!r}",
         )
 
+    def test_first_failing_is_d_on_streak_fail(self):
+        """first_failing_condition must be 'd' when streak fails (a/b/c pass)."""
+        r = _call_check({"_RELEASE_READY_STREAK_RESULT": "FAIL"})
+        self.assertEqual(
+            r.get("first_failing_condition"), "d",
+            f"first_failing_condition must be 'd' when streak=FAIL; "
+            f"got {r.get('first_failing_condition')!r}",
+        )
+
 
 # ---------------------------------------------------------------------------
-# Group 9: promote.sh guard
+# Group 9: first-fail ordering — a before b before c before d before e
+# ---------------------------------------------------------------------------
+
+class TestFirstFailOrdering(unittest.TestCase):
+    """The gate reports the FIRST failing condition in order a→b→c→d→e."""
+
+    def test_a_takes_precedence_over_b(self):
+        """When both (a) CI and (b) tests fail, first_failing_condition == 'a'."""
+        r = _call_check({
+            "_RELEASE_READY_CI_RESULT": "FAIL",
+            "_RELEASE_READY_TESTS_RESULT": "FAIL",
+        })
+        self.assertEqual(
+            r.get("first_failing_condition"), "a",
+            "When both (a) and (b) fail, first_failing must be 'a'",
+        )
+
+    def test_b_takes_precedence_over_c(self):
+        """When (a) passes and both (b) tests and (c) proof fail, first == 'b'."""
+        r = _call_check({
+            "_RELEASE_READY_TESTS_RESULT": "FAIL",
+            "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "FAIL",
+        })
+        self.assertEqual(
+            r.get("first_failing_condition"), "b",
+            "When (a) passes and both (b)/(c) fail, first_failing must be 'b'",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group 10: promote.sh guard
 # ---------------------------------------------------------------------------
 
 class TestPromoteShGuard(unittest.TestCase):
     """promote.sh must refuse to promote unless RELEASE-READY is true."""
 
-    def test_promote_sh_contains_release_ready_guard(self):
-        """tools/promote.sh must contain a RELEASE-READY pre-flight guard."""
+    def test_promote_sh_contains_release_ready_reference(self):
+        """tools/promote.sh must reference RELEASE-READY as a pre-flight guard."""
         self.assertTrue(
             PROMOTE_SH.exists(),
             f"tools/promote.sh must exist; not found at {PROMOTE_SH}",
@@ -364,21 +415,19 @@ class TestPromoteShGuard(unittest.TestCase):
             "tools/promote.sh must reference RELEASE-READY as a pre-flight guard",
         )
 
-    def test_promote_sh_guard_checks_health(self):
-        """promote.sh guard must invoke health.py or a gate check."""
+    def test_promote_sh_guard_invokes_health_check(self):
+        """promote.sh guard must invoke health.py or the --check flag."""
         content = PROMOTE_SH.read_text(encoding="utf-8")
-        # Either health.py or the --check flag should appear in the guard
         has_health = "health.py" in content or "--check" in content
         self.assertTrue(
             has_health,
             "promote.sh RELEASE-READY guard must invoke health.py --check RELEASE-READY",
         )
 
-    def test_promote_sh_refuses_when_not_ready(self):
-        """promote.sh must exit non-zero when RELEASE-READY is not 'true'.
+    def test_promote_sh_refuses_when_force_fail(self):
+        """promote.sh must exit non-zero when _RELEASE_READY_FORCE_FAIL=1.
 
-        We use _PROMOTE_SH_SKIP_PUSH=1 + _RELEASE_READY_FORCE_FAIL=1 to run
-        the guard logic without actually pushing.
+        Uses _PROMOTE_SH_SKIP_PUSH=1 so the test does not actually push to git.
         """
         if not PROMOTE_SH.exists():
             self.skipTest("promote.sh not found")
@@ -388,7 +437,7 @@ class TestPromoteShGuard(unittest.TestCase):
         result = subprocess.run(
             ["bash", str(PROMOTE_SH)],
             capture_output=True, text=True, env=env,
-            cwd=str(REPO_ROOT), timeout=20,
+            cwd=str(REPO_ROOT), timeout=30,
         )
         self.assertNotEqual(
             result.returncode, 0,
@@ -398,29 +447,27 @@ class TestPromoteShGuard(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Group 10: ship/SKILL.md documents green-develop → auto-promote step
+# Group 11: ship/SKILL.md documents green-develop → auto-promote step
 # ---------------------------------------------------------------------------
 
 class TestShipSkillDocumentation(unittest.TestCase):
     """ship/SKILL.md must document the RELEASE-READY gate + auto-promote step."""
 
-    SHIP_SKILL = REPO_ROOT / ".claude" / "skills" / "ship" / "SKILL.md"
-
     def test_ship_skill_mentions_release_ready(self):
-        """ship/SKILL.md must mention RELEASE-READY (gate documented)."""
+        """ship/SKILL.md must mention RELEASE-READY ≥1 time."""
         self.assertTrue(
-            self.SHIP_SKILL.exists(),
-            f"ship/SKILL.md must exist at {self.SHIP_SKILL}",
+            SHIP_SKILL.exists(),
+            f"ship/SKILL.md must exist at {SHIP_SKILL}",
         )
-        content = self.SHIP_SKILL.read_text(encoding="utf-8")
+        content = SHIP_SKILL.read_text(encoding="utf-8")
         self.assertGreaterEqual(
             content.lower().count("release-ready"), 1,
             "ship/SKILL.md must mention RELEASE-READY ≥1 time (gate documented)",
         )
 
-    def test_ship_skill_documents_auto_promote(self):
-        """ship/SKILL.md must document the auto-promote step."""
-        content = self.SHIP_SKILL.read_text(encoding="utf-8")
+    def test_ship_skill_documents_promote_step(self):
+        """ship/SKILL.md must document the auto-promote/fast-forward step."""
+        content = SHIP_SKILL.read_text(encoding="utf-8")
         has_promote = (
             "auto-promot" in content.lower()
             or "promote.sh" in content
@@ -428,8 +475,7 @@ class TestShipSkillDocumentation(unittest.TestCase):
         )
         self.assertTrue(
             has_promote,
-            "ship/SKILL.md must document the auto-promote (fast-forward) step; "
-            "expected 'auto-promot' or 'promote.sh' or 'fast-forward'",
+            "ship/SKILL.md must document the auto-promote (fast-forward) step",
         )
 
 

@@ -63,5 +63,10 @@ logs/
 # Local Claude Code hook output (per ADR-0015 D4)
 .claude/logs/
 
+# Human-ack sentinel for promote.sh gate (slice #881, fixes #880).
+# Gitignored so it never exists in subagent worktrees (which check out
+# tracked files only), structurally blocking any subagent from promoting.
+.claude/PROMOTE_OK
+
 # Eval runner output (runtime-generated, on-demand only — ADR-0067 D5)
 tests/evals/results.json

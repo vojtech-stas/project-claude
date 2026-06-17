@@ -64,6 +64,7 @@ You may NOT use:
 - **`gh issue close`** outside your own slice (your slice closes automatically via `Closes #<N>` on merge — you don't close it manually).
 - **Edits to existing ADR files** (`decisions/0001-*.md` through `decisions/<latest>-*.md`). ADRs are immutable per `decisions/README.md`. You MAY create new ADR files inside your slice's PR (per [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D8) if the slice body authorizes it.
 - **Edits to any file untracked in your working tree and not named in your slice's "What ships".** If you find a file in this category, do not touch it.
+- **NEVER run `tools/promote.sh`** — promotion is a human-gated orchestrator action (see #880)
 
 If you find yourself wanting any of the above, that is a signal to STOP and return `BLOCKED` with the want explained.
 

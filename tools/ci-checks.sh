@@ -440,16 +440,16 @@ fi
 fi  # end python3/git availability check
 
 # ---------------------------------------------------------------------------
-# CHECK 8: Agent-payload hook-path fixture test (ADR-0042 D1 extension)
-#   Updated for PRD #668 slice #670: Agent hooks now call log-tool-event.sh
-#   (python3 parser path) instead of inline jq.  Assertions updated accordingly:
-#   (a) settings.json Agent-matcher hooks call log-tool-event.sh (not inline jq).
-#   (b) The fixture's .tool_input.subagent_type resolves non-empty via python3
-#       (proves the python3 parser path handles the canonical Agent payload).
-#   Agent-payload schema changes: refresh dashboard/fixtures/agent-payload-sample.json
-#   and re-verify this check.  Soft-degrades if python3 unavailable.
+# CHECK 8: Agent-payload hook-path fixture test + hook-entry-count assertion
+#   Updated for PRD #668 slice #670: Agent hooks now call log-tool-event.sh.
+#   Updated for PRD #876 slice #877: consolidated to auto-mode; added count gate.
+#   (a) settings.json references log-tool-event.sh and NOT log-event.sh (deleted).
+#   (b) The fixture's .tool_input.subagent_type resolves non-empty via python3.
+#   (c) Hook-command count (sum of len(e['hooks'])) <= 9 (target: 8; cap adds 1 slack).
+#       Rationale: 15->8 consolidation per PRD #876; strict cap <= 9 here.
+#   Soft-degrades if python3 unavailable.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 8: Agent-payload hook-path fixture test ---"
+echo "--- CHECK 8: Agent-payload hook-path fixture test + hook-entry-count ---"
 FIXTURE="dashboard/fixtures/agent-payload-sample.json"
 SETTINGS=".claude/settings.json"
 if ! command -v python3 > /dev/null 2>&1; then
@@ -460,12 +460,17 @@ elif [ ! -f "$SETTINGS" ]; then
     fail "CHECK 8 — settings.json not found: $SETTINGS"
 else
     CHECK8_FAIL=0
-    # Assert settings.json Agent-matcher hooks call log-tool-event.sh (python3 path).
-    if ! grep -q 'log-tool-event\.sh.*agent_start\|agent_start.*log-tool-event\.sh\|log-tool-event\.sh.*agent_complete\|agent_complete.*log-tool-event\.sh' "$SETTINGS"; then
-        fail "CHECK 8 — settings.json Agent hooks do not call log-tool-event.sh for agent_start/agent_complete"
+    # (a) Assert settings.json references log-tool-event.sh (consolidated logger).
+    if ! grep -q 'log-tool-event\.sh' "$SETTINGS"; then
+        fail "CHECK 8 — settings.json does not reference log-tool-event.sh at all"
         CHECK8_FAIL=1
     fi
-    # Assert the fixture's tool_input.subagent_type resolves non-empty via python3.
+    # Verify no reference to deleted log-event.sh remains (PRD #876).
+    if grep -q 'log-event\.sh' "$SETTINGS"; then
+        fail "CHECK 8 — settings.json still references deleted log-event.sh"
+        CHECK8_FAIL=1
+    fi
+    # (b) Assert the fixture's tool_input.subagent_type resolves non-empty via python3.
     SUBAGENT_VAL=$(python3 -c "
 import json, sys
 with open('$FIXTURE') as f:
@@ -477,8 +482,21 @@ print(val)
         fail "CHECK 8 — tool_input.subagent_type resolved empty in $FIXTURE via python3 (fixture stale?)"
         CHECK8_FAIL=1
     fi
+    # (c) Hook-command count: sum of len(e['hooks']) across all entries. Cap <= 9.
+    HOOK_COUNT=$(python3 -c "
+import json
+data = json.load(open('$SETTINGS'))
+print(sum(len(e['hooks']) for v in data['hooks'].values() for e in v))
+" 2>/dev/null)
+    if [ -z "$HOOK_COUNT" ]; then
+        fail "CHECK 8 — could not compute hook-command count from $SETTINGS"
+        CHECK8_FAIL=1
+    elif [ "$HOOK_COUNT" -gt 9 ]; then
+        fail "CHECK 8 — hook-command count $HOOK_COUNT exceeds cap of 9 (PRD #876 target: 8)"
+        CHECK8_FAIL=1
+    fi
     if [ "$CHECK8_FAIL" -eq 0 ]; then
-        pass "CHECK 8 — Agent hooks call log-tool-event.sh; python3 resolves subagent_type='$SUBAGENT_VAL' from fixture"
+        pass "CHECK 8 — log-tool-event.sh wired; no log-event.sh refs; hook-count=$HOOK_COUNT (<=9); subagent_type='$SUBAGENT_VAL' from fixture"
     fi
 fi
 

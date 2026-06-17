@@ -1,12 +1,23 @@
 #!/bin/bash
 # log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
+#                     Consolidated per PRD #876 slice #877: now the ONE canonical logger;
+#                     log-event.sh deleted; lifecycle events folded into calling scripts.
 #
 # CONTRACT:
 #   Called with exactly one argument: the event_type string
 #   (e.g. session_start, session_stop, agent_start, agent_complete,
-#   bash_complete, skill_invoke, grill_qa).
+#   bash_complete, skill_invoke, grill_qa, session_context_injected).
+#   Pass "auto" to derive event_type from the payload's hook_event_name + tool_name.
 #   Hook stdin is a JSON object from Claude Code containing session_id,
 #   hook_event_name, and event-specific fields.
+#
+# AUTO MODE (PRD #876):
+#   Pass "auto" as the first argument; event_type is derived from payload fields:
+#   - hook_event_name="PostToolUse" + tool_name → agent_complete / bash_complete /
+#     grill_qa / subagent_edit (writes subagent-edits.log) / post_tool (generic)
+#   - hook_event_name="PreToolUse" + tool_name → agent_start / skill_invoke / pre_tool
+#   Subagent-edit nudge: PostToolUse Edit|MultiEdit|Write on .claude/agents/*.md files
+#     writes to subagent-edits.log (exactly mirrors the old inline command in settings.json).
 #
 # ORDERING GUARANTEE (per PRD #668 §2 / rabbit-holes):
 #   1. Read stdin once into a bash variable.
@@ -27,9 +38,9 @@
 #              "wt":<basename of git toplevel>, "event", ...payload}
 #
 # Per-event payload (selected fields only — never the full raw input/response):
-#   agent_start:    subagent_type, input (first 300 chars of description)
+#   agent_start:    subagent_type, input (first 300 chars of description), model (if found)
 #   agent_complete: subagent_type, input (first 300 chars), tail (last 2000 chars
-#                   of tool_response — trailer capture for verdict parsing)
+#                   of tool_response — trailer capture for verdict parsing), model (if found)
 #   bash_complete:  command (first 200 chars)
 #   skill_invoke:   skill (name extracted from tool_input), source="skill_tool"
 #   grill_qa:       question (first 300 chars), answer (first 300 chars)
@@ -39,11 +50,13 @@
 #                   ≤256 KB transcript tail-read; present only when found);
 #                   tail_error (short reason string; present only on failure);
 #                   fail-soft: event always writes even if transcript read fails
+#   subagent_edit:  file_path (written to subagent-edits.log, NOT workflow-events.jsonl)
 #
 # NO jq IN THIS FILE — python3 only; jq ENOEXEC hazard is structurally irrelevant.
 #
 # Invoke style (settings.json registration):
 #   bash "$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh" session_start
+#   bash "$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh" auto
 
 EVENT_TYPE="${1:-unknown}"
 
@@ -76,15 +89,44 @@ export LTE_LOG_DIR="$LOG_DIR"
 python3 - <<'PYEOF'
 import sys, os, json, datetime, re, subprocess
 
-event_type = os.environ["LTE_EVENT_TYPE"]
-log_dir    = os.environ["LTE_LOG_DIR"]
-stdin_data = os.environ.get("LTE_STDIN", "")
+_raw_event_type = os.environ["LTE_EVENT_TYPE"]
+log_dir         = os.environ["LTE_LOG_DIR"]
+stdin_data      = os.environ.get("LTE_STDIN", "")
 
 def ts_now():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def beacon(status, reason=None):
-    obj = {"hook": event_type, "status": status, "ts": ts_now()}
+FIXTURE_PATTERN = re.compile(
+    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)",
+    re.IGNORECASE
+)
+
+def is_fixture_sid(sid):
+    return bool(FIXTURE_PATTERN.match(sid))
+
+# AUTO-MODE: derive event_type from payload fields (PRD #876 consolidation).
+_TOOL_NAME_TO_POST_EVENT = {
+    "Agent":           "agent_complete",
+    "Bash":            "bash_complete",
+    "AskUserQuestion": "grill_qa",
+}
+_TOOL_NAME_TO_PRE_EVENT = {
+    "Agent":  "agent_start",
+    "Skill":  "skill_invoke",
+}
+
+def derive_event_type(payload):
+    """Derive event_type from hook_event_name + tool_name for auto mode."""
+    hook_ev   = str(payload.get("hook_event_name", ""))
+    tool_name = str(payload.get("tool_name", ""))
+    if hook_ev == "PostToolUse":
+        return _TOOL_NAME_TO_POST_EVENT.get(tool_name, "post_tool")
+    elif hook_ev == "PreToolUse":
+        return _TOOL_NAME_TO_PRE_EVENT.get(tool_name, "pre_tool")
+    return "unknown"
+
+def beacon(status, event_label, reason=None):
+    obj = {"hook": event_label, "status": status, "ts": ts_now()}
     if reason:
         obj["reason"] = reason
     line = json.dumps(obj, separators=(",", ":"))
@@ -96,20 +138,18 @@ def beacon(status, reason=None):
     except Exception:
         pass  # never crash
 
-FIXTURE_PATTERN = re.compile(
-    r"^(demo|test|verify|fixture|manual|sess-|sample-session-id$)",
-    re.IGNORECASE
-)
-
-def is_fixture_sid(sid):
-    return bool(FIXTURE_PATTERN.match(sid))
-
 try:
     raw = stdin_data.strip()
     if not raw:
         raise ValueError("empty stdin")
 
     payload = json.loads(raw)
+
+    # Resolve final event_type (auto-mode or explicit).
+    if _raw_event_type == "auto":
+        event_type = derive_event_type(payload)
+    else:
+        event_type = _raw_event_type
 
     # Validate required field.
     session_id = payload.get("session_id", "")
@@ -127,6 +167,40 @@ try:
     except Exception:
         wt = "unknown"
 
+    # Per-event payload selection (selected fields only — never full raw input/response).
+    tool_input    = payload.get("tool_input", {}) if isinstance(payload.get("tool_input"), dict) else {}
+    tool_response = payload.get("tool_response", "")
+    # Normalise tool_response to a string for slicing.
+    if not isinstance(tool_response, str):
+        tool_response = json.dumps(tool_response, separators=(",", ":"))
+
+    # SUBAGENT-EDIT NUDGE (PRD #876 consolidation — replaces inline command in settings.json):
+    # PostToolUse Edit|MultiEdit|Write on .claude/agents/*.md → write to subagent-edits.log.
+    # This is a logging side-effect, NOT a workflow-events.jsonl event; handled and return early.
+    if event_type == "post_tool":
+        tool_name = str(payload.get("tool_name", ""))
+        file_path = str(tool_input.get("file_path", ""))
+        if tool_name in ("Edit", "MultiEdit", "Write") and re.search(r'\.claude[/\\]agents[/\\].*\.md$', file_path):
+            # Emit subagent-edit nudge to subagent-edits.log (mirrors old inline log-event.sh call).
+            import datetime as _dt
+            nudge_line = "{} {} (edit detected; consider running /audit-subagents)\n".format(
+                _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                file_path
+            )
+            sandbox = os.environ.get("WORKFLOW_LOG_DIR", "")
+            write_dir = sandbox if sandbox else log_dir
+            os.makedirs(write_dir, exist_ok=True)
+            try:
+                with open(os.path.join(write_dir, "subagent-edits.log"), "a", encoding="utf-8") as f:
+                    f.write(nudge_line)
+            except Exception:
+                pass
+            beacon("ok", "subagent_edit")
+            import sys; sys.exit(0)
+        # Other PostToolUse tools (not Edit family) that don't map to a named event → skip silently.
+        beacon("ok", event_type)
+        import sys; sys.exit(0)
+
     # Build v2 event.
     event = {
         "v": 2,
@@ -137,30 +211,22 @@ try:
         "event": event_type,
     }
 
-    # Per-event payload selection (selected fields only — never full raw input/response).
-    tool_input    = payload.get("tool_input", {}) if isinstance(payload.get("tool_input"), dict) else {}
-    tool_response = payload.get("tool_response", "")
-    # Normalise tool_response to a string for slicing.
-    if not isinstance(tool_response, str):
-        import json as _json
-        tool_response = _json.dumps(tool_response, separators=(",", ":"))
-
     if event_type == "agent_start":
         event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
-        event["input"]         = str(tool_input.get("description", ""))[:300]
-        # model: subagent model where derivable from subagent_type frontmatter (ADR-0069 D3).
-        # Parse model from the description if declared as "model: <value>".
+        _desc = str(tool_input.get("description", ""))
+        event["input"] = _desc[:300]
+        # model: subagent model where derivable from description (ADR-0069 D3).
         _model_m = re.search(r'\bmodel\s*:\s*(\S+)', _desc, re.IGNORECASE)
         if _model_m:
             event["model"] = str(_model_m.group(1))[:100]
 
     elif event_type == "agent_complete":
         event["subagent_type"] = str(tool_input.get("subagent_type", ""))[:200]
-        event["input"]         = str(tool_input.get("description", ""))[:300]
+        _desc_c = str(tool_input.get("description", ""))
+        event["input"] = _desc_c[:300]
         # tail = last 2000 chars of tool_response (trailer capture for verdict parsing).
         event["tail"]          = tool_response[-2000:] if len(tool_response) > 2000 else tool_response
         # model: carry through on completion events where derivable (ADR-0069 D3).
-        _desc_c = str(tool_input.get("description", ""))
         _model_mc = re.search(r'\bmodel\s*:\s*(\S+)', _desc_c, re.IGNORECASE)
         if _model_mc:
             event["model"] = str(_model_mc.group(1))[:100]
@@ -182,8 +248,7 @@ try:
     elif event_type == "grill_qa":
         q_raw = tool_input.get("question") or tool_input
         if isinstance(q_raw, dict):
-            import json as _json2
-            q_raw = _json2.dumps(q_raw, separators=(",", ":"))
+            q_raw = json.dumps(q_raw, separators=(",", ":"))
         a_raw = tool_response
         event["question"] = str(q_raw)[:300]
         event["answer"]   = str(a_raw)[:300]
@@ -282,16 +347,22 @@ try:
     with open(os.path.join(write_dir, target_file), "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
-    beacon("ok")
+    beacon("ok", event_type)
 
 except Exception as exc:
     reason = str(exc)[:200]
+    # Resolve event_type label for beacon (may not be set if error was before derivation).
+    _err_label = _raw_event_type if _raw_event_type != "auto" else "auto"
+    try:
+        _err_label = event_type  # may be set if error is post-derivation
+    except NameError:
+        pass
     # Preserve raw stdin in rejects file (lossless).
     reject_dir = os.environ.get("WORKFLOW_LOG_DIR", log_dir)
     os.makedirs(reject_dir, exist_ok=True)
     reject_obj = {
         "ts": ts_now(),
-        "hook": event_type,
+        "hook": _err_label,
         "reason": reason,
         "raw": stdin_data[:4096],
     }
@@ -300,7 +371,7 @@ except Exception as exc:
             f.write(json.dumps(reject_obj, separators=(",", ":")) + "\n")
     except Exception:
         pass
-    beacon("error", reason)
+    beacon("error", _err_label, reason)
 PYEOF
 
 exit 0

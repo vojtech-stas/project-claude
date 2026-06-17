@@ -1,3 +1,13 @@
+---
+id: "ADR-0024"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "capture"
+rule_ids:
+  - "CAP-005"
+  - "CAP-006"
+---
 # ADR-0024: Root-cause workflow capture discipline (CLAUDE.md cross-cutting rule #13)
 
 - **Status:** Accepted

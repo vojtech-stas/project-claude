@@ -1,3 +1,13 @@
+---
+id: "ADR-0002"
+status: "accepted"
+supersedes:
+  - "ADR-0001"
+superseded_by: []
+scope: "pipeline"
+rule_ids:
+  - "PIP-001"
+---
 # ADR-0002: Autonomous merge policy with QA-level human checkpoint
 
 - **Status:** Accepted

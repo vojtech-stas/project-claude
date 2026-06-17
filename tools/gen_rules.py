@@ -230,6 +230,69 @@ _RULE_STATEMENTS: dict[str, str] = {
         "`**Root cause:**` / `**Proposed:**`; evidence is preserved verbatim "
         "before diagnosing (STOP → PRESERVE → DIAGNOSE → FIX → GUARD → RESUME)."
     ),
+    # ADR-0002: autonomous merge policy (D9-revised)
+    "PIP-001": (
+        "Reviewer's APPROVE verdict triggers auto-merge (`gh pr merge --squash`); "
+        "BLOCK sends the PR back to the implementer; after N=3 rounds, escalate to human."
+    ),
+    # ADR-0003: autonomous pipeline + critics
+    "PIP-002": (
+        "The unit-of-delivery hierarchy is exactly three tiers: PRD (prd-labeled issue) "
+        "→ Slice (slice-labeled sub-issue) → PR (closes one slice)."
+    ),
+    "PIP-003": (
+        "The pipeline has five stages: grill-me → to-prd+prd-critic → slicer+slicer-critic "
+        "→ implementer+reviewer → qa-plan; every generation stage is paired with an "
+        "adversarial critic."
+    ),
+    "PIP-004": (
+        "The human enters the pipeline at exactly two points: `grill-me` (defines what to "
+        "build) and `qa-plan` (acceptance test); everything in between is fully autonomous."
+    ),
+    "PIP-005": (
+        "Human-facing stages use skills (orchestrator-owned procedures); autonomous stages "
+        "use subagents (isolated-context + task-handed + result-returning)."
+    ),
+    # ADR-0010: implementer subagent + /ship auto-invoke
+    "PIP-006": (
+        "A single `implementer` subagent handles all slice types (feat/fix/docs/refactor/"
+        "test) uniformly — no specialized variants until data justifies splitting."
+    ),
+    "PIP-007": (
+        "`/ship` auto-invokes the implementer on each posted slice, closing the residual "
+        "human-trigger gap and making ADR-0003 D4's no-human-gates property enforceable "
+        "end-to-end."
+    ),
+    "PIP-008": (
+        "Orchestrator reads each slice's `Depends on` field, builds the DAG, and runs "
+        "independent slices in parallel; sync points are at dependency boundaries."
+    ),
+    "PIP-009": (
+        "On irrecoverable failure (round-3 BLOCK; ambiguous AC; INVALID_INPUT), the "
+        "failed slice gets `needs-human`; in-flight parallel slices finish normally; "
+        "slices depending on the failed slice stay blocked."
+    ),
+    "PIP-010": (
+        "Implementer's authorized tools: Read, Edit, Write, Bash, Glob, Grep. "
+        "Explicitly excluded: Agent (no recursive subagent invocation — reviewer is "
+        "invoked by /ship orchestrator, not by the implementer)."
+    ),
+    # ADR-0046: codebase-critic + parsimony reframe
+    "PIP-011": (
+        "The gate on adding a critic is a parsimony principle (minimize critics; each "
+        "earns its place against a distinct concern no existing critic absorbs) — not a "
+        "numeric count cap."
+    ),
+    "PIP-012": (
+        "`codebase-critic` provides per-PRD macro review covering: (1) semantic doc "
+        "currency, (2) architectural drift, (3) refactoring opportunities; BLOCK for "
+        "PRD-introduced drift, RECOMMEND for improvements."
+    ),
+    "PIP-013": (
+        "`codebase-critic` fires once per PRD at the last open slice, before that "
+        "slice's reviewer pass, judging the cumulative PRD diff; reviewer remains "
+        "the sole merge gate."
+    ),
 }
 
 

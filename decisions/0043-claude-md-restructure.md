@@ -1,3 +1,14 @@
+---
+id: "ADR-0043"
+status: "accepted"
+supersedes:
+  - "ADR-0024"
+superseded_by: []
+scope: "docs"
+rule_ids:
+  - "DOC-003"
+  - "DOC-004"
+---
 # ADR-0043: CLAUDE.md restructure — constraint-framed, grouped, de-duplicated (rules stay; numbers are anchors)
 
 - **Status:** Accepted

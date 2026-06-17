@@ -1,3 +1,13 @@
+---
+id: "ADR-0007"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "glossary"
+rule_ids:
+  - "GLO-001"
+  - "GLO-002"
+---
 # ADR-0007: Universal vocabulary mechanism — two-tier glossary + /grill-me extension
 
 - **Status:** Accepted

@@ -1,3 +1,15 @@
+---
+id: "ADR-0036"
+status: "accepted"
+supersedes:
+  - "ADR-0035"
+superseded_by: []
+scope: "isolation"
+rule_ids:
+  - "ISO-001"
+  - "ISO-002"
+  - "ISO-003"
+---
 # ADR-0036: Worktree isolation for ALL git-mutating subagent dispatches
 
 - **Status:** Accepted

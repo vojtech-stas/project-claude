@@ -1,3 +1,15 @@
+---
+id: "ADR-0058"
+status: "accepted"
+supersedes:
+  - "ADR-0041"
+superseded_by: []
+scope: "isolation"
+rule_ids:
+  - "ISO-004"
+  - "ISO-005"
+  - "ISO-006"
+---
 # 0058 — Worktree isolation as an asserted interface
 
 - **Status:** Accepted

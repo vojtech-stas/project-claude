@@ -1,3 +1,13 @@
+---
+id: "ADR-0066"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "output-contracts"
+rule_ids:
+  - "OUT-004"
+  - "OUT-005"
+---
 # 0066 — Upstream spec contract: EARS-shaped criteria, coverage traceability, append-only amendments, reference pointers
 
 - **Status:** Accepted (joint APPROVE per ADR-0004 D1; shipped with PRD #794 slice 1)

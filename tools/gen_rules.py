@@ -448,6 +448,186 @@ _RULE_STATEMENTS: dict[str, str] = {
         "the git log is the changelog — no separate CHANGELOG file "
         "(ADR-0001 D12, source=CLAUDE.md #5/#6)."
     ),
+    # -----------------------------------------------------------------------
+    # critics scope (ADR-0048, ADR-0054)
+    # -----------------------------------------------------------------------
+    # ADR-0048: critic-loop r3 policy — D1 (strict-stop) + D2 (complete-class revision)
+    "CRI-001": (
+        "Round-3 BLOCK from any critic is strict-stop: the pipeline escalates via the I5 "
+        "surface (`needs-human` label + parent-context comment) and stops regardless of the "
+        "residual's apparent magnitude — no fix-and-ship exception exists (ADR-0048 D1)."
+    ),
+    "CRI-002": (
+        "When revising in response to a critic BLOCK, sweep the ENTIRE flagged defect class "
+        "(every instance of the cited pattern — every `ADR-NNNN D<n>` cite, every over-cap "
+        "commit, etc.), not only the single named instance; this is CLAUDE.md rule #19 "
+        "(ADR-0048 D2)."
+    ),
+    # ADR-0054: critic output contracts — D1 (provenance) + D2 (CRITIC trailer) + D3 (fixture discipline)
+    "CRI-003": (
+        "Every critic verdict MUST be accompanied by an output contract — a fenced field-schema "
+        "block (`VERDICT`/`REASON`/`ROUND` + optionals) that the orchestrator can parse "
+        "programmatically; free-text BLOCKs without a trailer are non-conforming (ADR-0054 D1/D2)."
+    ),
+    "CRI-004": (
+        "Fixture/synthetic data NEVER enters production data stores (`.claude/logs/*`); "
+        "fixtures live in `dashboard/fixtures/` and load only behind an explicit flag; "
+        "any verification whose evidence derives from fixture-tagged data is INVALID — "
+        "this is CLAUDE.md rule #21 (ADR-0054 D3)."
+    ),
+    "CRI-005": (
+        "Every 'done/verified' claim in a wrap-up MUST carry a route-appropriate proof "
+        "artifact with data source (real session/PRD/PR id + timestamp) and environment "
+        "freshness; a claim without a checkable artifact is NOT a valid 'done' — "
+        "this is CLAUDE.md rule #20 (ADR-0054 D4)."
+    ),
+    # -----------------------------------------------------------------------
+    # isolation scope (ADR-0036, ADR-0058)
+    # -----------------------------------------------------------------------
+    # ADR-0036: worktree isolation all dispatches — D1 (all dispatches) + D2 (reviewer too) + D3 (invariant)
+    "ISO-001": (
+        "Every git-mutating subagent dispatch — implementer or reviewer, regardless of batch "
+        "size — MUST pass `isolation: 'worktree'`; there is no batch-size-1 carve-out "
+        "(ADR-0036 D1, source=CLAUDE.md I4a)."
+    ),
+    "ISO-002": (
+        "Reviewer dispatch is isolated via the same `isolation: 'worktree'` mechanism as the "
+        "implementer; the same state-pollution risk applies to any subagent that performs git "
+        "branch/merge operations (ADR-0036 D2)."
+    ),
+    "ISO-003": (
+        "Dispatched subagents MUST NOT mutate the orchestrator's session worktree or the root "
+        "repo; the harness-assigned worktree is the subagent's exclusive write domain "
+        "(ADR-0036 D3)."
+    ),
+    # ADR-0058: isolation as asserted interface — D1 (missing worktreePath) + D2 (step-0 assert) + D3 (guard semantics)
+    "ISO-004": (
+        "A dispatch result missing `worktreePath` is a dispatch failure — the orchestrator "
+        "MUST re-dispatch rather than proceed with a shared-tree agent (ADR-0058 D1)."
+    ),
+    "ISO-005": (
+        "Every dispatched agent MUST assert isolation in Step 0: verify "
+        "`git rev-parse --show-toplevel` differs from the orchestrator's repo root; if they "
+        "match, return `RESULT: BLOCKED — isolation assertion failed` without any write "
+        "(ADR-0058 D2)."
+    ),
+    "ISO-006": (
+        "Post-dispatch guard is ff-only and loud: `branch-restore` fails non-zero on diverged "
+        "branches (no silent force-reset); `prune` reclaims clean aged worktrees with no open "
+        "PR; all subcommands exit non-zero on unrepaired violations (ADR-0058 D3)."
+    ),
+    # -----------------------------------------------------------------------
+    # docs scope (ADR-0034, ADR-0043, ADR-0045)
+    # -----------------------------------------------------------------------
+    # ADR-0034: generated-docs currency — D4 (generated README) + D5 (R-DOCS-CURRENT)
+    "DOC-001": (
+        "`README.md` is a build artifact: `dashboard/server.py --generate-readme` reads "
+        "`README.template.md` + filesystem, writes `README.md`; the file MUST NOT be "
+        "hand-edited — always regenerate (ADR-0034 D4)."
+    ),
+    "DOC-002": (
+        "The reviewer enforces `R-DOCS-CURRENT`: any PR that changes a template placeholder "
+        "source without regenerating README.md is BLOCKed; this is the unbypassable currency "
+        "gate for generated documentation (ADR-0034 D5)."
+    ),
+    # ADR-0043: CLAUDE.md restructure — D1 (four sections; rule numbers stable) + D4 (numbered rules)
+    "DOC-003": (
+        "CLAUDE.md is organized into four sections; rule numbers (#1–#N) are stable anchors — "
+        "never renumbered, never deleted (only retired with a note); the numbers are the "
+        "canonical cross-reference handles (ADR-0043 D1)."
+    ),
+    "DOC-004": (
+        "Adding a new numbered cross-cutting rule requires promoting it to CLAUDE.md §1; "
+        "rule numbers are assigned sequentially from the highest existing anchor "
+        "(ADR-0043 D4)."
+    ),
+    # ADR-0045: ADR-citation discipline — D1 (rule #18) + D2 (decisions/README.md index)
+    "DOC-005": (
+        "Before citing `ADR-NNNN D<n>` in any drafted ADR/PRD/doc, open the cited ADR and "
+        "read the actual `### D<n>` heading — the citation's characterization MUST match that "
+        "heading; this is CLAUDE.md rule #18 (ADR-0045 D1)."
+    ),
+    "DOC-006": (
+        "`decisions/README.md` is the canonical decision index; consult it to find the right "
+        "ADR file before citing; the adr-critic runs an explicit per-cite citation-ledger "
+        "pre-step to verify every D-ID (ADR-0045 D2/D3)."
+    ),
+    # -----------------------------------------------------------------------
+    # output-contracts scope (ADR-0059, ADR-0066)
+    # -----------------------------------------------------------------------
+    # ADR-0059: output-contract schema v2 — D1 (CRITIC:) + D2 (DIDNT_TOUCH/CONCERNS) + D3 (CONFUSION)
+    "OUT-001": (
+        "The CRITIC trailer gains a `CRITIC:` field identifying the critic subagent by name; "
+        "the orchestrator uses this for provenance tracking and dispatch-trail recording "
+        "(ADR-0059 D1)."
+    ),
+    "OUT-002": (
+        "The GENERATOR trailer gains `DIDNT_TOUCH:` (scope-discipline evidence: files "
+        "deliberately left alone) and `CONCERNS:` (self-disclosed risk entry points — doubts, "
+        "not success claims) fields; both are required keys (ADR-0059 D2)."
+    ),
+    "OUT-003": (
+        "A third GENERATOR RESULT enum is defined: `CONFUSION` — returned when the agent "
+        "encounters contradictory instructions or an impossible acceptance criterion; the agent "
+        "MUST STOP and name the conflict with 2–3 resolution options rather than guessing "
+        "(ADR-0059 D3)."
+    ),
+    # ADR-0066: upstream spec contract — D1 (EARS criteria) + D2 (coverage traceability)
+    "OUT-004": (
+        "PRD §2 acceptance criteria MUST lead with an EARS-shaped trigger: "
+        "'WHEN <trigger>, the system SHALL <observable behavior>'; criteria without a trigger "
+        "carry `Verifiable:` escape-hatch prose; `prd-critic` enforces PC-EARS (ADR-0066 D1)."
+    ),
+    "OUT-005": (
+        "Each PRD §2 criterion maps to exactly one slice via a traceability tag; the "
+        "`slicer-critic` enforces SC-COVERAGE — no criterion may be untraced to a slice; "
+        "amendments to criteria are append-only (ADR-0066 D2/D3)."
+    ),
+    # -----------------------------------------------------------------------
+    # regression scope (ADR-0067)
+    # -----------------------------------------------------------------------
+    # ADR-0067: regression memory — D1 (tests/ in CI) + D2 (R-PROVE test-before-fix) + D3 (rule #13 rider)
+    "REG-001": (
+        "The `tests/` suite is wired into CI: `tools/ci-checks.sh` runs `pytest tests/` as a "
+        "required check; a red test suite blocks the PR merge gate (ADR-0067 D1)."
+    ),
+    "REG-002": (
+        "For fix-type slices that address a code defect, the fixing PR MUST include a "
+        "regression test that fails BEFORE the fix and passes AFTER; the test commit MUST "
+        "precede the fix commit in branch history — this is R-PROVE / rule #13 regression "
+        "rider (ADR-0067 D2/D3)."
+    ),
+    "REG-003": (
+        "Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; "
+        "quarantined tests have a 30-day SLA to be fixed or deleted; golden-set critic evals "
+        "live in `tests/evals/` and run on-demand via `tools/run_evals.py` (ADR-0067 D4/D5)."
+    ),
+    # -----------------------------------------------------------------------
+    # glossary scope (ADR-0007, ADR-0012)
+    # -----------------------------------------------------------------------
+    # ADR-0007: glossary mechanism — D2 (entry shape) + D3 (scope rule) [D1+D5 superseded by ADR-0012]
+    "GLO-001": (
+        "Each glossary entry has a fixed shape: bold term, em-dash, one-sentence definition "
+        "ending with a parenthetical citation of the ADR that introduces or owns the term "
+        "(ADR-0007 D2)."
+    ),
+    "GLO-002": (
+        "Three inclusion categories qualify for the glossary: (1) pipeline-stage names and "
+        "their roles, (2) project-specific jargon that would confuse a new agent, and (3) "
+        "terms whose usage is project-specific rather than standard; everyday English words "
+        "do not qualify (ADR-0007 D3)."
+    ),
+    # ADR-0012: single-tier consolidation — D1 (CLAUDE.md only) + D2 (tightened threshold)
+    "GLO-003": (
+        "The glossary lives in a single tier: CLAUDE.md §4 (auto-loaded on every session); "
+        "the separate long-tail glossary file (ADR-0007 D1) is retired; all entries must "
+        "earn their place in the auto-loaded context (ADR-0012 D1)."
+    ),
+    "GLO-004": (
+        "The glossary soft-cap is ~35 entries; new entries are added only via `/glossary add` "
+        "(gated by `glossary-critic`); the cap is enforced by `glossary-critic` which BLOCKs "
+        "additions that fail the tightened inclusion threshold (ADR-0012 D2/D5)."
+    ),
 }
 
 

@@ -1,3 +1,13 @@
+---
+id: "ADR-0034"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "docs"
+rule_ids:
+  - "DOC-001"
+  - "DOC-002"
+---
 # ADR-0034: Unified `/build` orchestrator + generated-docs currency model
 
 - **Status:** Accepted

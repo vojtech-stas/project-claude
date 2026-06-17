@@ -20,6 +20,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
         GET /api/promotion            -> JSON develop/main topology + last promotions + held_reason (slice #843)
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
+        GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
         (GET /api/dora removed — slice #854, fleet-economics machinery retired)
 
 Start: python dashboard/server.py
@@ -735,6 +736,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json(
                     {"events": [], "source": "", "event_count": 0,
+                     "error": str(exc)}, 500
+                )
+
+        elif path == "/api/session-firing":
+            # GET /api/session-firing — per-PRD firing tree from transcript (slice #901).
+            # Maps subagent dispatches to PRD buckets via subagents/agent-*.meta.json.
+            # Returns {groups: {<prd-label>: [{agent,start,end,verdict}…]},
+            #          dispatch_count, source, error}.
+            try:
+                self._send_json(_transcript_mod.get_session_firing())
+            except Exception as exc:
+                self._send_json(
+                    {"groups": {}, "dispatch_count": 0, "source": "",
                      "error": str(exc)}, 500
                 )
 

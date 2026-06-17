@@ -1164,6 +1164,18 @@
       </div>
     </div>
 
+    <!-- Session-firing panel (slice #901): per-PRD dispatch tree from transcript -->
+    <div class="lane-b" id="session-firing-panel" style="margin-top:8px;">
+      <div class="lane-b-header">
+        <h3>Session firing tree (transcript) &mdash; dispatches by PRD</h3>
+        <span id="session-firing-source" style="color:var(--muted);font-size:10px;margin-left:8px;">—</span>
+        <button class="refresh" onclick="reloadSessionFiring()" style="margin-left:auto;">Refresh</button>
+      </div>
+      <div id="session-firing-content" style="padding:10px 14px;">
+        <span style="color:var(--muted);font-size:11px;">Loading firing tree…</span>
+      </div>
+    </div>
+
     <!-- Sessions panel (slice #864): recent workflow sessions from /api/runs (fallback) -->
     <div class="lane-b" id="runs-panel" style="margin-top:8px;">
       <div class="lane-b-header">
@@ -2810,6 +2822,103 @@ function startSessionLive() {
 }
 // Register session-live as PRIMARY source — fires on Live tab activation
 registerTabHook('live', startSessionLive);
+
+// ---------------------------------------------------------------------------
+// /api/session-firing — per-PRD firing tree from transcript (slice #901)
+// ---------------------------------------------------------------------------
+// Fetches on Live tab activation; Refresh button reloads.
+// Groups agent dispatches by PRD label, shows agent · timestamps · verdict.
+
+let _sessionFiringLoaded = false;
+let _sessionFiringTimer = null;
+
+const _FIRING_VERDICT_CLASS = {
+  'APPROVE':  'firing-badge-approve',
+  'SUCCESS':  'firing-badge-approve',
+  'BLOCK':    'firing-badge-block',
+  'BLOCKED':  'firing-badge-block',
+  'CONFUSION':'firing-badge-critic',
+  'INVALID_INPUT': 'firing-badge-block',
+};
+
+function _renderFiringGroup(label, dispatches) {
+  const rows = dispatches.map(function(d) {
+    const agent   = escHtml(d.agent || '?');
+    const verdict = d.verdict || '';
+    const vClass  = _FIRING_VERDICT_CLASS[verdict.toUpperCase()] || 'firing-badge-critic';
+    const vBadge  = verdict
+      ? '<span class="firing-badge ' + vClass + '">' + escHtml(verdict) + '</span>'
+      : '<span style="color:var(--muted);font-size:9px;">pending</span>';
+    const startTs = d.start ? new Date(d.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+    const endTs   = d.end   ? new Date(d.end).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+    const desc    = escHtml((d.description || '').slice(0, 60));
+    return '<div class="firing-event">' +
+      '<span class="firing-badge firing-badge-' + (agent.indexOf('implementer') >= 0 ? 'implementer' : 'critic') + '">' + agent + '</span>' +
+      '<div class="firing-event-label">' + desc + '</div>' +
+      '<div class="firing-event-ts">' + startTs + ' &rarr; ' + endTs + '</div>' +
+      '<div style="margin-top:3px;">' + vBadge + '</div>' +
+      '</div>';
+  }).join('');
+  return '<div class="firing-pr-card">' +
+    '<div class="firing-pr-header">' +
+    '<span class="firing-pr-number">' + escHtml(label) + '</span>' +
+    '<span class="firing-pr-closes">' + dispatches.length + ' dispatch' + (dispatches.length !== 1 ? 'es' : '') + '</span>' +
+    '</div>' +
+    '<div class="firing-timeline">' + rows + '</div>' +
+    '</div>';
+}
+
+async function fetchSessionFiring() {
+  const el    = document.getElementById('session-firing-content');
+  const srcEl = document.getElementById('session-firing-source');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/session-firing');
+    if (!resp.ok) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: HTTP ' + resp.status + '</span>';
+      return;
+    }
+    const data = await resp.json();
+    if (srcEl) {
+      const src = data.source || '';
+      srcEl.textContent = src ? src.split(/[\\/]/).slice(-3).join('/') : '—';
+      srcEl.title = src;
+    }
+    const groups  = data.groups || {};
+    const total   = data.dispatch_count || 0;
+    const labels  = Object.keys(groups).sort();
+    if (labels.length === 0) {
+      const errMsg = data.error ? ' (' + data.error + ')' : '';
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">No dispatches found' + escHtml(errMsg) + '.</span>';
+      return;
+    }
+    let html = '<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">' +
+      total + ' dispatch' + (total !== 1 ? 'es' : '') + ' across ' + labels.length + ' PRD bucket' + (labels.length !== 1 ? 's' : '') + '</div>';
+    html += labels.map(function(lbl) {
+      return _renderFiringGroup(lbl, groups[lbl]);
+    }).join('');
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function reloadSessionFiring() {
+  _sessionFiringLoaded = false;
+  fetchSessionFiring();
+}
+
+function startSessionFiring() {
+  if (_sessionFiringLoaded) return;
+  _sessionFiringLoaded = true;
+  fetchSessionFiring();
+  // Poll every 30s — firing tree changes less frequently than the live event stream
+  _sessionFiringTimer = setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    fetchSessionFiring();
+  }, 30000);
+}
+registerTabHook('live', startSessionFiring);
 
 // ---------------------------------------------------------------------------
 // Per-PRD workflow-firing timeline (slice #864)

@@ -293,6 +293,161 @@ _RULE_STATEMENTS: dict[str, str] = {
         "slice's reviewer pass, judging the cumulative PRD diff; reviewer remains "
         "the sole merge gate."
     ),
+    # -----------------------------------------------------------------------
+    # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)
+    # -----------------------------------------------------------------------
+    # ADR-0015: hooks adoption — D1 (config location) + D2 (scope policy)
+    "HOK-001": (
+        "Project-wide Claude Code hooks are configured in `.claude/settings.json` "
+        "under the `hooks` section; per-developer overrides via `.claude/settings.local.json` "
+        "are not used by default (ADR-0015 D1)."
+    ),
+    "HOK-002": (
+        "Hooks are limited to three permitted categories: logging (write to local files), "
+        "validation (exit-code block/ask), and notification (stderr message). "
+        "Hooks MUST NOT auto-invoke Claude Code skills or subagents (ADR-0015 D2, source=CLAUDE.md #12)."
+    ),
+    # ADR-0023: validation + notification hooks — D3 (pre-tool-edit) + D4 (bash-block) + D5 (prompt-nudge)
+    "HOK-003": (
+        "A PreToolUse(Edit|MultiEdit|Write) hook mechanically escalates rule #10 "
+        "(main-agent meta-output discipline): it emits `permissionDecision: \"ask\"` "
+        "when the main agent attempts to write a tracked file, unless the write is in a "
+        "subagent context (ADR-0023 D3)."
+    ),
+    "HOK-004": (
+        "A PreToolUse(Bash) hook blocks `git push origin main` (any flavor) with "
+        "`permissionDecision: \"deny\"`, enforcing rule #4 at the session level (ADR-0023 D4)."
+    ),
+    "HOK-005": (
+        "A SessionStart hook injects live workflow state (branch, divergence vs origin/main, "
+        "open slices, open PRs, open captured items) into every new session's context, "
+        "mitigating the stale-worktree false-alarm pattern (ADR-0023 D2)."
+    ),
+    # ADR-0033: tooling-spawn — D1 (fourth category) + D2 (skill/subagent exclusion preserved)
+    "HOK-006": (
+        "A fourth hook category is permitted: **tooling-spawn** — hooks may spawn "
+        "project-local tooling processes that meet ALL FOUR criteria: no LLM API calls, "
+        "localhost-only binding, project-scoped script, idempotent spawn check (ADR-0033 D1)."
+    ),
+    "HOK-007": (
+        "The tooling-spawn carveout does NOT authorize hook scripts to invoke "
+        "`.claude/skills/` skills or `.claude/agents/` subagents. ADR-0015 D2's core "
+        "intent — preventing hooks from auto-billing the user via LLM calls — is "
+        "preserved unchanged (ADR-0033 D2)."
+    ),
+    # ADR-0057: fail-loud + context-injection — D1 (fail-loud) + D4 (fifth category)
+    "HOK-008": (
+        "Every hook script MUST emit an attempt beacon BEFORE any parsing or branching; "
+        "on any internal error it MUST emit an ERROR beacon to `hook-fires.jsonl` rather "
+        "than exiting silently; payloads are parsed in full via python3 — never truncated "
+        "with `head -c` (ADR-0057 D1, fail-loud contract)."
+    ),
+    "HOK-009": (
+        "A fifth hook category is permitted: **context injection** — a SessionStart hook "
+        "MAY inject deterministic, read-only command output into session context. The hard "
+        "line is unchanged: hooks NEVER auto-invoke skills or subagents (ADR-0057 D4, "
+        "source=CLAUDE.md #12)."
+    ),
+    # -----------------------------------------------------------------------
+    # slicing scope (ADR-0005, ADR-0013)
+    # -----------------------------------------------------------------------
+    # ADR-0005: output-shape + slicing methodology — D2 (slicing methodology) + D3 (cascade-doc)
+    "SLI-001": (
+        "Slice 1 of every multi-slice PRD MUST be a walking-skeleton — it cuts through "
+        "every pipeline layer end-to-end (hamburger method), even if crudely; building one "
+        "layer completely before another is explicitly rejected (ADR-0005 D2, source=CLAUDE.md #2)."
+    ),
+    "SLI-002": (
+        "When a slice approaches the LoC cap, the slicer uses SPIDR split-fallback hints "
+        "(Spike / Path / Interface / Data / Rules); S, I, and R are the dominant splits for "
+        "this agent-workflow domain (ADR-0005 D2)."
+    ),
+    "SLI-003": (
+        "For each candidate decomposition, the slicer MUST identify cascade-docs — files "
+        "that should update to reflect the new feature even when not strictly required by "
+        "acceptance criteria — and add a slice or merge coverage for each; the slicer-critic "
+        "enforces this check (ADR-0005 D3, source=CLAUDE.md #16)."
+    ),
+    # ADR-0013: N=1 degenerate carveout — D1 (slicer self-restraint) + D2 (critic acceptance)
+    "SLI-004": (
+        "When all N candidate decompositions would produce bit-identical post-merge end-state "
+        "(same files, same LoC, same content — modulo commit ordering), the slicer declares "
+        "N=1 with explicit rationale instead of fabricating cosmetic variation; N=3 remains "
+        "the default for genuinely-open-shape PRDs (ADR-0013 D1)."
+    ),
+    "SLI-005": (
+        "The slicer-critic accepts N=1 with explicit rationale as a legal input; it verifies "
+        "the rationale answers: which PRD section locks the shape, which variation axis was "
+        "rejected, and whether N=3 would have produced genuinely-different alternatives "
+        "(ADR-0013 D2/D3)."
+    ),
+    # -----------------------------------------------------------------------
+    # verification scope (ADR-0037, ADR-0040, ADR-0050)
+    # -----------------------------------------------------------------------
+    # ADR-0037: production-verify gate — D1 (mandatory gate) + D2 (auto-routing) + D4 (PRD declares)
+    "VER-001": (
+        "After all slices of a feature merge, a mandatory, blocking production-verification "
+        "gate runs before the feature is 'done'; PASS → feature done; FAIL → gate BLOCKS; "
+        "per-feature granularity (not per-slice) (ADR-0037 D1, source=CLAUDE.md #15)."
+    ),
+    "VER-002": (
+        "`qa-tester` in production-verify mode auto-routes by change type: "
+        "browser UI (`dashboard/*`) → headless Playwright; hooks/settings → synthetic-payload "
+        "fire + log assertion; skills/tools → command run + output assertion; "
+        "docs/ADRs → static grep (ADR-0037 D2)."
+    ),
+    "VER-003": (
+        "Every PRD §2 must include a 'Production check:' line stating what to exercise and "
+        "the expected result; `prd-critic` BLOCKs a PRD whose production-check line is "
+        "missing or non-actionable (ADR-0037 D4)."
+    ),
+    # ADR-0040: QA residual model — D1 (residual model) + D2 (non-blocking) + D5 (fidelity)
+    "VER-004": (
+        "The machine attempts every PRD §2 criterion; a criterion it cannot faithfully "
+        "verify returns PROVISIONAL and becomes a human residual posted as a "
+        "`needs-human-check` issue — the residual is discovered empirically, not predicted "
+        "at plan time (ADR-0040 D1)."
+    ),
+    "VER-005": (
+        "The human residual does NOT block PRD closure; the PRD auto-closes on machine "
+        "PRODUCTION_VERIFY: PASS alone; a machine-confident FAIL still blocks per ADR-0037 "
+        "D5 loop; the `/qa-review` skill clears residuals on the human's own cadence "
+        "(ADR-0040 D2/D4)."
+    ),
+    "VER-006": (
+        "`qa-tester` browser route MUST drive real interaction — `page.click()`, "
+        "`page.fill()`, `page.goto()` — and assert on what a human sees; `page.evaluate()` "
+        "is a last-resort disambiguator only; eval-only proof → PROVISIONAL, not PASS "
+        "(ADR-0040 D5)."
+    ),
+    # ADR-0050: headless Playwright driver — D1 (driver choice) + D2 (tool boundary)
+    "VER-007": (
+        "Headless Playwright/Chrome (`headless=True`, `channel='chrome'`) is the qa-tester "
+        "browser driver for ui-mode and the production-verify browser route; it replaces "
+        "Claude_Preview MCP, eliminating the OS-visibility timeout by rendering offscreen "
+        "(ADR-0050 D1)."
+    ),
+    "VER-008": (
+        "The qa-tester browser route is driven entirely via `Bash` (write a Python script to "
+        "a tmp path via heredoc, execute it, read results); all `mcp__Claude_Preview__*` "
+        "calls are dropped; no tracked files are written by the qa-tester (ADR-0050 D2)."
+    ),
+    # -----------------------------------------------------------------------
+    # commits scope (ADR-0001)
+    # -----------------------------------------------------------------------
+    # ADR-0001: foundational design — D12 establishes Conventional Commits + never-push-main
+    "COM-001": (
+        "Every commit message follows `<type>(<optional scope>): <subject>` "
+        "(Conventional Commits); subject is lowercase; subject line is capped at ≤72 chars; "
+        "types: feat/fix/docs/chore/refactor/test/perf/style/build/ci "
+        "(ADR-0001 D12, source=CLAUDE.md #5)."
+    ),
+    "COM-002": (
+        "Every agent-authored commit MUST carry a `Co-Authored-By: Claude …` trailer; "
+        "`Closes #<slice-issue>` belongs in the PR body, NOT the commit subject; "
+        "the git log is the changelog — no separate CHANGELOG file "
+        "(ADR-0001 D12, source=CLAUDE.md #5/#6)."
+    ),
 }
 
 

@@ -1,3 +1,15 @@
+---
+id: ADR-0040
+status: accepted
+supersedes:
+  - ADR-0020
+superseded_by: []
+scope: verification
+rule_ids:
+  - VER-004
+  - VER-005
+  - VER-006
+---
 # ADR-0040: QA human-residual model — machine maxes coverage, one async human-check
 
 - **Status:** Accepted

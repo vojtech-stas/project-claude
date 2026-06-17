@@ -1,3 +1,14 @@
+---
+id: ADR-0013
+status: accepted
+supersedes:
+  - ADR-0003
+superseded_by: []
+scope: slicing
+rule_ids:
+  - SLI-004
+  - SLI-005
+---
 # ADR-0013: Slicer N=3 contract refined — N=1 reserved for degenerate end-state cases (partial supersession of ADR-0003 D3)
 
 - **Status:** Accepted

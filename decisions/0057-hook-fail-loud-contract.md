@@ -1,3 +1,13 @@
+---
+id: ADR-0057
+status: accepted
+supersedes: []
+superseded_by: []
+scope: hooks
+rule_ids:
+  - HOK-008
+  - HOK-009
+---
 # 0057 — Hook fail-loud contract + capture-liveness gate + context-injection scope
 
 - **Status:** Accepted

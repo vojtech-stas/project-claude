@@ -1,3 +1,14 @@
+---
+id: ADR-0005
+status: accepted
+supersedes: []
+superseded_by: []
+scope: slicing
+rule_ids:
+  - SLI-001
+  - SLI-002
+  - SLI-003
+---
 # ADR-0005: Output-shape standard for subagents + slicing methodology depth
 
 - **Status:** Accepted (drafted by `/to-prd` alongside PRD-A; reviewed jointly by `prd-critic` and `adr-critic` per ADR-0004 D1)

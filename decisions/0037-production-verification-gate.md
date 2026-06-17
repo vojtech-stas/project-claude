@@ -1,3 +1,14 @@
+---
+id: ADR-0037
+status: accepted
+supersedes: []
+superseded_by: []
+scope: verification
+rule_ids:
+  - VER-001
+  - VER-002
+  - VER-003
+---
 # ADR-0037: Mandatory production-verification gate after every feature build
 
 - **Status:** Accepted

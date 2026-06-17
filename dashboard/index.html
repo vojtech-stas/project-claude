@@ -945,6 +945,53 @@
   .run-sid { color: var(--cyan); font-family: var(--font); font-size: 10px; min-width: 120px; flex-shrink: 0; }
   .run-ts  { color: var(--muted); font-size: 10px; min-width: 140px; flex-shrink: 0; }
   .run-count { color: var(--muted); font-size: 10px; }
+
+  /* Firing tab — per-PR workflow-firing timeline (slice #871) */
+  .firing-pr-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+  }
+  .firing-pr-header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px; flex-wrap: wrap;
+  }
+  .firing-pr-number { color: var(--cyan); font-size: 11px; font-weight: 600; flex-shrink: 0; }
+  .firing-pr-title  { color: var(--text); font-size: 11px; flex: 1; min-width: 0;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .firing-pr-closes { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .firing-timeline  {
+    display: flex; align-items: flex-start; gap: 0;
+    overflow-x: auto; padding: 4px 0 4px;
+  }
+  .firing-event {
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 80px; max-width: 110px; position: relative; flex-shrink: 0;
+  }
+  .firing-event:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 8px; left: calc(50% + 8px);
+    width: calc(100% - 16px);
+    height: 1px;
+    background: var(--border);
+  }
+  .firing-badge {
+    display: inline-block;
+    padding: 2px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.03em; white-space: nowrap;
+    position: relative; z-index: 1;
+  }
+  .firing-badge-implementer { background: #0d1a2a; color: var(--cyan); border: 1px solid var(--cyan); }
+  .firing-badge-merge       { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
+  .firing-badge-approve     { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
+  .firing-badge-block       { background: #2a0d0d; color: var(--red); border: 1px solid var(--red); }
+  .firing-badge-critic      { background: #1a1a0d; color: var(--amber); border: 1px solid var(--amber); }
+  .firing-event-label { color: var(--muted); font-size: 9px; margin-top: 3px; text-align: center; }
+  .firing-event-ts    { color: var(--muted); font-size: 9px; text-align: center; }
 </style>
 </head>
 <body>
@@ -965,6 +1012,7 @@
   <button class="active" onclick="switchTab('architecture', this)">Architecture</button>
   <button onclick="switchTab('live', this)">Live</button>
   <button onclick="switchTab('health', this)">Health</button>
+  <button onclick="switchTab('firing', this)">Firing</button>
 </nav>
 
 <!-- ARCHITECTURE TAB -->
@@ -1199,6 +1247,35 @@
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
+  </div>
+</div>
+
+<!-- FIRING TAB — per-PR workflow-firing timeline from gh (slice #871) -->
+<div id="tab-firing" class="tab">
+  <div class="section">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <h2 style="margin:0;">PR workflow-firing timelines</h2>
+      <button class="refresh" onclick="reloadFiring()">Refresh</button>
+      <span id="firing-status" style="color:var(--muted);font-size:11px;"></span>
+    </div>
+    <p style="color:var(--muted);font-size:11px;margin-bottom:14px;">
+      Per-PR agent-firing sequence derived from gh PR data (hook-independent).
+      Shows: implementer &rarr; critic verdicts (CRITIC/VERDICT/ROUND from PR comments)
+      &rarr; merge, with real timestamps.
+    </p>
+    <!-- PR limit picker -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+      <span style="color:var(--muted);font-size:11px;">Show last</span>
+      <input id="firing-limit-input" type="number" value="20" min="1" max="100"
+             style="width:56px;background:var(--surface);border:1px solid var(--border);
+                    color:var(--text);font-family:var(--font);font-size:11px;
+                    padding:3px 6px;border-radius:4px;"
+             onkeydown="if(event.key==='Enter')reloadFiring()"/>
+      <span style="color:var(--muted);font-size:11px;">PRs</span>
+    </div>
+    <div id="firing-content">
+      <span style="color:var(--muted);font-size:11px;">Loading PR firing timelines…</span>
+    </div>
   </div>
 </div>
 
@@ -3792,6 +3869,149 @@ function _renderRollup(result, el) {
   pollMeta();
   setInterval(pollMeta, 10000);
 })();
+
+// ---------------------------------------------------------------------------
+// Firing tab — per-PR workflow-firing timelines from /api/prd-firing (slice #871)
+// ---------------------------------------------------------------------------
+// Derives implementer → critic-verdict → merge event sequences from gh PR data.
+// Hook-independent: reads gh PR comments for CRITIC/VERDICT/ROUND trailers.
+// Defensive: try/catch, graceful empty state, honest-empty allowed.
+
+let _firingLoaded = false;
+
+function _firingFmtTs(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dy = String(d.getUTCDate()).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return mo + '-' + dy + ' ' + hh + ':' + mm;
+  } catch(e) { return ts.slice(0, 16); }
+}
+
+function _firingBadgeClass(ev) {
+  const agent = (ev.agent || '').toLowerCase();
+  if (agent === 'implementer') return 'firing-badge-implementer';
+  if (agent === 'merge') return 'firing-badge-merge';
+  const verdict = (ev.verdict || '').toUpperCase();
+  if (verdict === 'APPROVE') return 'firing-badge-approve';
+  if (verdict === 'BLOCK')   return 'firing-badge-block';
+  return 'firing-badge-critic';
+}
+
+function _firingBadgeText(ev) {
+  const agent = (ev.agent || '').toLowerCase();
+  if (agent === 'implementer') return 'impl';
+  if (agent === 'merge') return 'merged';
+  const verdict = (ev.verdict || '').toUpperCase();
+  const round = ev.round ? 'R' + ev.round : '';
+  const label = (agent || 'critic').slice(0, 10);
+  if (verdict) return label + (round ? ' ' + round : '') + ' ' + verdict;
+  return label;
+}
+
+function _renderFiringPr(pr) {
+  try {
+    const num    = pr.pr_number || '?';
+    const title  = escHtml((pr.pr_title || '').slice(0, 80));
+    const closes = (pr.closes_issues || []).map(function(n) { return '#' + n; }).join(', ');
+    const events = pr.events || [];
+
+    let eventsHtml = '';
+    if (events.length === 0) {
+      eventsHtml = '<span style="color:var(--muted);font-size:10px;">no events</span>';
+    } else {
+      events.forEach(function(ev) {
+        const badgeClass = _firingBadgeClass(ev);
+        const badgeText  = escHtml(_firingBadgeText(ev));
+        const ts         = escHtml(_firingFmtTs(ev.ts));
+        eventsHtml +=
+          '<div class="firing-event">' +
+          '<span class="firing-badge ' + badgeClass + '">' + badgeText + '</span>' +
+          '<span class="firing-event-ts">' + ts + '</span>' +
+          '</div>';
+      });
+    }
+
+    return (
+      '<div class="firing-pr-card">' +
+        '<div class="firing-pr-header">' +
+          '<span class="firing-pr-number">PR #' + num + '</span>' +
+          '<span class="firing-pr-title">' + title + '</span>' +
+          (closes ? '<span class="firing-pr-closes">closes ' + escHtml(closes) + '</span>' : '') +
+        '</div>' +
+        '<div class="firing-timeline">' + eventsHtml + '</div>' +
+      '</div>'
+    );
+  } catch(e) {
+    return '<div class="firing-pr-card"><span style="color:var(--muted);font-size:10px;">render error</span></div>';
+  }
+}
+
+function renderFiring(data) {
+  try {
+    const el = document.getElementById('firing-content');
+    const statusEl = document.getElementById('firing-status');
+    if (!el) return;
+
+    if (!data || data.error) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">' +
+        'Error: ' + escHtml((data && data.error) || 'unknown error') + '</span>';
+      return;
+    }
+
+    const prs = data.prs || [];
+    const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
+    if (statusEl) statusEl.textContent = prs.length + ' PRs' + fetchedAt;
+
+    if (prs.length === 0) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">No PR data available (gh may be unavailable or no PRs found).</span>';
+      return;
+    }
+
+    let html = '';
+    prs.forEach(function(pr) { html += _renderFiringPr(pr); });
+    el.innerHTML = html;
+  } catch(e) {
+    try {
+      const el = document.getElementById('firing-content');
+      if (el) el.innerHTML = '<span style="color:var(--red);font-size:11px;">Render error: ' + escHtml(e.message) + '</span>';
+    } catch(_) {}
+  }
+}
+
+function fetchFiring() {
+  const limitEl = document.getElementById('firing-limit-input');
+  const limit = (limitEl && parseInt(limitEl.value, 10) > 0) ? parseInt(limitEl.value, 10) : 20;
+  const statusEl = document.getElementById('firing-status');
+  if (statusEl) statusEl.textContent = 'loading…';
+  fetch('/api/prd-firing?limit=' + limit)
+    .then(function(r) { return r.json(); })
+    .then(function(data) { renderFiring(data); })
+    .catch(function(e) {
+      try {
+        const el = document.getElementById('firing-content');
+        if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Failed to fetch /api/prd-firing: ' + escHtml(e.message) + '</span>';
+        if (statusEl) statusEl.textContent = 'error';
+      } catch(_) {}
+    });
+}
+
+function reloadFiring() {
+  _firingLoaded = false;
+  startFiring();
+}
+
+function startFiring() {
+  if (_firingLoaded) return;
+  _firingLoaded = true;
+  fetchFiring();
+}
+
+// Register firing tab hook — fires once on tab activation
+registerTabHook('firing', startFiring);
 </script>
 </body>
 </html>

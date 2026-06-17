@@ -1152,7 +1152,19 @@
     </div>
     <div class="live-status-bar" id="live-status-bar"></div>
 
-    <!-- Sessions panel (slice #864): recent workflow sessions from /api/runs -->
+    <!-- Session-live panel (slice #899): transcript-sourced current-session events -->
+    <div class="lane-b" id="session-live-panel" style="margin-top:8px;">
+      <div class="lane-b-header">
+        <h3>Session live (transcript) &mdash; primary source</h3>
+        <span id="session-live-source" style="color:var(--muted);font-size:10px;margin-left:8px;">—</span>
+        <button class="refresh" onclick="reloadSessionLive()" style="margin-left:auto;">Refresh</button>
+      </div>
+      <div id="session-live-content" style="padding:10px 14px;">
+        <span style="color:var(--muted);font-size:11px;">Loading transcript events…</span>
+      </div>
+    </div>
+
+    <!-- Sessions panel (slice #864): recent workflow sessions from /api/runs (fallback) -->
     <div class="lane-b" id="runs-panel" style="margin-top:8px;">
       <div class="lane-b-header">
         <h3>Recent sessions (/api/runs)</h3>
@@ -2718,6 +2730,86 @@ function startRuns() {
 }
 // Register runs fetch into the tab registry — fires once on Live tab activation
 registerTabHook('live', startRuns);
+
+// ---------------------------------------------------------------------------
+// /api/session-live — transcript-sourced current-session event feed (slice #899)
+// ---------------------------------------------------------------------------
+// Fetches once on Live tab activation; Refresh button reloads.
+// PRIMARY source for the Live tab; workflow-events.jsonl (Lane B) is the fallback.
+// Defensive: graceful empty/error state.
+
+let _sessionLiveLoaded = false;
+let _sessionLiveTimer = null;
+
+function _renderSessionLiveEvent(ev) {
+  const ts = ev.ts ? new Date(ev.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+  const evType = ev.event || '?';
+  let detail = '';
+  if (evType === 'tool_use')        detail = ev.tool_name || '';
+  else if (evType === 'tool_result') detail = (ev.content_excerpt || '').slice(0, 60);
+  else if (evType === 'agent_start') detail = (ev.subagent_type || '') + ' ' + (ev.description || '').slice(0, 40);
+  else if (evType === 'user_prompt') detail = (ev.prompt || '').slice(0, 80);
+  else if (evType === 'assistant_response') detail = (ev.assistant_tail || '').slice(0, 80);
+  return '<div class="lb-row lb-tool-row" style="padding:4px 8px;">' +
+    '<span class="lb-ts">' + escHtml(ts) + '</span>' +
+    '<div class="lb-row-body">' +
+    '<span class="lb-event" style="min-width:140px;">' + escHtml(evType) + '</span>' +
+    '<span class="lb-payload">' + escHtml(detail) + '</span>' +
+    '</div></div>';
+}
+
+async function fetchSessionLive() {
+  const el = document.getElementById('session-live-content');
+  const srcEl = document.getElementById('session-live-source');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/session-live');
+    if (!resp.ok) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: HTTP ' + resp.status + '</span>';
+      return;
+    }
+    const data = await resp.json();
+    if (srcEl) {
+      const src = data.source || '';
+      srcEl.textContent = src ? src.split(/[\\/]/).slice(-3).join('/') : '—';
+      srcEl.title = src;
+    }
+    const events = (data.events || []);
+    const count = data.event_count || events.length;
+    if (events.length === 0) {
+      const errMsg = data.error ? ' (' + data.error + ')' : '';
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">' +
+        'No transcript events found' + errMsg + '.</span>';
+      return;
+    }
+    // Show last 30 events (most recent activity)
+    const recent = events.slice(-30);
+    let html = '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">' +
+      count + ' total events &mdash; showing last ' + recent.length + '</div>';
+    html += recent.map(_renderSessionLiveEvent).join('');
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function reloadSessionLive() {
+  _sessionLiveLoaded = false;
+  fetchSessionLive();
+}
+
+function startSessionLive() {
+  if (_sessionLiveLoaded) return;
+  _sessionLiveLoaded = true;
+  fetchSessionLive();
+  // Poll every 15s to pick up new transcript events
+  _sessionLiveTimer = setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    fetchSessionLive();
+  }, 15000);
+}
+// Register session-live as PRIMARY source — fires on Live tab activation
+registerTabHook('live', startSessionLive);
 
 // ---------------------------------------------------------------------------
 // Per-PRD workflow-firing timeline (slice #864)

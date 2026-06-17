@@ -17,6 +17,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
         GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
+        GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
         (GET /api/dora removed — slice #854, fleet-economics machinery retired)
 
 Start: python dashboard/server.py
@@ -80,6 +81,7 @@ from health import (  # noqa: E402
 from events import serve_runs as _serve_runs_fn  # noqa: E402
 from workitems import fetch_workitems  # noqa: E402
 from readme_gen import generate_readme, render_pipeline_mermaid  # noqa: E402
+import prd_firing as _prd_firing_mod  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Server identity — captured once at import/startup time (ADR-0056/0057/0058).
@@ -610,6 +612,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "started_at": _SERVER_STARTED_AT,
                 "stale": stale,
             })
+
+        elif path == "/api/prd-firing":
+            # GET /api/prd-firing[?limit=N] — per-PR agent-firing timelines (slice #871).
+            # Derives implementer -> critic(VERDICT/ROUND) -> merge event sequences
+            # for recent PRs from gh CLI (hook-independent). TTL-cached (60s).
+            # Honest-empty when gh unavailable; real gh data only.
+            limit_raw = (query.get("limit") or ["30"])[0]
+            try:
+                limit = int(limit_raw) if str(limit_raw).isdigit() else 30
+            except (ValueError, AttributeError):
+                limit = 30
+            limit = max(1, min(limit, 100))
+            try:
+                self._send_json(_prd_firing_mod.fetch_prd_firing(limit))
+            except Exception as exc:
+                self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

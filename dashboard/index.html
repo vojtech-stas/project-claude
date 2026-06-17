@@ -901,6 +901,50 @@
   .rollup-table td { padding: 3px 6px; border-bottom: 1px solid #21262d; }
   .rollup-table tr:last-child td { border-bottom: none; }
   .rollup-never-confirmed { color: var(--amber); font-weight: 600; }
+
+  /* Per-PRD workflow-firing timeline (slice #864) */
+  .prd-timeline {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .prd-timeline-events { display: flex; flex-direction: column; gap: 0; }
+  .prd-timeline-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px solid #21262d;
+    font-size: 11px;
+  }
+  .prd-timeline-item:last-child { border-bottom: none; }
+  .prd-timeline-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0; margin-top: 3px;
+  }
+  .prd-timeline-ts {
+    color: var(--muted); min-width: 90px; flex-shrink: 0; font-size: 10px; padding-top: 1px;
+  }
+  .prd-timeline-label { color: var(--text); flex: 1; }
+  .prd-timeline-detail { color: var(--muted); font-size: 10px; margin-top: 1px; }
+  .prd-tl-badge {
+    display: inline-block; font-size: 10px; padding: 1px 6px;
+    border-radius: 10px; margin-left: 4px; white-space: nowrap;
+  }
+  .prd-tl-approve { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
+  .prd-tl-block   { background: #2a0d0d; color: var(--red);   border: 1px solid var(--red); }
+  .prd-tl-merge   { background: #0d1a2a; color: var(--cyan);  border: 1px solid var(--cyan); }
+  /* Runs list (slice #864) */
+  .runs-list { display: flex; flex-direction: column; gap: 4px; }
+  .run-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 8px; border-radius: 4px; font-size: 11px;
+    border: 1px solid var(--border); background: #1c2128;
+  }
+  .run-sid { color: var(--cyan); font-family: var(--font); font-size: 10px; min-width: 120px; flex-shrink: 0; }
+  .run-ts  { color: var(--muted); font-size: 10px; min-width: 140px; flex-shrink: 0; }
+  .run-count { color: var(--muted); font-size: 10px; }
 </style>
 </head>
 <body>
@@ -1015,6 +1059,19 @@
     <div id="trail-table-container" class="trail-table-container">
       <span style="color:var(--muted);font-size:11px;">Select a PRD and click Run.</span>
     </div>
+
+    <!-- Per-PRD workflow-firing timeline (slice #864): ordered sequence of
+         slices/PRs/verdicts with real timestamps from /api/trail. Renders
+         below the comparison table when a PRD is loaded. -->
+    <div id="per-prd-timeline" class="prd-timeline" style="margin-top:16px;display:none;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <h3 style="margin:0;font-size:12px;color:var(--text);">Workflow-firing timeline</h3>
+        <span id="prd-timeline-meta" style="color:var(--muted);font-size:11px;"></span>
+      </div>
+      <div id="prd-timeline-content" class="prd-timeline-events">
+        <span style="color:var(--muted);font-size:11px;">Load a PRD above to see the timeline.</span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1046,6 +1103,18 @@
       </table>
     </div>
     <div class="live-status-bar" id="live-status-bar"></div>
+
+    <!-- Sessions panel (slice #864): recent workflow sessions from /api/runs -->
+    <div class="lane-b" id="runs-panel" style="margin-top:8px;">
+      <div class="lane-b-header">
+        <h3>Recent sessions (/api/runs)</h3>
+        <button class="refresh" onclick="reloadRuns()" style="margin-left:auto;">Refresh</button>
+      </div>
+      <div id="runs-content" style="padding:10px 14px;">
+        <span style="color:var(--muted);font-size:11px;">Loading sessions…</span>
+      </div>
+    </div>
+
     <!-- Lane B: session feed (slice #682); chat transcript (slice #707) -->
     <div class="lane-b" id="lane-b">
       <div class="lane-b-header">
@@ -2413,6 +2482,215 @@ function startLiveProgress() {
 registerTabHook('live', startLiveProgress);
 
 // ---------------------------------------------------------------------------
+// /api/runs — recent workflow sessions panel (slice #864)
+// ---------------------------------------------------------------------------
+// Fetches once on Live tab activation; Refresh button reloads.
+// Shows session_id (truncated), first_ts, event_count for last N sessions.
+// Defensive: graceful empty state when events log is absent or empty.
+
+let _runsLoaded = false;
+
+async function fetchRuns() {
+  const el = document.getElementById('runs-content');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/runs?n=10');
+    if (!resp.ok) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: HTTP ' + resp.status + '</span>';
+      return;
+    }
+    const data = await resp.json();
+    renderRuns(data, el);
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function renderRuns(data, el) {
+  const runs = (data && data.runs) ? data.runs : [];
+  const rejected = data && data.rejected_lines != null ? data.rejected_lines : 0;
+  if (runs.length === 0) {
+    el.innerHTML =
+      '<span style="color:var(--muted);font-size:11px;">No sessions found in workflow-events.jsonl' +
+      (rejected > 0 ? ' (' + rejected + ' legacy/fixture lines rejected)' : '') +
+      '. Hooks may be dark this session — historical sessions appear when hooks fired.</span>';
+    return;
+  }
+  let html = '<div class="runs-list">';
+  runs.forEach(function(run) {
+    const sid = run.session_id || '';
+    const shortSid = sid.slice(0, 16) + (sid.length > 16 ? '…' : '');
+    const ts = run.first_ts ? relativeTime(run.first_ts) : '';
+    const count = run.event_count != null ? run.event_count + ' events' : '';
+    html +=
+      '<div class="run-item">' +
+      '<span class="run-sid" title="' + escHtml(sid) + '">' + escHtml(shortSid) + '</span>' +
+      '<span class="run-ts">' + escHtml(ts) + '</span>' +
+      '<span class="run-count">' + escHtml(count) + '</span>' +
+      '</div>';
+  });
+  html += '</div>';
+  if (rejected > 0) {
+    html += '<div style="color:var(--muted);font-size:10px;margin-top:6px;">' +
+      rejected + ' legacy/fixture lines rejected</div>';
+  }
+  el.innerHTML = html;
+}
+
+function reloadRuns() {
+  _runsLoaded = false;
+  fetchRuns();
+}
+
+function startRuns() {
+  if (_runsLoaded) return;
+  _runsLoaded = true;
+  fetchRuns();
+}
+// Register runs fetch into the tab registry — fires once on Live tab activation
+registerTabHook('live', startRuns);
+
+// ---------------------------------------------------------------------------
+// Per-PRD workflow-firing timeline (slice #864)
+// ---------------------------------------------------------------------------
+// Renders an ordered sequence of slices + PRs + verdict events from /api/trail
+// data after loadTrailComparison() succeeds. Timeline section lives below the
+// comparison table in the Architecture tab's Trail section.
+// Defensive: try/catch, graceful empty state.
+
+function renderPrdTimeline(trail) {
+  try {
+    const section = document.getElementById('per-prd-timeline');
+    const content = document.getElementById('prd-timeline-content');
+    const meta = document.getElementById('prd-timeline-meta');
+    if (!section || !content) return;
+
+    if (!trail || trail.error || trail.not_found) {
+      section.style.display = 'none';
+      return;
+    }
+
+    const slices = trail.slices || [];
+    const prs = trail.prs || {};
+    const wallTime = trail.wall_time_s;
+
+    // Build an ordered event list from slices + PRs
+    // Each item: {ts, label, detail, color}
+    const events = [];
+
+    // Slice open events
+    slices.forEach(function(sl) {
+      if (sl.created_at) {
+        events.push({
+          ts: sl.created_at,
+          label: 'Slice #' + sl.number + ' opened',
+          detail: (sl.title || '').slice(0, 70),
+          color: 'var(--cyan)',
+        });
+      }
+      if (sl.closing_pr_number && prs[String(sl.closing_pr_number)]) {
+        const pr = prs[String(sl.closing_pr_number)];
+        // PR opened
+        if (pr.created_at) {
+          events.push({
+            ts: pr.created_at,
+            label: 'PR #' + pr.number + ' opened',
+            detail: (pr.head_ref || '').slice(0, 50),
+            color: 'var(--amber)',
+          });
+        }
+        // Verdicts
+        (pr.verdicts || []).forEach(function(v) {
+          if (v.created_at) {
+            const isApprove = v.verdict === 'APPROVE';
+            events.push({
+              ts: v.created_at,
+              label: (v.critic || 'reviewer') + ' R' + (v.round || '?'),
+              verdict: v.verdict,
+              detail: '',
+              color: isApprove ? 'var(--green)' : 'var(--red)',
+            });
+          }
+        });
+        // PR merged
+        if (pr.merged_at) {
+          events.push({
+            ts: pr.merged_at,
+            label: 'PR #' + pr.number + ' merged',
+            detail: '',
+            color: 'var(--blue)',
+            isMerge: true,
+          });
+        }
+      }
+      // Slice closed (when no PR)
+      if (!sl.closing_pr_number && sl.closed_at) {
+        events.push({
+          ts: sl.closed_at,
+          label: 'Slice #' + sl.number + ' closed',
+          detail: '',
+          color: 'var(--green)',
+        });
+      }
+    });
+
+    // Sort chronologically
+    events.sort(function(a, b) {
+      return (a.ts || '').localeCompare(b.ts || '');
+    });
+
+    if (events.length === 0) {
+      content.innerHTML = '<span style="color:var(--muted);font-size:11px;">No timeline events — trail may be empty or pre-hook.</span>';
+      section.style.display = 'block';
+      if (meta) meta.textContent = '';
+      return;
+    }
+
+    // Wall-time summary
+    if (meta) {
+      const sliceCount = slices.length;
+      const prCount = Object.keys(prs).length;
+      meta.textContent =
+        sliceCount + ' slice' + (sliceCount !== 1 ? 's' : '') + ', ' +
+        prCount + ' PR' + (prCount !== 1 ? 's' : '') +
+        (wallTime ? ' — wall-time ' + _fmtDuration(wallTime) : '');
+    }
+
+    let html = '';
+    events.forEach(function(ev) {
+      const tsShort = ev.ts ? ev.ts.slice(5, 16).replace('T', ' ') : '';
+      let labelHtml = escHtml(ev.label);
+      if (ev.verdict) {
+        const vClass = ev.verdict === 'APPROVE' ? 'prd-tl-approve' : 'prd-tl-block';
+        labelHtml += '<span class="prd-tl-badge ' + vClass + '">' + escHtml(ev.verdict) + '</span>';
+      }
+      if (ev.isMerge) {
+        labelHtml += '<span class="prd-tl-badge prd-tl-merge">merged</span>';
+      }
+      html +=
+        '<div class="prd-timeline-item">' +
+        '<span class="prd-timeline-dot" style="background:' + ev.color + ';"></span>' +
+        '<span class="prd-timeline-ts">' + escHtml(tsShort) + '</span>' +
+        '<span class="prd-timeline-label">' +
+          labelHtml +
+          (ev.detail ? '<div class="prd-timeline-detail">' + escHtml(ev.detail) + '</div>' : '') +
+        '</span>' +
+        '</div>';
+    });
+
+    content.innerHTML = html;
+    section.style.display = 'block';
+  } catch (e) {
+    try {
+      const section = document.getElementById('per-prd-timeline');
+      const content = document.getElementById('prd-timeline-content');
+      if (content) content.innerHTML = '<span style="color:var(--muted);font-size:11px;">Timeline error: ' + escHtml(e.message) + '</span>';
+      if (section) section.style.display = 'block';
+    } catch (_) {}
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Lane B — byte-cursor session feed (slice #682)
 // ---------------------------------------------------------------------------
 // Polls /api/live-poll?cursor=N every ~4s while visible; pauses when hidden.
@@ -2897,6 +3175,9 @@ async function loadTrailComparison() {
 
     // Render comparison table
     _renderTrailReport(report, container);
+
+    // Render per-PRD workflow-firing timeline (slice #864)
+    renderPrdTimeline(trail);
 
     // Paint topology graph with state colors
     _paintTopologyStates(report);

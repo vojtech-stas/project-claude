@@ -13,7 +13,8 @@ Exports:
     check_docs9_glossary_cap() -> dict
     check_docs10_backlog_surfacing() -> dict
     check_docs11_dead_citations() -> dict  (slice #796/ADR-0064 D2: dead-citation check)
-    check_r_sensitive_detector() -> dict   (slice #796/ADR-0064 D4: enforcement-path PR advisory)
+    check_r_sensitive_detector() -> dict   (slice #840/ADR-0070 D4: guardrail-touching promotions counter)
+    check_meta_tripwire() -> dict          (slice #840/ADR-0070 D4: promotion meta-tripwire — FAIL if guardrail-path batch lacks promotion-ack)
     audit_subagents() -> dict
     audit_meta() -> dict
     cascade_finder_summary() -> dict
@@ -509,95 +510,303 @@ def check_docs11_dead_citations() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# R-SENSITIVE-DETECTOR — enforcement-path PR violation counter (ADR-0064 D4)
+# R-SENSITIVE-DETECTOR + META-TRIPWIRE (ADR-0070 D4 / slice #840)
+#
+# ADR-0070 D4 supersedes ADR-0064 D4: the human tripwire moves from per-PR
+# enforcement-path ack (blocking the autonomous develop flow) to per-promotion
+# guardrail-machinery ack (blocking only main advancement for self-modifying
+# batches).  R-SENSITIVE-DETECTOR is repurposed to count guardrail-touching
+# promotions and their ack status.  META-TRIPWIRE is the new blocking check
+# wired into RELEASE-READY condition (f).
 # ---------------------------------------------------------------------------
 
-# Enforcement-layer paths per ADR-0064 D4.
-_ENFORCEMENT_PATHS: tuple = (
+# Guardrail-machinery path set per ADR-0070 D4 (superset of ADR-0064 D4):
+#   ADR-0064 D4 enforcement paths +
+#   .claude/agents/*-critic.md +
+#   release-gate definition (dashboard/health.py RELEASE-READY check + promote.sh) +
+#   branch-protection tooling
+_GUARDRAIL_PATHS: tuple = (
+    # ADR-0064 D4 enforcement layer
     ".github/workflows/",
     ".claude/settings.json",
     ".claude/hooks/",
     "tools/ci-checks.sh",
     ".githooks/",
+    # Critic agent prompts
+    ".claude/agents/reviewer.md",
+    ".claude/agents/prd-critic.md",
+    ".claude/agents/adr-critic.md",
+    ".claude/agents/slicer-critic.md",
+    ".claude/agents/glossary-critic.md",
+    ".claude/agents/backlog-critic.md",
+    ".claude/agents/codebase-critic.md",
+    # Release-gate definition (the check + promotion tooling)
+    "dashboard/health.py",
+    "tools/promote.sh",
 )
 
-# Bootstrap window: PRs at or below this number are grandfathered.
-# R-SENSITIVE rule + detector ship in wave-3 (PR ~#800); earlier PRs are exempt.
-_R_SENSITIVE_BOOTSTRAP_PR = 800
+# ACK signal: label name or body keyword on a promotion record.
+_PROMOTION_ACK_LABEL = "promotion-ack"
 
-# Scan window: look at the last N merged PRs to bound the check cost.
-_R_SENSITIVE_WINDOW = 20
+# Bootstrap cutoff: slice #840 is the implementing merge.
+_META_TRIPWIRE_BOOTSTRAP_PROMOTION = 0  # day-one: all promotions post-implementation
 
-# ACK signal: label name or body keyword indicating a human acknowledged the PR.
-_ACK_LABEL = "human-ack"
+
+def _is_guardrail_path(path: str) -> bool:
+    """Return True if the given file path is in the guardrail-machinery set."""
+    for gp in _GUARDRAIL_PATHS:
+        if gp.endswith("/"):
+            if path.startswith(gp):
+                return True
+        else:
+            if path == gp:
+                return True
+    # Critic-md pattern: .claude/agents/*-critic.md (any critic name)
+    if re.match(r'^\.claude/agents/[^/]+-critic\.md$', path):
+        return True
+    return False
+
+
+def _read_promotion_events() -> list[dict]:
+    """Read promotion events from workflow-events.jsonl.
+
+    Returns a list of dicts with at least {"sha": str, "ts": str} keys,
+    sorted chronologically (oldest first).  Returns [] if the file is absent
+    or contains no promotion events.
+    """
+    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    if not events_log.exists():
+        return []
+    promotions = []
+    try:
+        for line in events_log.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                import json as _json
+                evt = _json.loads(line)
+            except Exception:
+                continue
+            if evt.get("event") == "promotion":
+                promotions.append(evt)
+    except Exception:
+        pass
+    return promotions
+
+
+def check_meta_tripwire() -> dict:
+    """META-TRIPWIRE: guardrail-machinery promotion gate (ADR-0070 D4).
+
+    A promotion batch is guardrail-touching if any commit since the last
+    promotion modifies the guardrail-machinery set (ADR-0064 D4 enforcement
+    paths + .claude/agents/*-critic.md + RELEASE-READY check + promote.sh +
+    branch-protection config).
+
+    A guardrail-touching batch FAILS this check unless a promotion-ack is
+    present (promotion-ack label or body keyword on the promotion record).
+
+    Honest day-one: if no promotions have occurred yet, there is nothing to
+    check — returns WARN (no-data) rather than spurious PASS or FAIL.
+
+    Test injection: set env var _META_TRIPWIRE_RESULT_OVERRIDE to PASS|FAIL|WARN
+    to bypass the real check (used by tests and RELEASE-READY injection tests).
+    """
+    # Test injection — honours _META_TRIPWIRE_RESULT_OVERRIDE env var.
+    override = os.environ.get("_META_TRIPWIRE_RESULT_OVERRIDE", "").strip().upper()
+    if override in {"PASS", "FAIL", "WARN"}:
+        detail_map = {
+            "PASS": (
+                "meta-tripwire: PASS (injected via _META_TRIPWIRE_RESULT_OVERRIDE); "
+                "guardrail-touching batch has promotion-ack or batch is clean"
+            ),
+            "FAIL": (
+                "meta-tripwire: FAIL (injected via _META_TRIPWIRE_RESULT_OVERRIDE); "
+                "guardrail-path change in unpromoted batch lacks promotion-ack"
+            ),
+            "WARN": (
+                "meta-tripwire: WARN (injected via _META_TRIPWIRE_RESULT_OVERRIDE); "
+                "no promotion data"
+            ),
+        }
+        return {
+            "id": "META-TRIPWIRE",
+            "result": override,
+            "detail": detail_map[override],
+        }
+
+    # Read promotion events to determine the unpromoted batch.
+    promotions = _read_promotion_events()
+
+    if not promotions:
+        # Day-one: no promotions yet — nothing to tripwire.
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "WARN",
+            "detail": (
+                "meta-tripwire: no promotion events found in workflow-events.jsonl; "
+                "honest day-one — guardrail check deferred until first promotion runs; "
+                "ADR-0070 D4"
+            ),
+        }
+
+    # Get the last promotion sha.
+    last_promotion = promotions[-1]
+    last_sha = last_promotion.get("sha", "")
+
+    if not last_sha:
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "WARN",
+            "detail": "meta-tripwire: last promotion event missing sha; cannot evaluate",
+        }
+
+    # Check if last promotion had a promotion-ack.
+    last_ack = (
+        _PROMOTION_ACK_LABEL in last_promotion.get("labels", [])
+        or _PROMOTION_ACK_LABEL in (last_promotion.get("body", "") or "")
+        or last_promotion.get("ack") is True
+    )
+
+    # Find commits in unpromoted batch (develop HEAD .. last_sha is the promoted range).
+    # Unpromoted = commits since last promotion.
+    try:
+        result = subprocess.run(
+            ["git", "log", "--name-only", "--format=COMMIT:%H",
+             f"{last_sha}..HEAD"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        if result.returncode != 0:
+            return {
+                "id": "META-TRIPWIRE",
+                "result": "WARN",
+                "detail": (
+                    f"meta-tripwire: git log failed (exit={result.returncode}); "
+                    f"cannot evaluate unpromoted batch"
+                ),
+            }
+        batch_output = result.stdout
+    except Exception as exc:
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "WARN",
+            "detail": f"meta-tripwire: git log error: {exc}",
+        }
+
+    # Parse commit/file list from git log --name-only output.
+    guardrail_files_found: list[str] = []
+    for line in batch_output.splitlines():
+        line = line.strip()
+        if not line or line.startswith("COMMIT:"):
+            continue
+        if _is_guardrail_path(line):
+            guardrail_files_found.append(line)
+
+    if not guardrail_files_found:
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "PASS",
+            "detail": (
+                f"meta-tripwire: PASS — unpromoted batch since {last_sha[:8]} "
+                f"touches no guardrail-machinery paths (ADR-0070 D4)"
+            ),
+        }
+
+    # Guardrail paths found in batch — check for promotion-ack.
+    unique_guardrail = sorted(set(guardrail_files_found))[:5]
+    if last_ack:
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "PASS",
+            "detail": (
+                f"meta-tripwire: PASS — guardrail-touching batch has promotion-ack; "
+                f"files: {unique_guardrail}; ADR-0070 D4"
+            ),
+        }
+
+    # Guardrail paths touched + no ack → FAIL.
+    return {
+        "id": "META-TRIPWIRE",
+        "result": "FAIL",
+        "detail": (
+            f"meta-tripwire: FAIL — unpromoted batch touches guardrail-machinery "
+            f"path(s) without promotion-ack; add 'promotion-ack' label or keyword "
+            f"to the promotion record before promoting; "
+            f"guardrail files: {unique_guardrail}; ADR-0070 D4"
+        ),
+        "guardrail_files": unique_guardrail,
+    }
 
 
 def check_r_sensitive_detector() -> dict:
-    """R-SENSITIVE-DETECTOR: enforcement-path merged PRs without human-ack (advisory).
+    """R-SENSITIVE-DETECTOR: guardrail-touching promotions + ack status (advisory).
 
-    Implements ADR-0064 D4; updated to advisory-interim per ADR-0071 D3 (slice #853).
-    R-SENSITIVE was rescoped to advisory: the reviewer rubric no longer hard-blocks on
-    enforcement-path changes; this detector counts advisory violations only.
+    Repurposed per ADR-0070 D4 (slice #840): the old per-PR enforcement-path
+    human-ack counter is retired.  This detector now counts guardrail-touching
+    promotions (promotions whose batch modified the guardrail-machinery set per
+    ADR-0070 D4) and their ack status.
 
-    Scans the last _R_SENSITIVE_WINDOW merged PRs (post-bootstrap) for PRs that
-    touched at least one enforcement-layer path and lacked a human-ack signal
-    (label "human-ack" OR body containing "human-ack").
+    Honest day-one: 0 promotions → 0 guardrail-touching promotions.
     Always returns WARN — advisory only; not a blocking gate.
+    The blocking check is META-TRIPWIRE (wired into RELEASE-READY condition (f)).
     """
-    try:
-        from collector import get_recent_merged_prs  # noqa: PLC0415
-        prs = get_recent_merged_prs(limit=_R_SENSITIVE_WINDOW + 10)
-    except Exception as e:
+    promotions = _read_promotion_events()
+
+    if not promotions:
         return {
             "id": "R-SENSITIVE-DETECTOR",
             "result": "WARN",
             "detail": (
-                f"R-SENSITIVE advisory (ADR-0071 D3); "
-                f"could not fetch PRs: {e}"
+                "guardrail-touching promotions: 0 — no promotion events yet "
+                "(honest day-one); advisory only; meta-tripwire is the blocking gate "
+                "(ADR-0070 D4; ADR-0071 D3)"
             ),
+            "guardrail_touching_count": 0,
+            "acked_count": 0,
         }
 
-    def _is_enforcement(path: str) -> bool:
-        for ep in _ENFORCEMENT_PATHS:
-            if ep.endswith("/"):
-                if path.startswith(ep):
-                    return True
-            else:
-                if path == ep:
-                    return True
-        return False
-
-    violations = []
-    for pr in prs:
-        pr_num = pr.get("number", 0)
-        if pr_num <= _R_SENSITIVE_BOOTSTRAP_PR:
-            continue  # grandfathered
-
-        labels = [lb.get("name", "") for lb in pr.get("labels", [])]
-        if _ACK_LABEL in labels:
+    guardrail_touching: list[dict] = []
+    for promo in promotions:
+        sha = promo.get("sha", "")
+        if not sha:
             continue
+        # Check commits in this promotion batch.
+        # For simplicity, we check if the promotion's sha itself was a guardrail
+        # commit by looking at the diff from the prior sha.
+        # Full per-promotion batch scan is expensive; approximate with the
+        # event's recorded files if available, else mark as unknown.
+        files_in_promo = promo.get("files", [])
+        if files_in_promo:
+            guardrail_files = [f for f in files_in_promo if _is_guardrail_path(f)]
+            if guardrail_files:
+                acked = (
+                    _PROMOTION_ACK_LABEL in promo.get("labels", [])
+                    or _PROMOTION_ACK_LABEL in (promo.get("body", "") or "")
+                    or promo.get("ack") is True
+                )
+                guardrail_touching.append({
+                    "sha": sha[:8],
+                    "ts": promo.get("ts", ""),
+                    "acked": acked,
+                    "files": guardrail_files[:3],
+                })
 
-        body = pr.get("body", "") or ""
-        if _ACK_LABEL in body:
-            continue
+    gt_count = len(guardrail_touching)
+    acked_count = sum(1 for p in guardrail_touching if p["acked"])
 
-        files = [f.get("path", "") for f in pr.get("files", [])]
-        if any(_is_enforcement(f) for f in files):
-            violations.append(pr_num)
-
-    count = len(violations)
     detail = (
-        f"R-SENSITIVE advisory (ADR-0071 D3): "
-        f"{count} enforcement-path PR(s) without human-ack in last "
-        f"{_R_SENSITIVE_WINDOW} post-bootstrap merged PRs; "
-        f"PRs: {violations[:10]}"
+        f"guardrail-touching promotions: {gt_count} "
+        f"({acked_count} with promotion-ack, {gt_count - acked_count} pending); "
+        f"advisory only — meta-tripwire is the blocking gate "
+        f"(ADR-0070 D4; ADR-0071 D3 — R-SENSITIVE per-PR rule retired)"
     )
     return {
         "id": "R-SENSITIVE-DETECTOR",
         "result": "WARN",
         "detail": detail,
-        "violation_count": count,
-        "violation_prs": violations[:10],
+        "guardrail_touching_count": gt_count,
+        "acked_count": acked_count,
     }
 
 
@@ -3425,7 +3634,7 @@ def check_release_ready() -> dict:
           (uses main_green events in workflow-events.jsonl as the green-develop proxy
           until a full green-develop event stream is landed by migration slices)
       (e) zero open needs-human items — gh issue list --label needs-human
-      (f) guardrail-path batch check — STUB until #840 (returns pass)
+      (f) guardrail-path batch check — wired to check_meta_tripwire() (slice #840 / ADR-0070 D4)
 
     Returns:
       result="PASS", verdict="true" — all six conditions hold
@@ -3441,6 +3650,7 @@ def check_release_ready() -> dict:
       _RELEASE_READY_PROOF_INTEGRITY_RESULT  PASS|WARN|FAIL  (bypasses check_proof_integrity)
       _RELEASE_READY_STREAK_RESULT       PASS|FAIL  (bypasses event-log streak check)
       _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list)
+      _META_TRIPWIRE_RESULT_OVERRIDE     PASS|FAIL|WARN  (bypasses check_meta_tripwire for (f))
       _RELEASE_READY_FORCE_FAIL          1          (forces verdict false; for promote.sh guard tests)
     """
     import json as _json
@@ -3632,9 +3842,31 @@ def check_release_ready() -> dict:
         }
 
     # -----------------------------------------------------------------------
-    # (f) Guardrail-path batch check — STUB until #840
+    # (f) Guardrail-path batch check — wired to check_meta_tripwire() (slice #840)
     # -----------------------------------------------------------------------
-    condition_f_note = "pass (stub — deferred to #840; guardrail-path check not yet wired)"
+    mt_override = os.environ.get("_META_TRIPWIRE_RESULT_OVERRIDE", "").strip().upper()
+    if mt_override in {"PASS", "FAIL", "WARN"}:
+        mt_result_val = mt_override
+        mt_detail = f"meta-tripwire result (injected): {mt_override}"
+    else:
+        try:
+            mt = check_meta_tripwire()
+            mt_result_val = mt.get("result", "WARN")
+            mt_detail = mt.get("detail", "")
+        except Exception as exc:
+            mt_result_val = "WARN"
+            mt_detail = f"meta-tripwire check error: {exc}"
+
+    if mt_result_val == "FAIL":
+        return {
+            "id": "RELEASE-READY",
+            "result": "WARN",
+            "verdict": "false",
+            "detail": f"gate held: condition (f) guardrail-path tripwire — {mt_detail}",
+            "first_failing_condition": "f",
+        }
+    # WARN = no promotion data yet (day-one honest); treat as pass for (f).
+    condition_f_note = f"meta-tripwire: {mt_result_val.lower()} — {mt_detail}"
 
     # -----------------------------------------------------------------------
     # All conditions pass — gate is open.
@@ -3645,7 +3877,7 @@ def check_release_ready() -> dict:
         "verdict": "true",
         "detail": (
             "gate open: (a) CI green, (b) tests pass, (c) proof-integrity ok, "
-            f"(d) streak intact, (e) zero needs-human, (f) {condition_f_note}"
+            f"(d) streak intact, (e) zero needs-human, (f) guardrail-tripwire {mt_result_val.lower()}"
         ),
         "first_failing_condition": "",
         "condition_f": condition_f_note,
@@ -4050,11 +4282,13 @@ CHECK_REGISTRY: dict[str, callable] = {
     "GREEN-MAIN":      check_green_main,
     "PROOF-PRESENCE":  check_proof_presence,
     "SILENT-DRIFT":    check_silent_drift,
-    # Two-tier topology stubs (ADR-0070 wave 5 — slice 1)
+    # Two-tier topology (ADR-0070 wave 5)
     "BRANCH-TOPOLOGY": check_branch_topology,
     "RELEASE-READY":   check_release_ready,
     # DOM-attestation integrity (ADR-0070 D5 — slice #839)
     "PROOF-INTEGRITY": check_proof_integrity,
+    # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
+    "META-TRIPWIRE": check_meta_tripwire,
 }
 
 

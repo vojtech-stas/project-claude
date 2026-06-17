@@ -323,29 +323,9 @@ gh pr diff <PR> --patch | grep -E '^\+[0-9]+\.\s+\*\*.*rule #[0-9]+' | grep -v '
 
 **Rationale:** Prose-only rules decay to near-zero compliance on this repo's own measured evidence (ADR-0056 Context: 0–17% prose-rule compliance vs 97.5% output-contract compliance). A rule with no enforcement mechanism is a wish, not a rule. The `(advisory)` tag is the opt-out: it declares "this is genuinely advisory" rather than silently leaving the rule uncheckered. Per [ADR-0056](../../decisions/0056-no-rule-without-a-check.md) D1 + CLAUDE.md rule #23. Exemption: existing rules grandfathered by bootstrap-mode (ADR-0004 D2); R-RULE-CHECK binds forward from the merge of its ship slice.
 
-### R-SENSITIVE — enforcement-path changes (advisory, single-branch interim)
+### R-SENSITIVE — retired; see promotion meta-tripwire (ADR-0070 D4)
 
-**ADVISORY — not a blocking gate. Per [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D4, the per-PR human-ack tripwire (ADR-0064 D4) is retired. The human gate moves to promotion-time when the two-tier develop/main topology is wired; in the current single-branch interim it is dormant. Do NOT BLOCK on R-SENSITIVE. Surface as a note only.**
-
-**Mechanic (advisory detection only):** When the PR touches at least one enforcement-layer path, emit an advisory note — do not block, do not require any label or body keyword.
-
-Enforcement-layer paths (for detection/reporting):
-- `.github/workflows/**`
-- `.claude/settings.json`
-- `.claude/hooks/**`
-- `tools/ci-checks.sh`
-- `.githooks/**`
-- `.claude/agents/*-critic.md`
-
-**Check (advisory):**
-```bash
-# Detect enforcement-path files — report as advisory note, not a BLOCK
-gh pr diff <PR> --name-only | grep -E '^(\.github/workflows/|\.claude/settings\.json|\.claude/hooks/|tools/ci-checks\.sh|\.githooks/|\.claude/agents/.*-critic\.md)'
-```
-
-If enforcement-path files are found: note `[NOTE] R-SENSITIVE: PR touches <N> enforcement-path file(s) — advisory only per ADR-0070 D4; no human-ack required in single-branch interim` and continue to the next rule. Do NOT BLOCK.
-
-**Rationale:** ADR-0070 D4 retires the per-PR blocking ack in favour of a promotion-time meta-tripwire that covers a strictly larger surface (the full guardrail-machinery set) at the `develop`→`main` promotion boundary. In the single-branch interim the promotion step does not yet exist, so the enforcement-path detector is repurposed as an advisory counter (mirroring the `R-SENSITIVE-DETECTOR` health check, which already returns WARN rather than FAIL). A BLOCK here would obstruct autonomous enforcement-layer improvements without providing the safety property ADR-0070 designed for (which requires the two-tier boundary). Per [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D4 (supersedes [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D4).
+**Retired as a per-PR rule per [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D4 (slice #840).** The per-PR human-ack tripwire on enforcement-path changes is superseded by the promotion-time meta-tripwire (`META-TRIPWIRE` health check, `RELEASE-READY` condition (f)), which covers the full guardrail-machinery set at the `develop`→`main` boundary — a strictly larger surface at strictly lower per-PR friction. Do NOT BLOCK on this rule. Do NOT surface an advisory note. The `META-TRIPWIRE` / `R-SENSITIVE-DETECTOR` health checks carry the guardrail signal forward.
 
 ### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
 

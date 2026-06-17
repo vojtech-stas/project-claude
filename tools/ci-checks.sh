@@ -901,6 +901,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 17: .claude/rules/ regen-clean guard (PRD #888 / tools/gen_rules.py)
+#   Mirrors CHECK 2 (README regen-clean): runs gen_rules.py --check, which
+#   diffs committed .claude/rules/<scope>.md files against a fresh generation.
+#   Exits non-zero if any scope file is stale or missing.
+#   Soft-degrades if python3 or tools/gen_rules.py is unavailable.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 17: .claude/rules/ regen-clean (gen_rules.py) ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/gen_rules.py" ]; then
+    echo "SKIP: CHECK 17 — python3 or tools/gen_rules.py not available (soft-degrade)"
+else
+    CHECK17_OUTPUT=$(python3 tools/gen_rules.py --check 2>&1)
+    CHECK17_EXIT=$?
+    if [ "$CHECK17_EXIT" -eq 0 ]; then
+        pass "CHECK 17: .claude/rules/ is up-to-date with gen_rules.py output"
+    else
+        fail "CHECK 17: .claude/rules/ is stale — run 'python3 tools/gen_rules.py' and commit"
+        echo "$CHECK17_OUTPUT" >&2
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

@@ -1,3 +1,13 @@
+---
+id: ADR-0015
+status: accepted
+supersedes: []
+superseded_by: []
+scope: hooks
+rule_ids:
+  - HOK-001
+  - HOK-002
+---
 # ADR-0015: Claude Code hooks adoption — policy + walking-skeleton (PostToolUse logging hook)
 
 - **Status:** Accepted

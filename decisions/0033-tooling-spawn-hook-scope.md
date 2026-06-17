@@ -1,3 +1,13 @@
+---
+id: ADR-0033
+status: accepted
+supersedes: []
+superseded_by: []
+scope: hooks
+rule_ids:
+  - HOK-006
+  - HOK-007
+---
 # ADR-0033: Tooling-spawn carveout for hook scripts — authorize observation-only process spawning
 
 - **Status:** Accepted

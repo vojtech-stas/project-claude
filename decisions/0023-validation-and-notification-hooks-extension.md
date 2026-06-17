@@ -1,3 +1,14 @@
+---
+id: ADR-0023
+status: accepted
+supersedes: []
+superseded_by: []
+scope: hooks
+rule_ids:
+  - HOK-003
+  - HOK-004
+  - HOK-005
+---
 # ADR-0023: Validation and notification hooks extension — SessionStart state injection + PreToolUse blocking (partially fulfills ADR-0015 D6)
 
 - **Status:** Accepted

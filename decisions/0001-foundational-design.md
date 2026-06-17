@@ -1,3 +1,13 @@
+---
+id: ADR-0001
+status: accepted
+supersedes: []
+superseded_by: []
+scope: commits
+rule_ids:
+  - COM-001
+  - COM-002
+---
 # ADR-0001: Foundational design of project_claude
 
 - **Status:** Accepted

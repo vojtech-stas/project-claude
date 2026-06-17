@@ -1,3 +1,14 @@
+---
+id: ADR-0050
+status: accepted
+supersedes:
+  - ADR-0049
+superseded_by: []
+scope: verification
+rule_ids:
+  - VER-007
+  - VER-008
+---
 # ADR-0050: Headless Playwright/Chrome as qa-tester browser driver — replaces Claude_Preview MCP
 
 - **Status:** Accepted

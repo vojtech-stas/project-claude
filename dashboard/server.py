@@ -19,6 +19,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
         GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
         GET /api/promotion            -> JSON develop/main topology + last promotions + held_reason (slice #843)
+        GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         (GET /api/dora removed — slice #854, fleet-economics machinery retired)
 
 Start: python dashboard/server.py
@@ -59,6 +60,7 @@ from comparison import compare, get_spec_for_compare  # noqa: E402
 from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
 import live  # noqa: E402
 from live import serve_live_poll, _live_progress_background  # noqa: E402
+import transcript as _transcript_mod  # noqa: E402
 
 # Sibling module imports (facade re-exports)
 from discovery import (  # noqa: E402
@@ -722,6 +724,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(_prd_firing_mod.fetch_prd_firing(limit))
             except Exception as exc:
                 self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
+
+        elif path == "/api/session-live":
+            # GET /api/session-live — current-session events from transcript (slice #899).
+            # Primary source for the Live tab; hook-independent (works even when hooks
+            # are dark).  Cached by transcript file mtime — no full re-parse per request.
+            # Returns {events, source, event_count, error}.
+            try:
+                self._send_json(_transcript_mod.get_session_events())
+            except Exception as exc:
+                self._send_json(
+                    {"events": [], "source": "", "event_count": 0,
+                     "error": str(exc)}, 500
+                )
 
         elif path == "/api/file":
             rel_path = query.get("path", [""])[0]

@@ -20,7 +20,7 @@ This repo is designed to be cloned under your own owner/name and run as-is — n
    ```bash
    gh auth login
    ```
-3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, and applies branch protection R1+R2 to `main`:
+3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, and applies branch protection R1+R2 to `develop`:
    ```bash
    bash bootstrap.sh
    ```
@@ -273,18 +273,18 @@ The loop convention (generator proposes → critic challenges against explicit r
 Per [ADR-0004](decisions/0004-bypass-prevention.md) D3, three independent failure-domain defenses prevent the pipeline from being bypassed:
 
 1. **Pre-commit hook** — [`.githooks/pre-commit`](.githooks/pre-commit) checks branch-name regex and refuses commits to `main`. Install with `.githooks/install.sh` (idempotent `git config core.hooksPath .githooks`).
-2. **Branch protection R1 + R2** — live on `main`: no direct push (R1), require pull request (R2). R4 (required CI status checks) is live per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md); R3 (required approving reviews) remains deferred to a future PRD that adds bot identity.
+2. **Branch protection R1 + R2** — live on `develop`: no direct push (R1), require pull request (R2). `main` advances only via the promotion gate (`tools/promote.sh` + `RELEASE-READY`; per ADR-0070 D1). R4 (required CI status checks) is live per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md); R3 (required approving reviews) remains deferred to a future PRD that adds bot identity.
 3. **Reviewer rule R-CLOSES** — PRs without `Closes #<slice-issue>` referencing a valid `slice`-labeled issue are BLOCKed at review time.
 
 The workflow is no longer "discipline-only convention" — these three layers enforce it mechanically.
 
 Per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md), a fourth layer is the **`codebase-critic`** — an adversarial post-PRD critic dispatched by `/ship` once per PRD at the last slice. It judges semantic reference currency, CLAUDE.md rule consistency, and structural drift that mechanical checks cannot see (supersedes the per-PR reviewer rule from ADR-0018).
 
-The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count (derived from `.claude/settings.json`): **13 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 4 PreToolUse + 4 PostToolUse + 2 Stop) → **14 inner hook commands** → **8 scripts** (`session-start.sh`, `dashboard-autostart.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `log-event.sh`, `log-tool-event.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)).
+The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count (derived from `.claude/settings.json`): **8 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 3 PreToolUse + 1 PostToolUse + 1 Stop) → **8 inner hook commands** → **7 scripts** (`session-start.sh`, `dashboard-autostart.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `log-tool-event.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)).
 
 **Layer 4 — Claude Code session hooks** (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md), extending [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D6; 5 hooks across the full ADR-0015 → ADR-0023 → ADR-0028 → ADR-0029 → ADR-0030 wave):
 
-1. **SessionStart state injection** — [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) emits `additionalContext` with branch + divergence vs `origin/main` + recent commits + open slice/PR/captured counts; mitigates the recurring stale-worktree false-alarm (#173) at the moment of session start.
+1. **SessionStart state injection** — [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) emits `additionalContext` with branch + divergence vs `origin/develop` + recent commits + open slice/PR/captured counts; mitigates the recurring stale-worktree false-alarm (#173) at the moment of session start.
 2. **PreToolUse rule-#10 escalation** — `PreToolUse(Edit|MultiEdit|Write)` emits `permissionDecision: "ask"` when the main agent (not a subagent) writes a tracked file; preserves trivial-lane I3 ergonomics over hard-deny.
 3. **PreToolUse dangerous-git deny** — `PreToolUse(Bash)` emits `permissionDecision: "deny"` on `git push ... origin main` (any flavor), mechanically enforcing rule #4.
 4. **UserPromptSubmit grill-suggestion** — feature-request-shaped prompts get a non-blocking nudge toward `/grill-me` before `/ship` if the prompt does not already invoke a pipeline command.
@@ -311,7 +311,7 @@ cd my-new-project
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented
 ```
 
-[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6: it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, and applies branch protection R1+R2 to `main`. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
+[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6: it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, and applies branch protection R1+R2 to `develop`. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
 
 Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous pipeline, `/qa-plan` to verify when the last slice merges.
 

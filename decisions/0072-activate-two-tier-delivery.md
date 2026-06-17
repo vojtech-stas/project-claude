@@ -23,7 +23,7 @@ ADR-0071 D4's dormant requirement was correct when written. It is now superseded
 
 BRANCH-TOPOLOGY remains dormant (the "dormant" detail string is preserved in `check_branch_topology()`); the BRANCH-TOPOLOGY dormant assertion in `test_make_real_pivot_856.py` is unchanged. Full BRANCH-TOPOLOGY activation (PR-merge gate moves to `develop`, branch-protection) completes in slice #843.
 
-**Enforcement:** The RELEASE-READY health check itself (non-dormant verdict) plus `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant` (which asserts "dormant" is absent from the detail string). The BRANCH-TOPOLOGY dormant assertion (`test_branch_topology_detail_contains_dormant`) remains in force. Shadow: a wired RELEASE-READY gate that continues to self-report "dormant" — masking the real gate-open/held state and presenting a false operational picture to the operator and to promote.sh.
+**Enforcement:** The RELEASE-READY health check itself (non-dormant verdict) plus `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant` (which asserts "dormant" is absent from the detail string). BRANCH-TOPOLOGY was subsequently lifted from dormant by slice #843; the regression test `test_branch_topology_detail_not_dormant` now asserts the BRANCH-TOPOLOGY detail string no longer contains "dormant". Shadow: a wired RELEASE-READY gate that continues to self-report "dormant" — masking the real gate-open/held state and presenting a false operational picture to the operator and to promote.sh.
 
 ### D2 — Make-real reconciliations carried forward
 
@@ -45,19 +45,19 @@ This wave's slices build on `develop` so `main` is protected during the transiti
 
 This ADR records that RELEASE-READY is the first of those items to go live. The full topology described in ADR-0070 D1 is real when BRANCH-TOPOLOGY is also activated.
 
-**Enforcement:** BRANCH-TOPOLOGY health check (still dormant) + `promotion` events in the workflow event log once the promotion gate fires. The BRANCH-TOPOLOGY dormant assertion (`test_branch_topology_detail_contains_dormant`) remains a blocking regression test until slice #843 supersedes it.
+**Enforcement:** BRANCH-TOPOLOGY health check (lifted from dormant per slice #843; the check now reports live topology) + `promotion` events in the workflow event log once the promotion gate fires. The regression test `test_branch_topology_detail_not_dormant` in `tests/test_make_real_pivot_856.py` asserts that BRANCH-TOPOLOGY's detail string no longer contains "dormant" (activated in slice #843).
 
 ## Consequences
 
 - `check_release_ready()` now evaluates six real conditions. A `verdict="true"` from it is an honest signal that all conditions hold, not a dormant pass-through.
 - `tools/promote.sh` will refuse to promote when RELEASE-READY returns `verdict != "true"`, making the promotion gate live.
-- `tests/test_make_real_pivot_856.py` retains full coverage of ADR-0071 D4's intent (BRANCH-TOPOLOGY still dormant) while lifting the RELEASE-READY dormant assertion.
-- ADR-0071 D4 is partially superseded: the "develop branch does not exist" clause is resolved; the BRANCH-TOPOLOGY dormant clause is NOT yet superseded (handled by slice #843).
+- `tests/test_make_real_pivot_856.py` lifts both the RELEASE-READY and BRANCH-TOPOLOGY dormant assertions; `test_branch_topology_detail_not_dormant` confirms BRANCH-TOPOLOGY now reports live topology (slice #843).
+- ADR-0071 D4 is fully superseded: the "develop branch does not exist" clause is resolved; BRANCH-TOPOLOGY was activated by slice #843, completing the two-tier transition.
 - The dashboard now shows an honest RELEASE-READY verdict based on actual condition evaluation, not a dormant stub.
 
 ### Enforcement (rule #23)
 
-Per decision: D1 — the RELEASE-READY health check (live gate, non-dormant detail string) enforced by `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant`; D2 — inherited from ADR-0071 D1–D3/D5 enforcement (advisory; tests for each existing decision remain passing); D3 — BRANCH-TOPOLOGY dormant assertion + `promotion` events. No new rules are introduced by this ADR, so rule #23 requires no new mechanism beyond the cited existing checks.
+Per decision: D1 — the RELEASE-READY health check (live gate, non-dormant detail string) enforced by `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant`; D2 — inherited from ADR-0071 D1–D3/D5 enforcement (advisory; tests for each existing decision remain passing); D3 — `test_branch_topology_detail_not_dormant` (BRANCH-TOPOLOGY lifted from dormant per slice #843) + `promotion` events in the workflow event log. No new rules are introduced by this ADR, so rule #23 requires no new mechanism beyond the cited existing checks.
 
 ## Alternatives considered
 

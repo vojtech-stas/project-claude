@@ -15,7 +15,7 @@ Sanitised-path rule (confirmed via filesystem inspection):
   (matches actual dirs under ~/.claude/projects/)
 
 Resolution order:
-  1. env var CLAUDE_TRANSCRIPT_PATH (set by hook context injection, ADR-0057 D4)
+  1. env var CLAUDE_TRANSCRIPT_PATH (may be set externally — planned hook injection, not yet implemented; falls through to autodiscovery)
   2. Newest *.jsonl under ~/.claude/projects/<sanitised-cwd>/
   3. Newest *.jsonl under ~/.claude/projects/F--project-claude/  (root project fallback)
 
@@ -132,7 +132,8 @@ def resolve_transcript() -> Path | None:
 
     Returns None when no transcript can be found.
     """
-    # 1. Hook-injected path
+    # 1. Externally-set path (planned hook injection — not yet implemented;
+    #    falls through to autodiscovery when not set)
     env_path = os.environ.get("CLAUDE_TRANSCRIPT_PATH", "").strip()
     if env_path:
         p = Path(env_path)

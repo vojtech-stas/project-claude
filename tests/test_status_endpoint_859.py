@@ -152,14 +152,22 @@ print(json.dumps(result))
             )
 
     def test_health_summary_counts_are_non_negative_ints(self):
-        """health_summary pass/warn/fail must be non-negative integers."""
+        """health_summary pass/warn/fail must be non-negative integers or None.
+
+        None is the honest representation when health is still computing
+        (per fix in slice #861 — silent 0/0/0 replaced with null sentinel).
+        When non-null, each value must be a non-negative int.
+        """
         data = self._call_build_status()
         summary = data.get("health_summary", {})
         for key in ("pass", "warn", "fail"):
             val = summary.get(key)
+            # None is valid — means health is still computing (computing sentinel)
+            if val is None:
+                continue
             self.assertIsInstance(
                 val, int,
-                msg=f"health_summary.{key} must be int (got {type(val).__name__}={val})",
+                msg=f"health_summary.{key} must be int or null (got {type(val).__name__}={val})",
             )
             self.assertGreaterEqual(
                 val, 0,

@@ -247,39 +247,34 @@ def _build_status() -> dict:
 
     # --- health_summary: count PASS/WARN/FAIL from cached health payload ---
     # Use serve_health() which is TTL-cached; avoids redundant computation.
+    # Guard: when health is still computing the sentinel is {"status": "computing"}.
+    # In that case return nulls rather than silent 0/0/0 (which would imply 0 checks
+    # ran — dishonest).  Nulls signal "data not yet available" to the consumer.
     health_data, _ = _serve_health_cached()
-    pass_count = 0
-    warn_count = 0
-    fail_count = 0
-    for group_key, group_val in health_data.items():
-        if not isinstance(group_val, dict):
-            continue
-        checks_list = group_val.get("checks", [])
-        if isinstance(checks_list, list):
-            for chk in checks_list:
-                result = chk.get("result", "")
-                if result == "PASS":
-                    pass_count += 1
-                elif result == "WARN":
-                    warn_count += 1
-                elif result == "FAIL":
-                    fail_count += 1
-        # Also handle nested groups (auditMeta has sub-groups)
-        for sub_key, sub_val in group_val.items():
-            if sub_key == "checks":
+    if health_data.get("status") == "computing":
+        health_summary = {"pass": None, "warn": None, "fail": None}
+    else:
+        pass_count = 0
+        warn_count = 0
+        fail_count = 0
+        # Walk each top-level group that is a dict with a 'checks' list.
+        # Skip groups without a checks list (cascadeFinder, auditSubagents).
+        # auditSubagents values are per-agent dicts — not counted here.
+        for group_key, group_val in health_data.items():
+            if not isinstance(group_val, dict):
                 continue
-            if isinstance(sub_val, dict):
-                sub_checks = sub_val.get("checks", [])
-                if isinstance(sub_checks, list):
-                    for chk in sub_checks:
-                        result = chk.get("result", "")
-                        if result == "PASS":
-                            pass_count += 1
-                        elif result == "WARN":
-                            warn_count += 1
-                        elif result == "FAIL":
-                            fail_count += 1
-    health_summary = {"pass": pass_count, "warn": warn_count, "fail": fail_count}
+            checks_list = group_val.get("checks")
+            if not isinstance(checks_list, list):
+                continue
+            for chk in checks_list:
+                r = chk.get("result", "")
+                if r == "PASS":
+                    pass_count += 1
+                elif r == "WARN":
+                    warn_count += 1
+                elif r == "FAIL":
+                    fail_count += 1
+        health_summary = {"pass": pass_count, "warn": warn_count, "fail": fail_count}
 
     # --- open_work: counts from fetch_workitems() (30s cached) ---
     wi = fetch_workitems()

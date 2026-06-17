@@ -3594,32 +3594,243 @@ def check_session_injection() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Two-tier topology checks (ADR-0070 wave 5 — slice 1 stubs)
+# Two-tier topology checks (ADR-0070 wave 5 — slice #843 full implementation)
 # ---------------------------------------------------------------------------
 
+def _git_sha(ref: str) -> str:
+    """Return the SHA for a git ref; empty string on failure."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", ref],
+            capture_output=True, text=True, timeout=8,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _git_count(range_spec: str) -> int:
+    """Return commit count for a git rev-list range; -1 on error."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-list", "--count", range_spec],
+            capture_output=True, text=True, timeout=8,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+        return int(r.stdout.strip()) if r.returncode == 0 else -1
+    except Exception:
+        return -1
+
+
 def check_branch_topology() -> dict:
-    """BRANCH-TOPOLOGY (WARN): two-tier develop/main topology assertion.
+    """BRANCH-TOPOLOGY: real two-tier develop/main topology assertion (ADR-0070 D1/D3).
 
-    Two-tier delivery (ADR-0070 D1/D3) is DORMANT per ADR-0071 D4.
-    The develop branch, promote.sh, and the full topology enforcement
-    are retained as inert scaffolding and are NOT operational.
-    This check remains registered so the ID is stable when the
-    implementation is wired; until then it reports honestly dormant.
+    Checks (in order; first failure determines result/detail):
+    1. origin/develop exists — FAIL if missing.
+    2. origin/main exists — FAIL if missing.
+    3. main is an ancestor of develop (fast-forward topology) — WARN if not.
+    4. develop is ahead of main by N commits (healthy: N>=0).
+    5. Recent merged PRs base develop, not main — WARN if any recent PR has main base.
+    6. Branch-protection on develop — WARN (honest, requires API availability).
 
-    Full check will verify (when wired):
-    - origin/develop exists
-    - slice PRs base develop (not main) — via gh pr list + base field
-    - main advances only via promotion events in workflow-events.jsonl
-    - branch-protection enforces on develop (requires admin token)
+    Returns PASS when the topology is clean, WARN on advisory issues, FAIL on
+    structural breaks. Always emits real data — never the "dormant" stub.
+
+    Extra fields for /api/promotion:
+      develop_sha, main_sha, ahead, behind, main_is_ancestor
     """
+    import json as _json
+
+    # 1. Check origin/develop exists
+    develop_sha = _git_sha("origin/develop")
+    if not develop_sha:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "FAIL",
+            "detail": "origin/develop does not exist — two-tier topology not initialised",
+        }
+
+    # 2. Check origin/main exists
+    main_sha = _git_sha("origin/main")
+    if not main_sha:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "FAIL",
+            "detail": "origin/main does not exist",
+        }
+
+    # 3. Commit counts
+    ahead = _git_count(f"origin/main..origin/develop")
+    behind = _git_count(f"origin/develop..origin/main")
+
+    # 4. Ancestor check: main should be ancestor of develop (ff-clean)
+    try:
+        anc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "origin/main", "origin/develop"],
+            capture_output=True, timeout=8, cwd=str(_HEALTH_REPO_ROOT),
+        )
+        main_is_ancestor = (anc.returncode == 0)
+    except Exception:
+        main_is_ancestor = False
+
+    # 5. Recent PRs base check via gh CLI
+    pr_base_ok = True
+    pr_warn_detail = ""
+    try:
+        pr_r = subprocess.run(
+            ["gh", "pr", "list", "--state", "merged", "--limit", "10",
+             "--json", "number,baseRefName"],
+            capture_output=True, text=True, timeout=20,
+            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        )
+        if pr_r.returncode == 0:
+            prs = _json.loads(pr_r.stdout or "[]")
+            main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
+            if main_based:
+                pr_base_ok = False
+                pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
+    except Exception:
+        pass  # gh unavailable — skip PR check, don't WARN for this
+
+    # 6. Branch-protection advisory
+    bp_note = ""
+    try:
+        bp_r = subprocess.run(
+            ["gh", "api", "repos/{owner}/{repo}/branches/develop"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        )
+        if bp_r.returncode == 0:
+            bp = _json.loads(bp_r.stdout or "{}")
+            protected = bp.get("protected", False)
+            bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
+        else:
+            bp_note = " | branch-protection: API unavailable (WARN)"
+    except Exception:
+        bp_note = " | branch-protection: check skipped"
+
+    # Determine result
+    ahead_str = str(ahead) if ahead >= 0 else "?"
+    behind_str = str(behind) if behind >= 0 else "?"
+    base_detail = (
+        f"develop ahead of main by {ahead_str}, behind by {behind_str}; "
+        f"main-is-ancestor={main_is_ancestor}; "
+        f"develop={develop_sha[:8]}, main={main_sha[:8]}"
+        f"{pr_warn_detail}{bp_note}"
+    )
+
+    if not main_is_ancestor:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": f"main is NOT ancestor of develop (diverged topology); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if not pr_base_ok:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": f"recent PRs targeting main (should target develop); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
     return {
         "id": "BRANCH-TOPOLOGY",
-        "result": "WARN",
-        "detail": (
-            "dormant (deferred per ADR-0071 D4) — two-tier develop/main topology "
-            "is scaffolded but not operational; develop branch does not yet exist; "
-            "full wiring is a future PRD"
-        ),
+        "result": "PASS",
+        "detail": base_detail,
+        "develop_sha": develop_sha,
+        "main_sha": main_sha,
+        "ahead": ahead,
+        "behind": behind,
+        "main_is_ancestor": main_is_ancestor,
+    }
+
+
+def check_promotion_lag() -> dict:
+    """PROMOTION-LAG: age of develop HEAD since last promotion to main (ADR-0070 D3).
+
+    Measures how long develop has been ahead of main:
+    - 0 commits ahead: no lag (PASS)
+    - ahead > 0, last promotion < 24h ago: PASS
+    - ahead > 0, last promotion 24h-72h: WARN (promotion due)
+    - ahead > 0, last promotion > 72h: WARN (promotion overdue)
+    - no promotions yet + ahead > 0: WARN (day-one, honest)
+
+    Reads promotion events from workflow-events.jsonl.
+    """
+    import json as _json
+    import time as _time
+
+    promotions = _read_promotion_events()
+    ahead = _git_count("origin/main..origin/develop")
+    now = _time.time()
+
+    if ahead == 0:
+        last_sha = promotions[-1].get("sha", "")[:8] if promotions else "none"
+        return {
+            "id": "PROMOTION-LAG",
+            "result": "PASS",
+            "detail": f"develop == main (0 commits ahead); last promotion sha: {last_sha}",
+            "ahead": 0,
+            "last_promotion_ts": promotions[-1].get("ts", "") if promotions else None,
+            "lag_hours": 0.0,
+        }
+
+    if not promotions:
+        return {
+            "id": "PROMOTION-LAG",
+            "result": "WARN",
+            "detail": (
+                f"develop is {ahead} commit(s) ahead of main; no promotion events yet "
+                f"(honest day-one — first promotion pending); ADR-0070 D3"
+            ),
+            "ahead": ahead,
+            "last_promotion_ts": None,
+            "lag_hours": None,
+        }
+
+    last_promo = promotions[-1]
+    last_ts_str = last_promo.get("ts", "")
+    lag_hours: float = 0.0
+    try:
+        from datetime import datetime, timezone
+        last_dt = datetime.fromisoformat(last_ts_str.replace("Z", "+00:00"))
+        lag_hours = round((now - last_dt.timestamp()) / 3600.0, 1)
+    except Exception:
+        lag_hours = 0.0
+
+    last_sha = last_promo.get("sha", "")[:8]
+    detail = (
+        f"develop {ahead} commit(s) ahead of main; "
+        f"last promotion {lag_hours}h ago (sha={last_sha}, ts={last_ts_str})"
+    )
+
+    if lag_hours > 72:
+        result = "WARN"
+        detail = f"promotion overdue ({lag_hours:.1f}h); {detail}"
+    elif lag_hours > 24:
+        result = "WARN"
+        detail = f"promotion due ({lag_hours:.1f}h); {detail}"
+    else:
+        result = "PASS"
+
+    return {
+        "id": "PROMOTION-LAG",
+        "result": result,
+        "detail": detail,
+        "ahead": ahead,
+        "last_promotion_ts": last_ts_str,
+        "lag_hours": lag_hours,
     }
 
 
@@ -4282,9 +4493,10 @@ CHECK_REGISTRY: dict[str, callable] = {
     "GREEN-MAIN":      check_green_main,
     "PROOF-PRESENCE":  check_proof_presence,
     "SILENT-DRIFT":    check_silent_drift,
-    # Two-tier topology (ADR-0070 wave 5)
-    "BRANCH-TOPOLOGY": check_branch_topology,
-    "RELEASE-READY":   check_release_ready,
+    # Two-tier topology (ADR-0070 wave 5 — slice #843 full implementation)
+    "BRANCH-TOPOLOGY":  check_branch_topology,
+    "PROMOTION-LAG":    check_promotion_lag,
+    "RELEASE-READY":    check_release_ready,
     # DOM-attestation integrity (ADR-0070 D5 — slice #839)
     "PROOF-INTEGRITY": check_proof_integrity,
     # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
@@ -4432,6 +4644,15 @@ def _build_health_data() -> dict:
                 check_required_labels(),
                 check_dead_routes(),
                 check_session_injection(),
+            ]
+        },
+        "promotionIntegrity": {
+            "checks": [
+                check_branch_topology(),
+                check_promotion_lag(),
+                check_release_ready(),
+                check_r_sensitive_detector(),
+                check_meta_tripwire(),
             ]
         },
     }

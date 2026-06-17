@@ -18,6 +18,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
         GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
+        GET /api/promotion            -> JSON develop/main topology + last promotions + held_reason (slice #843)
         (GET /api/dora removed — slice #854, fleet-economics machinery retired)
 
 Start: python dashboard/server.py
@@ -306,6 +307,91 @@ def _build_status() -> dict:
         "main_green": main_green,
         "health_summary": health_summary,
         "open_work": open_work,
+    }
+
+
+# ---------------------------------------------------------------------------
+# /api/promotion — develop/main topology + promotion history (slice #843)
+# ---------------------------------------------------------------------------
+
+def _build_promotion_state() -> dict:
+    """Build the /api/promotion payload: real develop/main state + last N promotions.
+
+    Returns:
+      develop_sha, main_sha  — current remote branch HEADs
+      ahead, behind          — commits develop is ahead/behind main
+      main_is_ancestor       — True when main ff-reachable from develop
+      last_promotions        — last 5 promotion events from workflow-events.jsonl
+      last_sha               — SHA of last promotion (short), None if no promotions
+      last_ts                — ISO timestamp of last promotion, None if no promotions
+      lag_hours              — hours since last promotion (None if no promotions)
+      pending_since          — last_ts of last promotion if develop is ahead, else None
+      held_reason            — non-empty if RELEASE-READY or META-TRIPWIRE holds promotion
+
+    Honest nulls throughout; no fixture data.
+    """
+    from health import (  # noqa: PLC0415
+        check_branch_topology as _bt,
+        check_release_ready as _rr,
+        check_meta_tripwire as _mt,
+        _read_promotion_events,
+    )
+
+    # --- branch topology ---
+    bt = _bt()
+    develop_sha = bt.get("develop_sha", None)
+    main_sha = bt.get("main_sha", None)
+    ahead = bt.get("ahead", None)
+    behind = bt.get("behind", None)
+    main_is_ancestor = bt.get("main_is_ancestor", None)
+
+    # --- promotion events ---
+    promotions = _read_promotion_events()
+    last_5 = promotions[-5:] if promotions else []
+    last_promo = promotions[-1] if promotions else None
+    last_sha = last_promo.get("sha", "")[:8] if last_promo else None
+    last_ts = last_promo.get("ts", None) if last_promo else None
+
+    # lag_hours since last promotion
+    lag_hours = None
+    if last_ts:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            last_dt = _dt.fromisoformat(last_ts.replace("Z", "+00:00"))
+            lag_hours = round((time.time() - last_dt.timestamp()) / 3600.0, 1)
+        except Exception:
+            pass
+
+    # pending_since: when did develop start getting ahead?
+    # Proxy: last promotion timestamp (develop became ahead after that)
+    pending_since = last_ts if (ahead is not None and ahead > 0) else None
+
+    # --- held_reason from RELEASE-READY + META-TRIPWIRE ---
+    held_reason = ""
+    rr = _rr()
+    if rr.get("verdict") == "false":
+        held_reason = rr.get("detail", "RELEASE-READY gate held")
+    elif rr.get("result") == "WARN" and rr.get("verdict") != "true":
+        held_reason = rr.get("detail", "")
+    mt = _mt()
+    if mt.get("result") == "FAIL":
+        mt_detail = mt.get("detail", "")
+        held_reason = (held_reason + " | " + mt_detail).strip(" | ") if held_reason else mt_detail
+
+    return {
+        "develop_sha": develop_sha,
+        "main_sha": main_sha,
+        "ahead": ahead,
+        "behind": behind,
+        "main_is_ancestor": main_is_ancestor,
+        "last_promotions": last_5,
+        "last_sha": last_sha,
+        "last_ts": last_ts,
+        "lag_hours": lag_hours,
+        "pending_since": pending_since,
+        "held_reason": held_reason or None,
+        "branch_topology_result": bt.get("result", "WARN"),
+        "branch_topology_detail": bt.get("detail", ""),
     }
 
 
@@ -600,6 +686,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             t.start()
             self._send_json({"status": "computing", "last_n": last_n})
+
+        elif path == "/api/promotion":
+            # GET /api/promotion — develop/main topology + last N promotion events.
+            # Returns real git data: develop sha, main sha, ahead/behind counts,
+            # last promotion event(s) from workflow-events.jsonl, pending_since,
+            # and held_reason from BRANCH-TOPOLOGY + META-TRIPWIRE checks.
+            # Honest nulls when data is unavailable; no fixtures.
+            self._send_json(_build_promotion_state())
 
         elif path == "/api/meta":
             # GET /api/meta — server identity: {sha, started_at, stale}

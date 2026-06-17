@@ -1244,6 +1244,16 @@
     <div class="card-title">hygiene + session-start (UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS, DEAD-ROUTES, SESSION-INJECTION)</div>
     <div id="hygiene-integrity-grid"><div class="loading">Loading...</div></div>
   </div>
+  <!-- promotion-integrity card (slice #843 / ADR-0070 D1/D3) -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">promotion integrity (BRANCH-TOPOLOGY, PROMOTION-LAG, RELEASE-READY, R-SENSITIVE-DETECTOR, META-TRIPWIRE)</div>
+    <div id="promotion-integrity-grid"><div class="loading">Loading...</div></div>
+  </div>
+  <!-- promotion panel (slice #843): develop→main lag, last sha, held reason -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">promotion panel — develop→main topology &amp; lag</div>
+    <div id="promotion-panel"><div class="loading">Loading...</div></div>
+  </div>
   <div class="card" style="grid-column: 1 / -1;">
     <div class="card-title">cascade-finder</div>
     <div id="cascade-summary"><div class="loading">Loading...</div></div>
@@ -2126,8 +2136,12 @@ let asCheckStore = {};     // "stem:check_id" → check object (AS-*)
 
 async function loadHealth() {
   try {
-    const r = await fetch('/api/health');
-    const data = await r.json();
+    const [healthResp, promoResp] = await Promise.all([
+      fetch('/api/health'),
+      fetch('/api/promotion'),
+    ]);
+    const data = await healthResp.json();
+    const promoData = await promoResp.json();
     renderDocsGrid(data.auditMeta);
     renderAsGrid(data.auditSubagents);
     renderSubstrateGrid(data.substrateMeta);
@@ -2135,6 +2149,8 @@ async function loadHealth() {
     renderVerificationIntegrity(data.verificationIntegrity);
     renderRegistryIntegrity(data.registryIntegrity);
     renderHygieneIntegrity(data.hygieneIntegrity);
+    renderPromotionIntegrity(data.promotionIntegrity);
+    renderPromotionPanel(promoData);
     renderCascade(data.cascadeFinder);
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
@@ -2296,6 +2312,82 @@ function renderHygieneIntegrity(hi) {
   }
   html += '</table>';
   grid.innerHTML = html;
+}
+
+/**
+ * Render promotion-integrity card (slice #843 / ADR-0070 D1/D3).
+ * Shows BRANCH-TOPOLOGY, PROMOTION-LAG, RELEASE-READY, R-SENSITIVE-DETECTOR, META-TRIPWIRE.
+ */
+function renderPromotionIntegrity(pi) {
+  const grid = document.getElementById('promotion-integrity-grid');
+  if (!grid) return;
+  if (!pi || !pi.checks || !pi.checks.length) {
+    grid.innerHTML = '<span style="color:var(--muted)">No promotion-integrity data</span>';
+    return;
+  }
+  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  for (const c of pi.checks) {
+    const det = c.detail || '';
+    const detSnippet = det.length > 0
+      ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
+      : '';
+    html += `<tr>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    html += `</tr>`;
+  }
+  html += '</table>';
+  grid.innerHTML = html;
+}
+
+/**
+ * Render promotion panel from /api/promotion (slice #843 / ADR-0070 D3).
+ * Shows: develop→main lag (commits-behind + hours), last promotion sha + timestamp,
+ * held-promotion reason. All from real event/sha data; honest empty windows allowed.
+ */
+function renderPromotionPanel(d) {
+  const el = document.getElementById('promotion-panel');
+  if (!el) return;
+  if (!d) {
+    el.innerHTML = '<span style="color:var(--muted)">No promotion data</span>';
+    return;
+  }
+  if (d.error) {
+    el.innerHTML = `<span style="color:var(--fail)">Error: ${escHtml(d.error)}</span>`;
+    return;
+  }
+
+  const devSha = d.develop_sha ? d.develop_sha.slice(0, 8) : '—';
+  const mainSha = d.main_sha ? d.main_sha.slice(0, 8) : '—';
+  const ahead = d.ahead != null ? d.ahead : '?';
+  const behind = d.behind != null ? d.behind : '?';
+  const ancestor = d.main_is_ancestor != null
+    ? (d.main_is_ancestor ? 'yes (ff-clean)' : 'no (diverged)')
+    : '?';
+
+  const lastSha = d.last_sha || '—';
+  const lastTs = d.last_ts || '—';
+  const lagHours = d.lag_hours != null ? d.lag_hours + 'h' : '—';
+  const heldReason = d.held_reason || null;
+
+  let html = '<table>';
+  html += `<tr><th style="width:160px">Field</th><th>Value</th></tr>`;
+  html += `<tr><td>develop SHA</td><td style="font-family:monospace">${escHtml(devSha)}</td></tr>`;
+  html += `<tr><td>main SHA</td><td style="font-family:monospace">${escHtml(mainSha)}</td></tr>`;
+  html += `<tr><td>develop ahead of main</td><td>${escHtml(String(ahead))} commit(s)</td></tr>`;
+  html += `<tr><td>develop behind main</td><td>${escHtml(String(behind))} commit(s)</td></tr>`;
+  html += `<tr><td>main is ancestor</td><td>${escHtml(ancestor)}</td></tr>`;
+  html += `<tr><td>last promotion SHA</td><td style="font-family:monospace">${escHtml(lastSha)}</td></tr>`;
+  html += `<tr><td>last promotion timestamp</td><td>${escHtml(lastTs)}</td></tr>`;
+  html += `<tr><td>lag since last promotion</td><td>${escHtml(lagHours)}</td></tr>`;
+  if (heldReason) {
+    html += `<tr><td style="color:var(--warn)">held reason</td>`;
+    html += `<td style="color:var(--warn);font-size:10px;">${escHtml(heldReason.slice(0, 200))}</td></tr>`;
+  } else {
+    html += `<tr><td>held reason</td><td style="color:var(--muted)">—</td></tr>`;
+  }
+  html += '</table>';
+  el.innerHTML = html;
 }
 
 /**

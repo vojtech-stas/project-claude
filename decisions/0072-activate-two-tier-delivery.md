@@ -23,7 +23,7 @@ ADR-0071 D4's dormant requirement was correct when written. It is now superseded
 
 BRANCH-TOPOLOGY remains dormant (the "dormant" detail string is preserved in `check_branch_topology()`); the BRANCH-TOPOLOGY dormant assertion in `test_make_real_pivot_856.py` is unchanged. Full BRANCH-TOPOLOGY activation (PR-merge gate moves to `develop`, branch-protection) completes in slice #843.
 
-**Enforcement:** The RELEASE-READY health check itself (non-dormant verdict) plus `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant` (which asserts "dormant" is absent from the detail string). The BRANCH-TOPOLOGY dormant assertion (`test_branch_topology_detail_contains_dormant`) remains in force.
+**Enforcement:** The RELEASE-READY health check itself (non-dormant verdict) plus `tests/test_make_real_pivot_856.py` `test_release_ready_detail_not_dormant` (which asserts "dormant" is absent from the detail string). The BRANCH-TOPOLOGY dormant assertion (`test_branch_topology_detail_contains_dormant`) remains in force. Shadow: a wired RELEASE-READY gate that continues to self-report "dormant" — masking the real gate-open/held state and presenting a false operational picture to the operator and to promote.sh.
 
 ### D2 — Make-real reconciliations carried forward
 

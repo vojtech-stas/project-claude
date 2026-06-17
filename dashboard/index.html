@@ -85,6 +85,7 @@
   }
   .hook-pill.live  { background: var(--pass); color: #fff; }
   .hook-pill.dark  { background: var(--fail); color: #fff; }
+  .hook-pill.partial { background: var(--warn); color: #fff; }
   .hook-pill.unknown { background: var(--border); color: var(--muted); }
   .sb-chip {
     display: inline-block;
@@ -4036,16 +4037,30 @@ function _renderRollup(result, el) {
           ? escS(d.branch) + '@' + escS(d.short_sha)
           : (d.short_sha ? escS(d.short_sha) : '?');
 
-        // --- HOOKS pill ---
+        // --- HOOKS pill (two-state: beacon-live vs event-feed-live, issue #875) ---
+        // beacon-live: hook-fires.jsonl has a recent beacon (pre-tool-bash fires)
+        // event-feed-live: workflow-events.jsonl has a recent event (skill/agent events)
+        // When beacons are fresh but the event feed is dark, show WARN "partial" state
+        // rather than full-green LIVE, to avoid the #875 false-positive.
+        const _HOOK_LIVE_THRESH_MIN = 60;
         const hl = d.hooks_live || {};
+        const le = d.last_event || {};
         let hookClass = 'unknown';
         let hookLabel = 'HOOKS ?';
         let hookTitle = 'hook-fires.jsonl not found or no data yet';
         if (typeof hl.alive === 'boolean') {
           if (hl.alive) {
-            hookClass = 'live';
-            hookLabel = 'HOOKS LIVE';
-            hookTitle = 'newest beacon ' + ageStr(hl.age_minutes);
+            const feedAlive = le.age_minutes != null && le.age_minutes < _HOOK_LIVE_THRESH_MIN;
+            if (feedAlive) {
+              hookClass = 'live';
+              hookLabel = 'HOOKS LIVE';
+              hookTitle = 'beacon ' + ageStr(hl.age_minutes) + '; event feed ' + ageStr(le.age_minutes);
+            } else {
+              hookClass = 'partial';
+              hookLabel = 'BEACONING';
+              const feedAge = le.age_minutes != null ? Math.round(le.age_minutes) + 'min' : 'none';
+              hookTitle = 'beacon live (' + ageStr(hl.age_minutes) + ') but event feed dark (last event: ' + feedAge + ') — workflow hooks may not be firing';
+            }
           } else {
             hookClass = 'dark';
             hookLabel = 'HOOKS DARK';
@@ -4054,8 +4069,7 @@ function _renderRollup(result, el) {
           }
         }
 
-        // --- last event age ---
-        const le = d.last_event || {};
+        // --- last event age (le is declared above in hooks block) ---
         const lastEvText = le.age_minutes != null
           ? 'event ' + ageStr(le.age_minutes)
           : 'no events';

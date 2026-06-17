@@ -20,10 +20,11 @@ Exports:
     cascade_finder_summary() -> dict
     check_test_ordering() -> dict         (slice #816/ADR-0067 D2: fix-type PR test-first ordering rate)
     check_quarantine_sla() -> dict        (slice #816/ADR-0067 D4: quarantine register size + oldest-entry SLA)
-    check_frontmatter_coverage() -> dict  (slice #820/ADR-0069 D3: % agent files with explicit model: frontmatter)
+    check_frontmatter_coverage() -> dict  (slice #820/ADR-0027 D1: % agent files with explicit model: frontmatter)
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_hook_liveness() -> dict        (slice #849: hook-layer dark detection via beacon lag)
+    check_stale_server() -> dict         (slice #907/ADR-0071 D5: server sha vs HEAD freshness check)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
@@ -3108,7 +3109,7 @@ def _insert_dashboard_sys_path() -> None:
 def check_frontmatter_coverage() -> dict:
     """FRONTMATTER-COVERAGE: % subagent files with explicit model: frontmatter.
 
-    Implements ADR-0069 D3 standing invariant (ADR-0027 D1: every .claude/agents/*.md
+    Implements ADR-0027 D1 standing invariant (every .claude/agents/*.md
     MUST have explicit model: frontmatter). Reports honest current value; PASS=100%.
 
     PASS when all agent files have explicit model: frontmatter.
@@ -3163,6 +3164,128 @@ def check_frontmatter_coverage() -> dict:
         "missing": missing,
     }
 
+
+# ---------------------------------------------------------------------------
+# Stale-server check (ADR-0071 D5 — slice #907)
+# ---------------------------------------------------------------------------
+
+def check_stale_server() -> dict:
+    """STALE-SERVER: dashboard server sha vs git HEAD (is the server fresh?).
+
+    Compares the sha reported by /api/meta against the current git HEAD.
+    PASS  when server sha == HEAD (server loaded current code).
+    FAIL  when sha differs from HEAD OR /api/meta reports stale=True.
+    WARN  when the server is not reachable (no server running is not stale).
+
+    Supports env-var overrides for offline testing:
+      _STALE_SERVER_META_OVERRIDE  — JSON string for the /api/meta response body
+        (empty string = simulate unreachable / connection error).
+      _STALE_SERVER_HEAD_OVERRIDE  — HEAD sha string (overrides git rev-parse).
+
+    Per ADR-0071 D5 (server-staleness claim); surfaces the #726 staleness
+    condition as an honest registry row.
+    """
+    import json as _json
+    import urllib.request as _urllib_request
+    import urllib.error as _urllib_error
+
+    # --- 1. Get HEAD sha ---
+    head_override = os.environ.get("_STALE_SERVER_HEAD_OVERRIDE", "")
+    if head_override:
+        head_sha = head_override.strip()
+    else:
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(_HEALTH_REPO_ROOT), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            head_sha = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            head_sha = ""
+
+    if not head_sha:
+        return {
+            "id": "STALE-SERVER",
+            "result": "WARN",
+            "detail": "could not determine git HEAD sha; check skipped",
+        }
+
+    # --- 2. Fetch /api/meta from running server ---
+    meta_override = os.environ.get("_STALE_SERVER_META_OVERRIDE", None)
+    if meta_override is not None:
+        # Test injection path
+        if meta_override == "":
+            # Simulate unreachable server
+            return {
+                "id": "STALE-SERVER",
+                "result": "WARN",
+                "detail": "dashboard server not reachable (no server running is not stale)",
+            }
+        try:
+            meta = _json.loads(meta_override)
+        except Exception as exc:
+            return {
+                "id": "STALE-SERVER",
+                "result": "WARN",
+                "detail": f"meta override parse error: {exc}",
+            }
+    else:
+        # Production path: try localhost:8765 (the canonical dashboard port)
+        try:
+            with _urllib_request.urlopen(
+                "http://localhost:8765/api/meta", timeout=3
+            ) as resp:
+                meta = _json.loads(resp.read().decode("utf-8"))
+        except (_urllib_error.URLError, OSError):
+            return {
+                "id": "STALE-SERVER",
+                "result": "WARN",
+                "detail": "dashboard server not reachable at localhost:8765 (no server running is not stale)",
+            }
+        except Exception as exc:
+            return {
+                "id": "STALE-SERVER",
+                "result": "WARN",
+                "detail": f"unexpected error fetching /api/meta: {exc}",
+            }
+
+    # --- 3. Compare sha and stale flag ---
+    server_sha = meta.get("sha", "")
+    server_stale_flag = bool(meta.get("stale", False))
+
+    if not server_sha:
+        return {
+            "id": "STALE-SERVER",
+            "result": "WARN",
+            "detail": "server /api/meta did not return a sha; cannot compare",
+        }
+
+    if server_stale_flag or server_sha != head_sha:
+        reason = []
+        if server_stale_flag:
+            reason.append("server reports stale=True")
+        if server_sha != head_sha:
+            reason.append(
+                f"server sha {server_sha[:12]} != HEAD {head_sha[:12]}"
+            )
+        return {
+            "id": "STALE-SERVER",
+            "result": "FAIL",
+            "detail": (
+                "stale server detected: " + "; ".join(reason)
+                + " — restart dashboard to load current code"
+            ),
+            "server_sha": server_sha,
+            "head_sha": head_sha,
+        }
+
+    return {
+        "id": "STALE-SERVER",
+        "result": "PASS",
+        "detail": f"server sha {server_sha[:12]} matches HEAD (server is fresh)",
+        "server_sha": server_sha,
+        "head_sha": head_sha,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -4494,7 +4617,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "REQUIRED-LABELS":   check_required_labels,
     "DEAD-ROUTES":       check_dead_routes,
     "SESSION-INJECTION": check_session_injection,
-    # model-frontmatter invariant check (ADR-0027 D1 / ADR-0069 D3 keep)
+    # model-frontmatter invariant check (ADR-0027 D1; fleet-economics removed per ADR-0071 D2)
     "FRONTMATTER-COVERAGE": check_frontmatter_coverage,
     # Verification-integrity checks (require network/collector)
     "BLIND-RATE":      check_blind_dispatch_rate,
@@ -4512,6 +4635,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "PROOF-INTEGRITY": check_proof_integrity,
     # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
     "META-TRIPWIRE": check_meta_tripwire,
+    # Server-staleness check (ADR-0071 D5 — slice #907)
+    "STALE-SERVER": check_stale_server,
 }
 
 

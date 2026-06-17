@@ -843,6 +843,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 15: PROOF-INTEGRITY (slice #839 / ADR-0070 D5)
+#   DOM-attestation integrity for browser-route proof artifacts.
+#   WARN is allowed (may have no qualifying data yet); only FAIL trips this.
+#   Delegates to registry CLI (single-source per ADR-0064 D3).
+# ---------------------------------------------------------------------------
+echo "--- CHECK 15: PROOF-INTEGRITY DOM-attestation check ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 15 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK15_OUTPUT=$(python3 dashboard/health.py --check PROOF-INTEGRITY 2>&1)
+    CHECK15_EXIT=$?
+    if [ "$CHECK15_EXIT" -eq 0 ]; then
+        pass "CHECK 15 (PROOF-INTEGRITY): $CHECK15_OUTPUT"
+    else
+        fail "CHECK 15 (PROOF-INTEGRITY): $CHECK15_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

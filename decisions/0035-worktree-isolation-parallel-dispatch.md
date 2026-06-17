@@ -1,3 +1,12 @@
+---
+id: "ADR-0035"
+status: "superseded"
+supersedes: []
+superseded_by:
+  - "ADR-0036"
+scope: "isolation"
+rule_ids: []
+---
 # ADR-0035: Per-agent worktree isolation for parallel implementer dispatch
 
 - **Status:** Accepted

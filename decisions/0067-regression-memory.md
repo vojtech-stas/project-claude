@@ -1,3 +1,14 @@
+---
+id: "ADR-0067"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "regression"
+rule_ids:
+  - "REG-001"
+  - "REG-002"
+  - "REG-003"
+---
 # 0067 — Regression memory: tests in CI, test-before-fix, capture riders, quarantine, golden critic evals
 
 - **Status:** Accepted

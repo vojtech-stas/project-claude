@@ -1,3 +1,13 @@
+---
+id: "ADR-0048"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "critics"
+rule_ids:
+  - "CRI-001"
+  - "CRI-002"
+---
 # ADR-0048: Critic-loop r3 policy — strict-stop affirmed + complete-class revision discipline (rule #19)
 
 - **Status:** Accepted

@@ -1,3 +1,14 @@
+---
+id: "ADR-0012"
+status: "accepted"
+supersedes:
+  - "ADR-0007"
+superseded_by: []
+scope: "glossary"
+rule_ids:
+  - "GLO-003"
+  - "GLO-004"
+---
 # ADR-0012: Glossary consolidation — single-tier in CLAUDE.md (supersedes ADR-0007 D1)
 
 - **Status:** Accepted

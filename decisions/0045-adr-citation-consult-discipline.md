@@ -1,3 +1,13 @@
+---
+id: "ADR-0045"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "docs"
+rule_ids:
+  - "DOC-005"
+  - "DOC-006"
+---
 # ADR-0045: ADR-citation consult discipline + systematized adr-critic D-ID verification
 
 - **Status:** Accepted

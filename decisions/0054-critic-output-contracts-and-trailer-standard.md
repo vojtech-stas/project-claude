@@ -1,3 +1,14 @@
+---
+id: "ADR-0054"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "critics"
+rule_ids:
+  - "CRI-003"
+  - "CRI-004"
+  - "CRI-005"
+---
 # ADR-0054: Critic output contracts + CRITIC trailer standard schema
 
 - **Status:** Accepted

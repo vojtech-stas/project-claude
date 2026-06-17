@@ -1,3 +1,14 @@
+---
+id: "ADR-0059"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "output-contracts"
+rule_ids:
+  - "OUT-001"
+  - "OUT-002"
+  - "OUT-003"
+---
 # 0059 — Output-contract schema v2: attributable verdicts, disclosed doubts, named confusion
 
 - **Status:** Accepted

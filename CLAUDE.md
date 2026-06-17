@@ -133,6 +133,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Health check registry CLI | `python dashboard/health.py --check <id>` / `--list` | run any registered DOCS-*/AS-* check headlessly; exit 0 on PASS/WARN, 1 on FAIL; `--list` prints all IDs; consumed by ci-checks.sh CHECK 4/5; per [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
 | Regression test suite | `tests/` | stdlib unittest + pytest suite; seeded with events.py interleave regression; `quarantine.txt` for flaky tests (30-day SLA); `evals/` for critic golden-set fixtures; per [ADR-0067](decisions/0067-regression-memory.md) D1/D4/D5 |
 | Eval runner | `tools/run_evals.py` | invokes `claude -p` per critic golden-set fixture, parses CRITIC trailer VERDICT, writes `tests/evals/results.json`; on-demand only (not a CI stage); per [ADR-0067](decisions/0067-regression-memory.md) D5 |
+| Generated atomic rules | `.claude/rules/<scope>.md` | generated from non-superseded ADR frontmatter by `tools/gen_rules.py` — never hand-edit; CI CHECK 17 keeps them fresh; per PRD #888 |
+| Rules generator | `tools/gen_rules.py` | stdlib-only; reads ADR YAML frontmatter, filters to non-superseded, emits `.claude/rules/<scope>.md`; run to regenerate after ADR frontmatter changes |
 
 ---
 

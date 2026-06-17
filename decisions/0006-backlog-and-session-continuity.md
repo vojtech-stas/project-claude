@@ -1,3 +1,13 @@
+---
+id: "ADR-0006"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "capture"
+rule_ids:
+  - "CAP-001"
+  - "CAP-002"
+---
 # ADR-0006: Backlog queue + session continuity (live-state reconstruction)
 
 - **Status:** Accepted (drafted by `/to-prd` alongside PRD-D; reviewed jointly by `prd-critic` and `adr-critic` per ADR-0004 D1)

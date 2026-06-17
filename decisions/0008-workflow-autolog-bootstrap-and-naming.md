@@ -1,3 +1,13 @@
+---
+id: "ADR-0008"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "capture"
+rule_ids:
+  - "CAP-003"
+  - "CAP-004"
+---
 # ADR-0008: Workflow polish — auto-log captured→backlog autopilot + bootstrap.sh + naming convention
 
 - **Status:** Accepted

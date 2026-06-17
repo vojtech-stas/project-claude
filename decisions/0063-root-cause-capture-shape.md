@@ -1,3 +1,13 @@
+---
+id: "ADR-0063"
+status: "accepted"
+supersedes: []
+superseded_by: []
+scope: "capture"
+rule_ids:
+  - "CAP-007"
+  - "CAP-008"
+---
 # 0063 — Root-cause capture shape contract: labeled, regex-checkable, evidence-first
 
 - **Status:** Accepted

@@ -69,6 +69,19 @@ print('gate not ready (could not parse RELEASE-READY output)')
 fi
 echo "INFO: RELEASE-READY gate: $VERDICT — proceeding with promotion"
 
+# --- 0b. Human-ack sentinel gate (slice #881, fixes #880 bypass) ---
+# Require a human-created sentinel file .claude/PROMOTE_OK in the repo root.
+# Subagent worktrees check out only tracked files — this file is gitignored,
+# so it can never exist in a subagent context, structurally blocking bypasses.
+SENTINEL="$REPO_ROOT/.claude/PROMOTE_OK"
+if [ ! -f "$SENTINEL" ]; then
+  echo "PROMOTION REFUSED: human ack required — create .claude/PROMOTE_OK to authorize" >&2
+  echo "INFO: This sentinel is gitignored; it must be created manually by a human." >&2
+  echo "INFO: It is deleted automatically after a successful promotion (one-shot)." >&2
+  exit 1
+fi
+echo "INFO: human-ack sentinel found — proceeding with promotion"
+
 # --- 1. Resolve develop HEAD sha ---
 DEVELOP_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
   echo "ERROR: cannot resolve develop HEAD — branch does not exist yet" >&2
@@ -96,6 +109,10 @@ else
   git push origin "refs/remotes/origin/develop:refs/heads/main" --force-with-lease="refs/heads/main:$MAIN_SHA"
   echo "INFO: push complete"
 fi
+
+# --- 3b. Remove human-ack sentinel (one-shot: fresh ack required per promotion) ---
+rm -f "$SENTINEL"
+echo "INFO: human-ack sentinel removed — next promotion requires a fresh .claude/PROMOTE_OK"
 
 # --- 4. Append promotion event ---
 TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")"

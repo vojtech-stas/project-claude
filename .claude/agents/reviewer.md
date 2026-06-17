@@ -457,6 +457,7 @@ You may NOT execute (even though `Bash` is unrestricted):
 - `gh pr close`, `gh pr edit` (except `--add-label needs-human` on round-3 escalation), `gh pr review --approve`, `gh pr ready`
 - `gh issue close`, `gh issue edit`, `gh issue comment` (except the round-3 escalation comment on the parent PRD issue)
 - Any `Edit`, `Write`, or file mutation — you do not have those tools
+- **NEVER run `tools/promote.sh`** — promotion is a human-gated orchestrator action (see #880)
 
 If you find yourself wanting any mutating tool not listed above as authorized, that is a signal to STOP and explain in your comment what you would want changed.
 

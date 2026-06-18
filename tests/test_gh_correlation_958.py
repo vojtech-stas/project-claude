@@ -485,6 +485,14 @@ class TestFiringTreeFallback(unittest.TestCase):
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
         tr._disk_cache_data = None  # clear disk-cache in-memory (slice #959 perf fix)
+        # Patch disk cache path to an empty temp file so pre-existing on-disk
+        # entries (from prior test runs that resolved #800→#794 via real gh)
+        # do not bleed into the mocked-gh-unavailable tests.
+        self._tmp = Path(tempfile.mkdtemp())
+        self._cache_file = self._tmp / "empty-fallback-cache.json"
+        self._disk_cache_patcher = patch("transcript._disk_cache_path",
+                                         return_value=self._cache_file)
+        self._disk_cache_patcher.start()
 
         self._main_path, self._tmpdir = _build_session_fixture(
             session_id="test-gh-fallback-958",
@@ -500,11 +508,13 @@ class TestFiringTreeFallback(unittest.TestCase):
 
     def tearDown(self):
         import shutil
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
+        self._disk_cache_patcher.stop()
         import transcript as tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
         tr._disk_cache_data = None
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def test_fallback_returns_non_empty_groups(self):
         """Even with gh unavailable, build_firing_tree() returns ≥1 bucket."""

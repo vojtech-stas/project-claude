@@ -59,6 +59,21 @@
     border-bottom: 1px solid #ef4444;
   }
   #stale-banner.visible { display: block; }
+  /* CAPTURE DARK banner — shown when capture_unavailable=true in comparison report */
+  #capture-dark-banner {
+    display: none;
+    background: #1c1a2e;
+    color: #a78bfa;
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    padding: 6px 20px;
+    letter-spacing: 0.03em;
+    border-bottom: 1px solid #7c3aed;
+    border-top: 1px solid #7c3aed;
+    margin: 6px 0;
+  }
+  #capture-dark-banner.visible { display: block; }
   /* STATUS HEADER — always-visible workflow liveness bar (slice #859) */
   #status-bar {
     background: #0d1117;
@@ -1117,6 +1132,9 @@
   <!-- Pipeline diagram removed (slice #525): was hand-maintained mermaid with
        stale edges and missing codebase-critic. The Orchestration topology
        below is spec-driven (fetched from /api/pipeline — ADR-0039 D1/D2). -->
+  <!-- CAPTURE DARK banner: shown when comparison report has capture_unavailable=true (PRD #956 slice 3 AC #7) -->
+  <div id="capture-dark-banner">runtime confirmation unavailable — capture dark (no transcript and no hook log found for this PRD window)</div>
+
   <div class="section">
     <h2>Orchestration topology</h2>
     <div class="legend" id="topology-legend">
@@ -3863,6 +3881,16 @@ async function loadTrailComparison() {
 
     // Paint topology graph with state colors
     _paintTopologyStates(report);
+
+    // Show/hide capture-dark banner (PRD #956 slice 3 AC #7)
+    const captureDarkBanner = document.getElementById('capture-dark-banner');
+    if (captureDarkBanner) {
+      if (report.capture_unavailable === true) {
+        captureDarkBanner.classList.add('visible');
+      } else {
+        captureDarkBanner.classList.remove('visible');
+      }
+    }
 
     const pass = report.run_pass ? 'PASS' : 'FAIL';
     statusEl.textContent = `PRD #${prd} — ${pass}`;

@@ -24,6 +24,17 @@ Slice 2 (this file extends):
     E-CODEBASECRITIC-REVIEWER
   Note: E-AUDITSUBAGENTS-REVIEWER removed (PRD #919 slice #921).
 
+Slice 3 (PRD #956): transcript-sourced runtime edges + capture-unavailable banner.
+  - observe() now accepts optional transcript_path; uses transcript as primary
+    observation source (always present in active sessions; hook log is secondary).
+  - _build_transcript_window_index(): normalises transcript agent_start events
+    from parse_transcript() into the same index shape as _build_window_index().
+  - observation_source added to each runtime edge entry: "transcript" | "hook-log".
+  - capture_unavailable: True when NEITHER transcript NOR hook log has events in
+    the PRD window — threaded to comparison.py for the Architecture-tab banner.
+  - Preserve ADR-0055 D1 four-state semantics. Genuinely unmappable edges remain
+    not-observable (distinguished from fired-but-not-observed = runtime-unobserved).
+
 Plus: explicit `unmeasurable` state for E-USER-GRILLME + E-GRILLME-SHIP
      (both declared unmeasurable-by-design in SPEC; handled in observe()).
 
@@ -136,6 +147,164 @@ def _log_path() -> Path:
     return _DEFAULT_LOG
 
 
+# ---------------------------------------------------------------------------
+# Transcript-sourced index builder (PRD #956 slice 3)
+# ---------------------------------------------------------------------------
+
+def _build_transcript_window_index(
+    win_start: float,
+    win_end: float,
+    transcript_path: Path | None,
+) -> tuple[bool, dict]:
+    """Build the same index shape as _build_window_index() from the transcript.
+
+    Uses parse_transcript() from transcript.py to normalise records, then
+    filters to the PRD time window.  Only agent_start events are needed for
+    runtime-tier edge evaluation (the evaluators key on agent_start and
+    skill_invoke; the transcript exposes agent_start reliably).
+
+    Returns (capture_live, index) with the same shape as _build_window_index().
+    observation_source: "transcript" is stored in each event so downstream
+    evidence refs can name the source per AC #5.
+
+    Never raises; returns (False, {}) on any error or when path is None/absent.
+    """
+    if transcript_path is None:
+        return False, {}
+
+    # Lazy import to avoid circular dependency at module load time.
+    # runtime_observer must NOT import server or comparison (doc constraint),
+    # but importing transcript.py is safe: transcript does not import this file.
+    try:
+        import sys as _sys
+        _dashboard_dir = str(Path(__file__).resolve().parent)
+        if _dashboard_dir not in _sys.path:
+            _sys.path.insert(0, _dashboard_dir)
+        from transcript import parse_transcript  # noqa: PLC0415
+    except ImportError:
+        return False, {}
+
+    try:
+        events = parse_transcript(transcript_path)
+    except Exception:
+        return False, {}
+
+    if not events:
+        return False, {}
+
+    skill_invoke_idx: dict[str, list] = {}
+    user_prompt_list: list = []
+    agent_start_idx: dict[str, list] = {}
+    agent_complete_idx: dict[str, list] = {}
+    bash_complete_list: list = []
+    all_events: list = []
+    any_event_in_window = False
+
+    for ev in events:
+        ts_epoch = _parse_ts(ev.get("ts", ""))
+        if ts_epoch is None:
+            continue
+        if ts_epoch < win_start or ts_epoch > win_end:
+            continue
+
+        # Tag each event with its source
+        ev = dict(ev)
+        ev["_observation_source"] = "transcript"
+
+        any_event_in_window = True
+        evt = ev.get("event", "")
+        all_events.append(ev)
+
+        if evt == "agent_start":
+            stype = ev.get("subagent_type", "")
+            if stype:
+                agent_start_idx.setdefault(stype, []).append(ev)
+            agent_start_idx.setdefault("__all__", []).append(ev)
+        elif evt == "agent_complete":
+            stype = ev.get("subagent_type", "")
+            if stype:
+                agent_complete_idx.setdefault(stype, []).append(ev)
+            agent_complete_idx.setdefault("__all__", []).append(ev)
+        elif evt == "user_prompt":
+            user_prompt_list.append(ev)
+        elif evt == "tool_use":
+            # Transcript tool_use events can proxy skill_invoke for skills that
+            # emit a distinctive tool call.  Map known skill tool names.
+            tool_name = ev.get("tool_name", "")
+            if tool_name:
+                skill_invoke_idx.setdefault(tool_name, []).append(ev)
+
+    return any_event_in_window, {
+        "skill_invoke": skill_invoke_idx,
+        "user_prompt": user_prompt_list,
+        "agent_start": agent_start_idx,
+        "agent_complete": agent_complete_idx,
+        "bash_complete": bash_complete_list,
+        "all_events": all_events,
+    }
+
+
+def _merge_indices(primary: dict, secondary: dict) -> dict:
+    """Merge two event-index dicts, primary taking precedence on overlapping keys.
+
+    Used to combine the transcript index (primary) with the hook-log index
+    (secondary) so we get the union of observable events.  Each list is
+    deduplicated by (ts, event, session_id) to avoid double-counting.
+    """
+    if not primary and not secondary:
+        return {}
+    if not primary:
+        return secondary
+    if not secondary:
+        return primary
+
+    def _dedup_merge(a: list, b: list) -> list:
+        seen: set = set()
+        out: list = []
+        for ev in (a + b):
+            key = (ev.get("ts", ""), ev.get("event", ""), ev.get("session_id", ""))
+            if key not in seen:
+                seen.add(key)
+                out.append(ev)
+        # Sort ascending by ts
+        out.sort(key=lambda e: e.get("ts", ""))
+        return out
+
+    def _merge_dict_of_lists(a: dict, b: dict) -> dict:
+        result: dict = {}
+        all_keys = set(list(a.keys()) + list(b.keys()))
+        for k in all_keys:
+            result[k] = _dedup_merge(a.get(k, []), b.get(k, []))
+        return result
+
+    return {
+        "skill_invoke":   _merge_dict_of_lists(
+            primary.get("skill_invoke", {}), secondary.get("skill_invoke", {})),
+        "user_prompt":    _dedup_merge(
+            primary.get("user_prompt", []), secondary.get("user_prompt", [])),
+        "agent_start":    _merge_dict_of_lists(
+            primary.get("agent_start", {}), secondary.get("agent_start", {})),
+        "agent_complete": _merge_dict_of_lists(
+            primary.get("agent_complete", {}), secondary.get("agent_complete", {})),
+        "bash_complete":  _dedup_merge(
+            primary.get("bash_complete", []), secondary.get("bash_complete", [])),
+        "all_events":     _dedup_merge(
+            primary.get("all_events", []), secondary.get("all_events", [])),
+    }
+
+
+def _primary_source(index: dict) -> str:
+    """Detect primary source label from an index (transcript or hook-log).
+
+    Returns "transcript" if any event has _observation_source=="transcript",
+    else "hook-log", else "unknown".
+    """
+    for ev in index.get("all_events", [])[:20]:
+        if ev.get("_observation_source") == "transcript":
+            return "transcript"
+    return "hook-log"
+
+
 def _parse_ts(ts_str: str) -> float | None:
     """Parse an ISO-8601 timestamp string to a UTC epoch float. Returns None on error."""
     if not ts_str:
@@ -164,12 +333,20 @@ def _is_valid_v2(obj: dict) -> bool:
 
 
 def _ev_ref(ev: dict) -> dict:
-    """Return a compact evidence reference for an event (ts, event, session_id, ...)."""
-    return {
+    """Return a compact evidence reference for an event (ts, event, session_id, ...).
+
+    Includes observation_source ("transcript" or "hook-log") when present,
+    satisfying PRD #956 AC #5 (edge response names the transcript as its source).
+    """
+    ref: dict = {
         "ts": ev.get("ts"),
         "event": ev.get("event"),
         "session_id": ev.get("session_id"),
     }
+    src = ev.get("_observation_source")
+    if src:
+        ref["observation_source"] = src
+    return ref
 
 
 # ---------------------------------------------------------------------------
@@ -841,22 +1018,47 @@ def _eval_codebasecritic_reviewer(
 def observe(
     trail: dict,
     log_path: Path | None = None,
+    transcript_path: Path | None = None,
 ) -> dict:
     """Evaluate all 24 runtime-tier edges + 2 unmeasurable edges for the given PRD trail.
 
     Args:
         trail: output of collector.get_trail() — needs prd_created_at, prd_closed_at
         log_path: override for the workflow-events.jsonl path (for sandbox testing)
+        transcript_path: explicit transcript path override (for testing / CLAUDE_TRANSCRIPT_PATH).
+            When None, auto-resolved via transcript.resolve_transcript() (PRD #956 slice 3).
+
+    Observation source priority (PRD #956 slice 3):
+        1. Transcript (resolve_transcript() or transcript_path override) — always present
+           in active sessions; hook-independent.
+        2. Hook log (workflow-events.jsonl) — secondary; only present when hooks fire.
+        3. Merged index when both are available (union, deduped by ts+event+session_id).
+        When NEITHER source has events in the window: capture_unavailable=True is set in
+        the return dict so comparison.py can surface the "capture dark" banner.
 
     Returns dict with keys:
-        runtime_edges: {edge_id: {state, detail, evidence, required}} — 26 entries
+        runtime_edges: {edge_id: {state, detail, evidence, required,
+                                   observation_source?}} — 26 entries
           (24 runtime + 2 unmeasurable-by-design)
         runtime_coverage: {confirmed, unobserved, not_observable, not_exercised,
                            unmeasurable}
         capture_liveness: bool — True iff any event found in the window
+        capture_unavailable: bool — True when NEITHER source had events in window
     """
     if log_path is None:
         log_path = _log_path()
+
+    # Resolve transcript path when not explicitly overridden
+    if transcript_path is None:
+        try:
+            import sys as _sys
+            _dashboard_dir = str(Path(__file__).resolve().parent)
+            if _dashboard_dir not in _sys.path:
+                _sys.path.insert(0, _dashboard_dir)
+            from transcript import resolve_transcript  # noqa: PLC0415
+            transcript_path = resolve_transcript()
+        except Exception:
+            transcript_path = None
 
     # Determine run window
     win_start_str = trail.get("prd_created_at", "")
@@ -890,10 +1092,27 @@ def observe(
                 "unmeasurable": len(UNMEASURABLE_EDGE_IDS),
             },
             "capture_liveness": False,
+            "capture_unavailable": True,
         }
 
-    # One pass over the log window
-    capture_live, index = _build_window_index(win_start, win_end, log_path)
+    # Build index from transcript (primary) and hook log (secondary)
+    transcript_live, transcript_index = _build_transcript_window_index(
+        win_start, win_end, transcript_path
+    )
+    hook_live, hook_index = _build_window_index(win_start, win_end, log_path)
+
+    capture_live = transcript_live or hook_live
+    capture_unavailable = not capture_live
+
+    # Merge indices (transcript takes precedence; events deduplicated)
+    if transcript_live and hook_live:
+        index = _merge_indices(transcript_index, hook_index)
+    elif transcript_live:
+        index = transcript_index
+    elif hook_live:
+        index = hook_index
+    else:
+        index = {}
 
     # ---------------------------------------------------------------------------
     # Evaluate all 24 runtime-tier edges
@@ -1050,6 +1269,9 @@ def observe(
         "unmeasurable": 0,
     }
 
+    # Determine which observation source was primary for this observe() call
+    _obs_source = _primary_source(index) if capture_live else "none"
+
     for eid in COVERED_EDGE_IDS:
         state, detail, ev_evidence = results[eid]
         entry: dict = {
@@ -1060,6 +1282,13 @@ def observe(
         }
         if ev_evidence:
             entry["event_evidence"] = ev_evidence
+            # Propagate per-event observation_source when available (AC #5)
+            per_ev_src = ev_evidence.get("observation_source")
+            if per_ev_src:
+                entry["observation_source"] = per_ev_src
+        # Fall back to index-level source when no per-event source
+        if "observation_source" not in entry and state == "runtime-confirmed":
+            entry["observation_source"] = _obs_source
 
         if state == "runtime-confirmed":
             counts["confirmed"] += 1
@@ -1086,4 +1315,5 @@ def observe(
         "runtime_edges": runtime_edges,
         "runtime_coverage": counts,
         "capture_liveness": capture_live,
+        "capture_unavailable": capture_unavailable,
     }

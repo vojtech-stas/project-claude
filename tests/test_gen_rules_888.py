@@ -1,6 +1,7 @@
 """
 Regression tests for PRD #888 slice #889 — gen_rules.py walking skeleton.
 Updated in slice #938 (ADR-0073) for SCOPE_TARGET global/area split.
+Updated in slice #939 (PRD #937) for remaining-scopes migration + conservation check.
 
 Verifies:
 1. gen_rules.py excludes rule_ids from ADRs with status "superseded".
@@ -10,6 +11,9 @@ Verifies:
 5. AREA scopes render into .claude/rules/<scope>.md with paths: frontmatter.
 6. GLOBAL scopes render into CLAUDE.md generated-region blocks.
 7. --check mode detects stale/missing outputs.
+8. rule_id conservation: live count == RULE_IDS_BASELINE.
+9. All 4 area scopes have paths: frontmatter in committed files.
+10. All 8 global scopes have generated-region markers in CLAUDE.md.
 
 All fixture-based tests use a temp directory and monkeypatching.
 Tests are offline, deterministic, and network-free.
@@ -133,6 +137,9 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
     """
     Run gen_rules.generate(check_mode=True) on a clean pre-generated tree.
 
+    Patches RULE_IDS_BASELINE to match the fixture's actual rule_id count so
+    the conservation check does not false-fail on small fixtures (slice #939).
+
     Returns exit_code.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -141,6 +148,13 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
         claude_md.write_text("# CLAUDE.md placeholder\n", encoding="utf-8")
 
         target_override = scope_target_override or gen_rules.SCOPE_TARGET
+
+        # Compute the fixture's expected rule_id count for conservation override.
+        active = [a for a in adrs if not gen_rules._is_superseded(a)]
+        scopes_tmp: dict = {}
+        for a in active:
+            scopes_tmp.setdefault(a["scope"], []).append(a)
+        fixture_baseline = gen_rules._count_rule_ids(scopes_tmp)
 
         # First generate
         with (
@@ -152,13 +166,14 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
         ):
             gen_rules.generate(check_mode=False)
 
-        # Now check
+        # Now check (patch baseline to fixture count so conservation check passes)
         with (
             patch.object(gen_rules, "_load_adrs", return_value=adrs),
             patch.object(gen_rules, "RULES_DIR", rules_dir),
             patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
             patch.object(gen_rules, "CLAUDE_MD", claude_md),
             patch.object(gen_rules, "SCOPE_TARGET", target_override),
+            patch.object(gen_rules, "RULE_IDS_BASELINE", fixture_baseline),
         ):
             exit_code = gen_rules.generate(check_mode=True)
 
@@ -499,6 +514,175 @@ class TestGenRulesRealFrontmatter(unittest.TestCase):
             content,
             "PIP-001 from pipeline global scope must appear in CLAUDE.md",
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: rule_id conservation baseline (slice #939 — PRD #937 §2 criterion 7)
+# ---------------------------------------------------------------------------
+
+class TestRuleIdConservationBaseline(unittest.TestCase):
+    """RULE_IDS_BASELINE constant must equal the live rule_id count."""
+
+    def test_baseline_constant_defined(self):
+        """RULE_IDS_BASELINE must be a positive integer."""
+        self.assertIsInstance(gen_rules.RULE_IDS_BASELINE, int)
+        self.assertGreater(gen_rules.RULE_IDS_BASELINE, 0)
+
+    def test_live_count_equals_baseline(self):
+        """Live rule_id count across all active ADRs must equal RULE_IDS_BASELINE."""
+        adrs = gen_rules._load_adrs()
+        active = [a for a in adrs if not gen_rules._is_superseded(a)]
+        scopes: dict = {}
+        for a in active:
+            scopes.setdefault(a["scope"], []).append(a)
+        live_count = gen_rules._count_rule_ids(scopes)
+        self.assertEqual(
+            live_count,
+            gen_rules.RULE_IDS_BASELINE,
+            f"Live rule_id count {live_count} != baseline {gen_rules.RULE_IDS_BASELINE}; "
+            "update RULE_IDS_BASELINE in gen_rules.py after confirming no rules were lost.",
+        )
+
+    def test_check_mode_fails_on_baseline_mismatch(self):
+        """--check mode returns non-zero when live count != RULE_IDS_BASELINE."""
+        # Use fixture ADRs that produce a count of 4, which != 74 (baseline)
+        adrs = [_ACTIVE_ADR_AREA, _ACTIVE_ADR_GLOBAL]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = Path(tmpdir) / ".claude" / "rules"
+            claude_md = Path(tmpdir) / "CLAUDE.md"
+            claude_md.write_text("# CLAUDE.md placeholder\n", encoding="utf-8")
+
+            # First generate so files exist
+            with (
+                patch.object(gen_rules, "_load_adrs", return_value=adrs),
+                patch.object(gen_rules, "RULES_DIR", rules_dir),
+                patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
+                patch.object(gen_rules, "CLAUDE_MD", claude_md),
+            ):
+                gen_rules.generate(check_mode=False)
+
+            # Now check with the same small fixture (4 rule_ids, baseline is 74)
+            with (
+                patch.object(gen_rules, "_load_adrs", return_value=adrs),
+                patch.object(gen_rules, "RULES_DIR", rules_dir),
+                patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
+                patch.object(gen_rules, "CLAUDE_MD", claude_md),
+            ):
+                exit_code = gen_rules.generate(check_mode=True)
+
+        # 4 != 74, so check should fail (baseline mismatch)
+        self.assertEqual(
+            exit_code, 1,
+            "check_mode must return 1 when live rule_id count != RULE_IDS_BASELINE",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: all area scopes have paths: frontmatter (slice #939)
+# ---------------------------------------------------------------------------
+
+class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
+    """All 4 AREA scope .claude/rules/*.md files must have paths: frontmatter."""
+
+    _AREA_SCOPES = ["hooks", "isolation", "docs", "slicing"]
+
+    def test_all_area_scope_files_exist(self):
+        """Each AREA scope file must exist in .claude/rules/."""
+        for scope in self._AREA_SCOPES:
+            rules_file = _REPO_ROOT / ".claude" / "rules" / f"{scope}.md"
+            self.assertTrue(
+                rules_file.exists(),
+                f".claude/rules/{scope}.md must exist (AREA scope; run gen_rules.py)",
+            )
+
+    def test_all_area_scope_files_have_paths_key(self):
+        """Each AREA scope file must contain a 'paths:' frontmatter key."""
+        for scope in self._AREA_SCOPES:
+            rules_file = _REPO_ROOT / ".claude" / "rules" / f"{scope}.md"
+            if not rules_file.exists():
+                self.skipTest(f".claude/rules/{scope}.md not found")
+            content = rules_file.read_text(encoding="utf-8")
+            self.assertIn(
+                "paths:",
+                content,
+                f".claude/rules/{scope}.md must contain paths: frontmatter key",
+            )
+
+    def test_isolation_scope_paths_value(self):
+        """isolation scope paths: must reference worktrees and worktree-guard.sh."""
+        rules_file = _REPO_ROOT / ".claude" / "rules" / "isolation.md"
+        if not rules_file.exists():
+            self.skipTest(".claude/rules/isolation.md not found")
+        content = rules_file.read_text(encoding="utf-8")
+        self.assertIn("worktree", content.lower(), "isolation paths: must reference worktree")
+
+    def test_docs_scope_paths_value(self):
+        """docs scope paths: must reference decisions/ and *.md."""
+        rules_file = _REPO_ROOT / ".claude" / "rules" / "docs.md"
+        if not rules_file.exists():
+            self.skipTest(".claude/rules/docs.md not found")
+        content = rules_file.read_text(encoding="utf-8")
+        self.assertIn("decisions", content, "docs paths: must reference decisions/")
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: all global scopes in CLAUDE.md (slice #939)
+# ---------------------------------------------------------------------------
+
+class TestAllGlobalScopesInClaudeMd(unittest.TestCase):
+    """All 8 GLOBAL scope generated-region markers must be present in CLAUDE.md."""
+
+    _GLOBAL_SCOPES = [
+        "pipeline", "capture", "commits", "critics",
+        "verification", "regression", "output-contracts", "glossary",
+    ]
+
+    def _claude_md_content(self) -> str:
+        claude_md = _REPO_ROOT / "CLAUDE.md"
+        self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
+        return claude_md.read_text(encoding="utf-8")
+
+    def test_all_global_scope_begin_markers_present(self):
+        """CLAUDE.md must contain BEGIN GENERATED:rules:<scope> for each global scope."""
+        content = self._claude_md_content()
+        for scope in self._GLOBAL_SCOPES:
+            marker = f"BEGIN GENERATED:rules:{scope}"
+            self.assertIn(
+                marker,
+                content,
+                f"CLAUDE.md must contain generated-region begin marker for scope '{scope}'",
+            )
+
+    def test_all_global_scope_end_markers_present(self):
+        """CLAUDE.md must contain END GENERATED:rules:<scope> for each global scope."""
+        content = self._claude_md_content()
+        for scope in self._GLOBAL_SCOPES:
+            marker = f"END GENERATED:rules:{scope}"
+            self.assertIn(
+                marker,
+                content,
+                f"CLAUDE.md must contain generated-region end marker for scope '{scope}'",
+            )
+
+    def test_global_scope_rule_ids_in_claude_md(self):
+        """At least one rule_id from each global scope must appear in CLAUDE.md."""
+        content = self._claude_md_content()
+        scope_sample_rule_ids = {
+            "pipeline":       "PIP-001",
+            "capture":        "CAP-001",
+            "commits":        "COM-001",
+            "critics":        "CRI-001",
+            "verification":   "VER-001",
+            "regression":     "REG-001",
+            "output-contracts": "OUT-001",
+            "glossary":       "GLO-001",
+        }
+        for scope, sample_id in scope_sample_rule_ids.items():
+            self.assertIn(
+                sample_id,
+                content,
+                f"Sample rule_id {sample_id} from global scope '{scope}' must appear in CLAUDE.md",
+            )
 
 
 if __name__ == "__main__":

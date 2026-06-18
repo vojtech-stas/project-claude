@@ -109,6 +109,15 @@ SCOPE_PATHS: dict[str, str] = {
     "slicing":   ".claude/agents/slicer*.md, .claude/skills/*/SKILL.md",
 }
 
+# Rule-ID conservation baseline (PRD #937 slice #939 — §2 criterion 7).
+# This is the TOTAL number of rule_ids across all active ADR scopes as of the
+# scope-migration commit (slice #939, 2026-06-18).  --check verifies that the
+# live count equals this value; a mismatch means a rule was silently added or
+# removed without updating this constant.
+# Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
+#            ISO(6) + OUT(5) + PIP(13) + REG(3) + SLI(5) + VER(8) = 74
+RULE_IDS_BASELINE: int = 74
+
 # CLAUDE.md generation-region markers (ADR-0073 D1 — generated-region path)
 CLAUDE_MD_BEGIN_MARKER = "<!-- BEGIN GENERATED:rules:{scope} -->"
 CLAUDE_MD_END_MARKER   = "<!-- END GENERATED:rules:{scope} -->"
@@ -948,6 +957,22 @@ def generate(check_mode: bool = False) -> int:
                 generated_files.append(str(rel))
 
     if check_mode:
+        # Conservation check: live count must equal the migration baseline (ADR-0073 D5).
+        # If it differs, either a new ADR was added (update RULE_IDS_BASELINE) or a rule
+        # was silently removed — either way the mismatch is surfaced here.
+        if total_rule_ids != RULE_IDS_BASELINE:
+            print(
+                f"CONSERVATION FAIL: rule_id count {total_rule_ids} != baseline "
+                f"{RULE_IDS_BASELINE} — update RULE_IDS_BASELINE in gen_rules.py "
+                f"after confirming no rules were lost (ADR-0073 D5)",
+                file=sys.stderr,
+            )
+            any_dirty = True
+        else:
+            print(
+                f"CONSERVATION OK: rule_ids total {total_rule_ids} == "
+                f"baseline {RULE_IDS_BASELINE}"
+            )
         if not any_dirty:
             print(f"gen_rules.py: all outputs clean (rule_ids total: {total_rule_ids})")
         return 1 if any_dirty else 0

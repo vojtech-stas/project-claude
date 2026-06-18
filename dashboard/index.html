@@ -1354,33 +1354,21 @@
       is backed by evidence.
     </p>
   </div>
-  <!-- audit-meta: check list + detail panel side-by-side (slice #629) -->
+  <!-- shared detail panel: one panel for all 8 groups (slice #966 / PRD #957) -->
+  <div class="health-detail-panel" id="shared-detail-panel">
+    <button class="health-detail-close" onclick="closeSharedDetail()" title="Close">&times;</button>
+    <div class="health-detail-title" id="shared-detail-title">Check detail</div>
+    <div id="shared-detail-body"></div>
+  </div>
+  <!-- audit-meta: check list (slice #629); rows clickable via shared panel (slice #966) -->
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">audit-meta (DOCS-1..DOCS-10)</div>
-    <div class="health-layout">
-      <div class="health-checks-col">
-        <div id="docs-grid"><div class="loading">Loading...</div></div>
-      </div>
-      <div class="health-detail-panel" id="docs-detail-panel">
-        <button class="health-detail-close" onclick="closeHealthDetail('docs')" title="Close">&times;</button>
-        <div class="health-detail-title" id="docs-detail-title">Check detail</div>
-        <div id="docs-detail-body"></div>
-      </div>
-    </div>
+    <div id="docs-grid"><div class="loading">Loading...</div></div>
   </div>
-  <!-- audit-subagents: check list + detail panel side-by-side (slice #629) -->
+  <!-- audit-subagents: check list (slice #629); rows clickable via shared panel (slice #966) -->
   <div class="card" style="margin-bottom:16px;">
     <div class="card-title">audit-subagents (AS-*)</div>
-    <div class="health-layout">
-      <div class="health-checks-col">
-        <div id="as-grid"><div class="loading">Loading...</div></div>
-      </div>
-      <div class="health-detail-panel" id="as-detail-panel">
-        <button class="health-detail-close" onclick="closeHealthDetail('as')" title="Close">&times;</button>
-        <div class="health-detail-title" id="as-detail-title">Check detail</div>
-        <div id="as-detail-body"></div>
-      </div>
-    </div>
+    <div id="as-grid"><div class="loading">Loading...</div></div>
   </div>
   <!-- substrate-meta: capture-SLO + hook-integrity + hook-liveness + isolation-group + rule-coverage (slice #767/#768/#849) -->
   <div class="card" style="margin-bottom:16px;">
@@ -2292,10 +2280,12 @@ function sanitizeMdHtml(html) {
 }
 
 // --- Health (slice #629: clickable checks + detail panel) ---
+// Slice #966 (PRD #957): unified _healthCheckStore + shared panel for all 8 groups.
 
-// Store for health check data, keyed by check ID, for detail panel lookup.
-let docsCheckStore = {};   // check_id → check object (DOCS-*)
-let asCheckStore = {};     // "stem:check_id" → check object (AS-*)
+// Unified store for all health check objects (all 8 groups), keyed by display key.
+// DOCS-* and substrate/verification/registry/hygiene/promotion checks: key = check id.
+// AS-* per-agent checks: key = "stem:check_id".
+let _healthCheckStore = {};
 
 /**
  * Emit a group-header <tr> when the check's group label changes (slice #931).
@@ -2313,6 +2303,7 @@ function maybeGroupHeader(htmlRef, groupLabel, lastGroup, colSpan) {
 
 async function loadHealth() {
   try {
+    _healthCheckStore = {};  // reset unified store on each load (slice #966)
     const [healthResp, promoResp] = await Promise.all([
       fetch('/api/health'),
       fetch('/api/promotion'),
@@ -2338,6 +2329,7 @@ async function loadHealth() {
  * Render substrate health check grid (CAPTURE-SLO, HOOK-INTEGRITY, ISOLATION-GROUP, RULE-COVERAGE).
  * Slice #767/#768: simple table rows, red on FAIL, amber on WARN.
  * Slice #931: group headers injected via check.group field.
+ * Slice #966: rows are now clickable → shared detail panel.
  */
 function renderSubstrateGrid(substrateMeta) {
   const grid = document.getElementById('substrate-grid');
@@ -2354,10 +2346,11 @@ function renderSubstrateGrid(substrateMeta) {
   let lastGroup = null;
   for (const c of checks) {
     lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
+    _healthCheckStore[c.id] = c;
     const detSnippet = c.detail && c.detail.length > 0
       ? escHtml(c.detail.slice(0, 120)) + (c.detail.length > 120 ? '…' : '')
       : '';
-    h.v += `<tr>`;
+    h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
@@ -2419,6 +2412,7 @@ function renderCriticHealth(substrateMeta) {
  * Render verification-integrity card (slice #783 / ADR-0060/0061/0062/0063).
  * Shows BLIND-RATE, PROOF-PRESENCE, MERGE-INTEGRITY, CAPTURE-SHAPE, GREEN-MAIN rows.
  * Slice #931: group headers injected via check.group field.
+ * Slice #966: rows are now clickable → shared detail panel.
  */
 function renderVerificationIntegrity(vi) {
   const grid = document.getElementById('verification-integrity-grid');
@@ -2431,11 +2425,12 @@ function renderVerificationIntegrity(vi) {
   let lastGroup = null;
   for (const c of vi.checks) {
     lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
+    _healthCheckStore[c.id] = c;
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    h.v += `<tr>`;
+    h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
@@ -2448,6 +2443,7 @@ function renderVerificationIntegrity(vi) {
  * Render registry-integrity card (slice #795 / ADR-0064 D3: PARITY row).
  * Shows PARITY check verdict + detail (registry IDs == skill-declared == CI-consumed).
  * Slice #931: group headers injected via check.group field.
+ * Slice #966: rows are now clickable → shared detail panel.
  */
 function renderRegistryIntegrity(ri) {
   const grid = document.getElementById('registry-integrity-grid');
@@ -2460,11 +2456,12 @@ function renderRegistryIntegrity(ri) {
   let lastGroup = null;
   for (const c of ri.checks) {
     lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
+    _healthCheckStore[c.id] = c;
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    h.v += `<tr>`;
+    h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
@@ -2478,6 +2475,7 @@ function renderRegistryIntegrity(ri) {
  * Shows UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS,
  * DEAD-ROUTES, SESSION-INJECTION, R-SENSITIVE-DETECTOR rows.
  * Slice #931: group headers injected via check.group field.
+ * Slice #966: rows are now clickable → shared detail panel.
  */
 function renderHygieneIntegrity(hi) {
   const grid = document.getElementById('hygiene-integrity-grid');
@@ -2490,11 +2488,12 @@ function renderHygieneIntegrity(hi) {
   let lastGroup = null;
   for (const c of hi.checks) {
     lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
+    _healthCheckStore[c.id] = c;
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    h.v += `<tr>`;
+    h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
@@ -2507,6 +2506,7 @@ function renderHygieneIntegrity(hi) {
  * Render promotion-integrity card (slice #843 / ADR-0070 D1/D3).
  * Shows BRANCH-TOPOLOGY, PROMOTION-LAG, RELEASE-READY, R-SENSITIVE-DETECTOR, META-TRIPWIRE.
  * Slice #931: group headers injected via check.group field.
+ * Slice #966: rows are now clickable → shared detail panel.
  */
 function renderPromotionIntegrity(pi) {
   const grid = document.getElementById('promotion-integrity-grid');
@@ -2519,11 +2519,12 @@ function renderPromotionIntegrity(pi) {
   let lastGroup = null;
   for (const c of pi.checks) {
     lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
+    _healthCheckStore[c.id] = c;
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    h.v += `<tr>`;
+    h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
@@ -2583,20 +2584,19 @@ function renderPromotionPanel(d) {
 }
 
 /**
- * Render DOCS-* check grid (audit-meta). Rows are clickable → opens docs detail panel.
- * Slice #629: adds purpose + command from server-parsed SKILL.md rationale.
+ * Render DOCS-* check grid (audit-meta). Rows are clickable → shared detail panel.
+ * Slice #629: clickable rows; slice #966: uses shared panel + docstring descriptions.
  */
 function renderDocsGrid(auditMeta) {
   const grid = document.getElementById('docs-grid');
   if (!auditMeta || !auditMeta.checks) { grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return; }
-  docsCheckStore = {};
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
   for (const c of auditMeta.checks) {
-    docsCheckStore[c.id] = c;
+    _healthCheckStore[c.id] = c;
     const detSnippet = c.detail && c.detail.length > 0
       ? escHtml(c.detail.slice(0, 60)) + (c.detail.length > 60 ? '…' : '')
       : '';
-    html += `<tr class="check-row-clickable" data-checkid="${escHtml(c.id)}" onclick="openHealthCheckDetail('docs', '${escHtml(c.id)}', this)">`;
+    html += `<tr class="check-row-clickable" data-checkid="${escHtml(c.id)}" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
     html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
     html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     html += `</tr>`;
@@ -2606,15 +2606,14 @@ function renderDocsGrid(auditMeta) {
 }
 
 /**
- * Render AS-* check grid (audit-subagents). Per-check rows are clickable → opens as detail panel.
- * Slice #629: expands agent rows to show individual checks with purpose + command.
+ * Render AS-* check grid (audit-subagents). Per-check rows are clickable → shared detail panel.
+ * Slice #629: expands agent rows; slice #966: uses shared panel + docstring descriptions.
  */
 function renderAsGrid(auditSubagents) {
   const grid = document.getElementById('as-grid');
   if (!auditSubagents || Object.keys(auditSubagents).length === 0) {
     grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return;
   }
-  asCheckStore = {};
   let html = '';
   for (const [stem, info] of Object.entries(auditSubagents)) {
     const checks = info.checks || [];
@@ -2629,11 +2628,11 @@ function renderAsGrid(auditSubagents) {
     html += `<table style="margin-top:4px;"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>`;
     for (const c of checks) {
       const storeKey = stem + ':' + c.id;
-      asCheckStore[storeKey] = c;
+      _healthCheckStore[storeKey] = c;
       const detSnippet = c.detail && c.detail.length > 0
         ? escHtml(c.detail.slice(0, 50)) + (c.detail.length > 50 ? '…' : '')
         : '';
-      html += `<tr class="check-row-clickable" data-checkkey="${escHtml(storeKey)}" onclick="openHealthCheckDetail('as', '${escHtml(storeKey)}', this)">`;
+      html += `<tr class="check-row-clickable" data-checkkey="${escHtml(storeKey)}" onclick="openSharedDetail('${escHtml(storeKey)}', this)">`;
       html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
       html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
       html += `</tr>`;
@@ -2644,47 +2643,35 @@ function renderAsGrid(auditSubagents) {
 }
 
 /**
- * Open the health check detail panel for the clicked row (slice #629).
- * panel: 'docs' | 'as'; key: check ID (docs) or "stem:check_id" (as).
- * Shows: purpose (from SKILL.md rationale) + command (mechanic) + live verdict/detail.
+ * Open the shared health check detail panel for the clicked row (slice #966 / PRD #957).
+ * Replaces the former per-group openHealthCheckDetail (slice #629).
+ * key: check ID (flat groups) or "stem:check_id" (AS-* group).
+ * Shows: description (from check fn docstring via server) + live verdict/detail.
  */
-function openHealthCheckDetail(panel, key, clickedRow) {
-  const store = panel === 'docs' ? docsCheckStore : asCheckStore;
-  const c = store[key];
+function openSharedDetail(key, clickedRow) {
+  const c = _healthCheckStore[key];
   if (!c) return;
 
-  // Active-row highlight: clear all within the same panel's table, set new one.
-  const gridId = panel === 'docs' ? 'docs-grid' : 'as-grid';
-  document.querySelectorAll('#' + gridId + ' .check-row-clickable').forEach(r => r.classList.remove('active'));
+  // Active-row highlight: clear ALL clickable rows across all groups, set new one.
+  document.querySelectorAll('.check-row-clickable').forEach(r => r.classList.remove('active'));
   if (clickedRow) clickedRow.classList.add('active');
 
-  const panelEl = document.getElementById(panel + '-detail-panel');
-  const titleEl = document.getElementById(panel + '-detail-title');
-  const bodyEl  = document.getElementById(panel + '-detail-body');
+  const panelEl = document.getElementById('shared-detail-panel');
+  const titleEl = document.getElementById('shared-detail-title');
+  const bodyEl  = document.getElementById('shared-detail-body');
 
-  // Title: show check ID (and agent stem for AS checks)
-  const label = panel === 'as' ? key.replace(':', ' › ') : key;
+  // Title: "stem › check_id" for AS checks, plain check id otherwise.
+  const label = key.includes(':') ? key.replace(':', ' › ') : key;
   titleEl.textContent = label;
 
-  const purpose = (c.purpose && c.purpose.trim())
-    ? c.purpose
-    : 'rationale unavailable — see SKILL.md';
-  const command = c.command || '';
-  const detail  = c.detail  || '';
+  const description = (c.description && c.description.trim()) ? c.description : c.id;
+  const detail = c.detail || '';
 
   let html = '';
-
   html += `<div class="health-detail-section">`;
-  html += `<div class="health-detail-label">Purpose</div>`;
-  html += `<div class="health-detail-purpose">${escHtml(purpose)}</div>`;
+  html += `<div class="health-detail-label">Description</div>`;
+  html += `<div class="health-detail-purpose">${escHtml(description)}</div>`;
   html += `</div>`;
-
-  if (command) {
-    html += `<div class="health-detail-section">`;
-    html += `<div class="health-detail-label">Mechanic / Command</div>`;
-    html += `<div class="health-detail-command">${escHtml(command)}</div>`;
-    html += `</div>`;
-  }
 
   html += `<div class="health-detail-section">`;
   html += `<div class="health-detail-label">Verdict</div>`;
@@ -2695,17 +2682,16 @@ function openHealthCheckDetail(panel, key, clickedRow) {
 
   bodyEl.innerHTML = html;
   panelEl.classList.add('open');
+  panelEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 /**
- * Close the health check detail panel (slice #629).
- * panel: 'docs' | 'as'
+ * Close the shared health check detail panel (slice #966 / PRD #957).
  */
-function closeHealthDetail(panel) {
-  const panelEl = document.getElementById(panel + '-detail-panel');
+function closeSharedDetail() {
+  const panelEl = document.getElementById('shared-detail-panel');
   if (panelEl) panelEl.classList.remove('open');
-  const gridId = panel === 'docs' ? 'docs-grid' : 'as-grid';
-  document.querySelectorAll('#' + gridId + ' .check-row-clickable').forEach(r => r.classList.remove('active'));
+  document.querySelectorAll('.check-row-clickable').forEach(r => r.classList.remove('active'));
 }
 
 function renderCascade(cf) {

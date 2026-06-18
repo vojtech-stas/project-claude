@@ -470,6 +470,49 @@
     pointer-events: none;
   }
   tr.health-group-header:first-child td { border-top: none; }
+  /* Purpose-group heading rows (slice #968 / PRD #957 §2 #5) */
+  .purpose-group-section { margin-bottom: 20px; }
+  .purpose-group-heading {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    padding: 6px 0 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 4px;
+  }
+  /* Composite row (slice #968 §2 #6): hook-trio "Telemetry live" */
+  .composite-row td:first-child { font-weight: 600; }
+  .composite-sub-signals {
+    font-size: 9px;
+    color: var(--muted);
+    margin-top: 4px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .composite-sub-signal {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.04);
+  }
+  .composite-sub-signal:hover { background: rgba(255,255,255,0.08); }
+  /* What-to-do action line (slice #968 §2 #7) */
+  .health-what-to-do {
+    font-size: 10px;
+    color: var(--warn);
+    margin-top: 6px;
+    padding: 4px 6px;
+    background: rgba(210,153,34,0.08);
+    border-left: 2px solid var(--warn);
+    border-radius: 0 3px 3px 0;
+    line-height: 1.4;
+  }
   /* Clickable check rows */
   .check-row-clickable {
     cursor: pointer;
@@ -1356,11 +1399,16 @@
       is backed by evidence.
     </p>
   </div>
-  <!-- shared detail panel: one panel for all 8 groups (slice #966 / PRD #957) -->
+  <!-- shared detail panel: one panel for all groups (slice #966 / PRD #957) -->
   <div class="health-detail-panel" id="shared-detail-panel">
     <button class="health-detail-close" onclick="closeSharedDetail()" title="Close">&times;</button>
     <div class="health-detail-title" id="shared-detail-title">Check detail</div>
     <div id="shared-detail-body"></div>
+  </div>
+  <!-- purpose-groups card (slice #968 / PRD #957 §2 #5): ≥5 purpose headings + hook composite §2 #6 -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-title">Checks by purpose group (Docs in sync · Rules enforced · Telemetry live · Verification integrity · Isolation/hygiene · Release gates)</div>
+    <div id="purpose-groups-grid"><div class="loading">Loading...</div></div>
   </div>
   <!-- audit-meta: check list (slice #629); rows clickable via shared panel (slice #966) -->
   <div class="card" style="margin-bottom:16px;">
@@ -2322,6 +2370,7 @@ async function loadHealth() {
     ]);
     const data = await healthResp.json();
     const promoData = await promoResp.json();
+    renderPurposeGroups(data.purposeGroups, data.purposeGroupOrder);  // slice #968
     renderDocsGrid(data.auditMeta);
     renderAsGrid(data.auditSubagents);
     renderSubstrateGrid(data.substrateMeta);
@@ -2335,6 +2384,76 @@ async function loadHealth() {
   } catch(e) {
     document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
   }
+}
+
+/**
+ * Render purpose-groups card (slice #968 / PRD #957 §2 #5 + §2 #6).
+ * Shows ≥5 purpose-named group headings; Telemetry live group has the
+ * hook-trio composite row (not 3 top-level rows) per §2 #6.
+ * Each actionable check row shows a "what to do" hint in the detail panel.
+ */
+function renderPurposeGroups(purposeGroups, purposeGroupOrder) {
+  const grid = document.getElementById('purpose-groups-grid');
+  if (!grid) return;
+  if (!purposeGroups || !purposeGroupOrder) {
+    grid.innerHTML = '<span style="color:var(--muted)">No purpose-group data</span>';
+    return;
+  }
+  let html = '';
+  for (const groupName of purposeGroupOrder) {
+    const checks = purposeGroups[groupName] || [];
+    html += `<div class="purpose-group-section">`;
+    html += `<div class="purpose-group-heading">${escHtml(groupName)}</div>`;
+    html += `<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>`;
+    if (!checks.length) {
+      html += `<tr><td colspan="3" style="color:var(--muted);font-size:10px;">No checks in this group</td></tr>`;
+    }
+    for (const c of checks) {
+      if (c.is_composite) {
+        // Hook-trio composite row (§2 #6): one row + sub-signal drill-down
+        _healthCheckStore[c.id] = c;
+        const detSnippet = c.detail ? escHtml(c.detail.slice(0, 100)) + (c.detail.length > 100 ? '…' : '') : '';
+        html += `<tr class="check-row-clickable composite-row" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
+        html += `<td>${escHtml(c.id)}<div class="composite-sub-signals">`;
+        for (const ss of (c.sub_signals || [])) {
+          html += `<span class="composite-sub-signal" onclick="event.stopPropagation();openSubSignal('${escHtml(ss.id)}')">`;
+          html += `${badgeHtml(ss.result, ss.data_state)} ${escHtml(ss.id)}`;
+          html += `</span>`;
+        }
+        html += `</div></td>`;
+        html += `<td>${badgeHtml(c.result, c.data_state)}</td>`;
+        html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+        html += `</tr>`;
+      } else {
+        _healthCheckStore[c.id] = c;
+        const detSnippet = c.detail ? escHtml(c.detail.slice(0, 100)) + (c.detail.length > 100 ? '…' : '') : '';
+        html += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
+        html += `<td>${escHtml(c.id)}</td>`;
+        html += `<td>${badgeHtml(c.result, c.data_state)}</td>`;
+        html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+        html += `</tr>`;
+      }
+    }
+    html += `</table></div>`;
+  }
+  grid.innerHTML = html || '<span style="color:var(--muted)">No data</span>';
+}
+
+/**
+ * Open detail for a sub-signal of the hook-trio composite.
+ * Looks up the sub-signal from the composite's sub_signals, populates
+ * the store temporarily, then opens the shared panel.
+ */
+function openSubSignal(subId) {
+  // Sub-signals are stored in the composite; look them up there
+  const composite = _healthCheckStore['TELEMETRY-LIVE'];
+  if (!composite) return;
+  const ss = (composite.sub_signals || []).find(s => s.id === subId);
+  if (!ss) return;
+  // Merge with any pre-existing full check data (e.g. from substrate panel)
+  const existing = _healthCheckStore[subId] || {};
+  _healthCheckStore[subId] = Object.assign({}, existing, ss);
+  openSharedDetail(subId, null);
 }
 
 /**
@@ -2658,7 +2777,7 @@ function renderAsGrid(auditSubagents) {
  * Open the shared health check detail panel for the clicked row (slice #966 / PRD #957).
  * Replaces the former per-group openHealthCheckDetail (slice #629).
  * key: check ID (flat groups) or "stem:check_id" (AS-* group).
- * Shows: description (from check fn docstring via server) + live verdict/detail.
+ * Shows: description + verdict + what_to_do action line (slice #968 §2 #7).
  */
 function openSharedDetail(key, clickedRow) {
   const c = _healthCheckStore[key];
@@ -2678,6 +2797,7 @@ function openSharedDetail(key, clickedRow) {
 
   const description = (c.description && c.description.trim()) ? c.description : c.id;
   const detail = c.detail || '';
+  const whatToDo = c.what_to_do || '';
 
   let html = '';
   html += `<div class="health-detail-section">`;
@@ -2691,6 +2811,30 @@ function openSharedDetail(key, clickedRow) {
   if (detail) html += ` <span style="color:var(--muted);font-size:10px;margin-left:6px;">${escHtml(detail)}</span>`;
   html += `</div>`;
   html += `</div>`;
+
+  // what_to_do action line (slice #968 §2 #7): only for actionable checks
+  if (whatToDo && c.data_state === 'actionable') {
+    html += `<div class="health-detail-section">`;
+    html += `<div class="health-detail-label">What to do</div>`;
+    html += `<div class="health-what-to-do">${escHtml(whatToDo)}</div>`;
+    html += `</div>`;
+  }
+
+  // Sub-signals drill-down for composite rows (slice #968 §2 #6)
+  if (c.is_composite && c.sub_signals && c.sub_signals.length) {
+    html += `<div class="health-detail-section">`;
+    html += `<div class="health-detail-label">Sub-signals</div>`;
+    html += `<table style="margin-top:4px;"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>`;
+    for (const ss of c.sub_signals) {
+      const ssDet = ss.detail ? escHtml(ss.detail.slice(0, 80)) + (ss.detail.length > 80 ? '…' : '') : '';
+      html += `<tr>`;
+      html += `<td style="font-size:10px;">${escHtml(ss.id)}</td>`;
+      html += `<td>${badgeHtml(ss.result, ss.data_state)}</td>`;
+      html += `<td style="color:var(--muted);font-size:10px;">${ssDet}</td>`;
+      html += `</tr>`;
+    }
+    html += `</table></div>`;
+  }
 
   bodyEl.innerHTML = html;
   panelEl.classList.add('open');

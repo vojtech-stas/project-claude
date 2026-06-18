@@ -1109,6 +1109,253 @@ def _enrich_group(checks: list) -> list:
     return checks
 
 
+# ---------------------------------------------------------------------------
+# Purpose-group taxonomy (slice #968 / PRD #957 §2 #5)
+#
+# PURPOSE_GROUP_MAP: check ID → human-readable purpose heading used by the
+# purpose-grouped Health tab view (≥5 headings per §2 #5 AC).
+#
+# Groups: "Docs in sync" | "Rules enforced" | "Telemetry live" |
+#         "Verification integrity" | "Isolation/hygiene" | "Release gates"
+#
+# Registered-but-UI-invisible checks (explicitly excluded from this map):
+#   BRANCH-TOPOLOGY    — registered but dormant (ADR-0071 D4); no surface value
+#   FRONTMATTER-COVERAGE — registered but not returned by _build_health_data
+#   META-TRIPWIRE      — sub-signal wired into RELEASE-READY gate; not surfaced
+#   RELEASE-READY      — gate-only check; only surfaces via promotion panel
+# These 4 remain accessible via `python dashboard/health.py --check <ID>`.
+#
+# AS-AUDIT and CRITIC-HEALTH have bespoke rendering; they are NOT in this map.
+# ---------------------------------------------------------------------------
+PURPOSE_GROUP_MAP: dict = {
+    # --- Docs in sync ---
+    # ADR index, CLAUDE.md refs, glossary, citation health
+    "DOCS-1":  "Docs in sync",
+    "DOCS-2":  "Docs in sync",
+    "DOCS-3":  "Docs in sync",
+    "DOCS-4":  "Docs in sync",
+    "DOCS-5":  "Docs in sync",
+    "DOCS-6":  "Docs in sync",
+    "DOCS-7":  "Docs in sync",
+    "DOCS-8":  "Docs in sync",
+    "DOCS-9":  "Docs in sync",
+    "DOCS-10": "Docs in sync",
+    "DOCS-11": "Docs in sync",
+    "SILENT-DRIFT": "Docs in sync",
+    # --- Rules enforced ---
+    # Rule coverage, registry parity, spec coverage, eval health
+    "RULE-COVERAGE":      "Rules enforced",
+    "PARITY":             "Rules enforced",
+    "SPEC-COVERAGE":      "Rules enforced",
+    "BLIND-RATE":         "Rules enforced",
+    "TEST-ORDERING":      "Rules enforced",
+    "QUARANTINE-SLA":     "Rules enforced",
+    "EVAL-REVIEWER":      "Rules enforced",
+    "EVAL-PRD-CRITIC":    "Rules enforced",
+    "EVAL-SLICER-CRITIC": "Rules enforced",
+    # --- Telemetry live ---
+    # The three hook checks render as ONE composite "Telemetry live" row (§2 #6).
+    # They are listed here so _attach_purpose_group marks them correctly, even
+    # though the composite builder replaces them in the purpose-groups payload.
+    "CAPTURE-SLO":    "Telemetry live",
+    "HOOK-INTEGRITY": "Telemetry live",
+    "HOOK-LIVENESS":  "Telemetry live",
+    # --- Verification integrity ---
+    # Proof-presence, merge-integrity, capture-shape, green-main
+    "PROOF-PRESENCE":  "Verification integrity",
+    "PROOF-INTEGRITY": "Verification integrity",
+    "MERGE-INTEGRITY": "Verification integrity",
+    "CAPTURE-SHAPE":   "Verification integrity",
+    "GREEN-MAIN":      "Verification integrity",
+    "RESIDUAL-RATIO":  "Verification integrity",
+    # --- Isolation/hygiene ---
+    # Worktree orphans, log rotation, untracked files, session injection
+    "ISOLATION-GROUP":   "Isolation/hygiene",
+    "UNTRACKED-SIZE":    "Isolation/hygiene",
+    "LOG-ROTATION":      "Isolation/hygiene",
+    "REQUIRED-LABELS":   "Isolation/hygiene",
+    "DEAD-ROUTES":       "Isolation/hygiene",
+    "SESSION-INJECTION": "Isolation/hygiene",
+    "STALE-BRANCHES":    "Isolation/hygiene",
+    "TESTS-COLLECTED":   "Isolation/hygiene",
+    # --- Release gates ---
+    # Promotion lag, R-SENSITIVE-DETECTOR advisory
+    "PROMOTION-LAG":        "Release gates",
+    "R-SENSITIVE-DETECTOR": "Release gates",
+    # NOTE: BRANCH-TOPOLOGY, FRONTMATTER-COVERAGE, META-TRIPWIRE, RELEASE-READY
+    # are intentionally NOT in this map (registered-but-UI-invisible; see above).
+}
+
+# The ordered list of purpose-group headings for consistent rendering order.
+PURPOSE_GROUP_ORDER: list = [
+    "Docs in sync",
+    "Rules enforced",
+    "Telemetry live",
+    "Verification integrity",
+    "Isolation/hygiene",
+    "Release gates",
+]
+
+
+def _attach_purpose_group(checks: list) -> list:
+    """Add 'purpose_group' field to each check dict using PURPOSE_GROUP_MAP.
+
+    Mutates each dict in-place and returns the list for convenience.
+    Checks not in the map get purpose_group = None (excluded from grouped view).
+    Called by _build_health_data (slice #968 / PRD #957 §2 #5).
+    """
+    for c in checks:
+        check_id = c.get("id", "")
+        c["purpose_group"] = PURPOSE_GROUP_MAP.get(check_id)
+    return checks
+
+
+# ---------------------------------------------------------------------------
+# what_to_do extractor (slice #968 / PRD #957 §2 #7)
+# ---------------------------------------------------------------------------
+
+def _what_to_do_from_docstring(fn) -> str:
+    """Extract a 'what to do' action string from fn's docstring (slice #968).
+
+    Strategy (in order):
+    1. Look for a line starting with "WARN:" or "FAIL:" (semantics block).
+    2. Look for a second non-blank paragraph.
+    3. Return a short honest default: "Review the detail field above."
+
+    Returns a string ≤ 120 chars.
+    """
+    if fn is None:
+        return "Review the detail field above."
+    doc = fn.__doc__
+    if not doc:
+        return "Review the detail field above."
+    lines = doc.expandtabs().splitlines()
+
+    # Strategy 1: find a "WARN:" or "FAIL:" line
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^(WARN|FAIL)\s*:', stripped, re.IGNORECASE):
+            action = re.sub(r'^(WARN|FAIL)\s*:\s*', '', stripped, flags=re.IGNORECASE).strip()
+            if action:
+                return action[:120]
+
+    # Strategy 2: extract the second non-blank paragraph
+    paragraphs: list = []
+    current: list = []
+    for line in lines:
+        if not line.strip():
+            if current:
+                paragraphs.append(" ".join(ln.strip() for ln in current if ln.strip()))
+                current = []
+        else:
+            current.append(line)
+    if current:
+        paragraphs.append(" ".join(ln.strip() for ln in current if ln.strip()))
+
+    if len(paragraphs) >= 2:
+        second = paragraphs[1].strip()
+        if second:
+            second = re.sub(r'^(WARN|FAIL)\s*:\s*', '', second, flags=re.IGNORECASE).strip()
+            return second[:120]
+
+    return "Review the detail field above."
+
+
+def _attach_what_to_do(checks: list) -> list:
+    """Add 'what_to_do' field to ACTIONABLE check dicts (slice #968 / PRD #957 §2 #7).
+
+    Only populated for checks with data_state == 'actionable' (genuine breaches).
+    Pass/no-data checks get what_to_do = "" (empty — no action needed).
+    Sources from CHECK_REGISTRY function docstring via _what_to_do_from_docstring.
+    Mutates each dict in-place and returns the list for convenience.
+    """
+    for c in checks:
+        if c.get("data_state") == "actionable":
+            check_id = c.get("id", "")
+            fn = CHECK_REGISTRY.get(check_id) if check_id else None
+            c["what_to_do"] = _what_to_do_from_docstring(fn)
+        else:
+            c["what_to_do"] = ""
+    return checks
+
+
+# ---------------------------------------------------------------------------
+# Hook-trio composite builder (slice #968 / PRD #957 §2 #6)
+#
+# CAPTURE-SLO + HOOK-INTEGRITY + HOOK-LIVENESS render as ONE "Telemetry live"
+# composite row on the Health tab.  Rollup = worst actionable sub-signal;
+# a no-data sub-signal does NOT downgrade the composite.
+# ---------------------------------------------------------------------------
+
+def _build_hook_trio_composite(
+    capture_slo: dict,
+    hook_integrity: dict,
+    hook_liveness: dict,
+) -> dict:
+    """Build hook-trio composite check dict (slice #968 / PRD #957 §2 #6).
+
+    Rollup = worst actionable sub-signal; no-data sub-signals do NOT downgrade.
+    Sub-signals stored under 'sub_signals' key for drill-down in the UI.
+    """
+    sub_signals = [capture_slo, hook_integrity, hook_liveness]
+
+    # Collect actionable sub-signal results (no-data excluded from rollup)
+    actionable_results = [
+        s["result"]
+        for s in sub_signals
+        if s.get("data_state") == "actionable"
+    ]
+
+    if "FAIL" in actionable_results:
+        rollup = "FAIL"
+    elif "WARN" in actionable_results:
+        rollup = "WARN"
+    elif actionable_results:
+        rollup = "PASS"
+    else:
+        # All sub-signals are no-data or pass
+        all_pass = all(s["result"] == "PASS" for s in sub_signals)
+        rollup = "PASS" if all_pass else "WARN"
+
+    actionable_ids = [s["id"] for s in sub_signals if s.get("data_state") == "actionable"]
+    nodata_ids = [s["id"] for s in sub_signals if s.get("data_state") == "no-data"]
+    detail_parts = []
+    if actionable_ids:
+        detail_parts.append(f"actionable: {', '.join(actionable_ids)}")
+    if nodata_ids:
+        detail_parts.append(f"no-data (excluded): {', '.join(nodata_ids)}")
+    detail = "; ".join(detail_parts) or "all sub-signals pass or no-data"
+
+    ds = "pass" if rollup == "PASS" else ("no-data" if not actionable_results else "actionable")
+    what_to_do_str = (
+        "Check sub-signals: CAPTURE-SLO (sessions with live events), "
+        "HOOK-INTEGRITY (attempt-vs-ok ratio), HOOK-LIVENESS (beacon lag). "
+        "See .claude/hooks/ and .claude/logs/hook-fires.jsonl."
+    ) if rollup != "PASS" else ""
+    return {
+        "id": "TELEMETRY-LIVE",
+        "result": rollup,
+        "data_state": ds,
+        "detail": detail,
+        "description": (
+            "Hook-trio composite: CAPTURE-SLO + HOOK-INTEGRITY + HOOK-LIVENESS. "
+            "Rollup = worst actionable sub-signal; no-data excluded. PRD #957 §2 #6."
+        ),
+        "purpose_group": "Telemetry live",
+        "what_to_do": what_to_do_str,
+        "is_composite": True,
+        "sub_signals": [
+            {
+                "id": s["id"],
+                "result": s["result"],
+                "data_state": s.get("data_state", ""),
+                "detail": s.get("detail", ""),
+            }
+            for s in sub_signals
+        ],
+    }
+
+
 def audit_subagents() -> dict:
     agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
     results = {}
@@ -4971,20 +5218,40 @@ def _build_health_data() -> dict:
     """Build the full /api/health payload synchronously.
 
     Called from the background thread; never from an HTTP handler.
+
+    Slice annotations:
+    - _enrich_group: 'group' field (slice #931 / PRD #927 §2 #10)
+    - _attach_descriptions: 'description' field (slice #966 / PRD #957)
+    - _attach_data_state: 'data_state' field (slice #967 / PRD #957 §2 #4)
+    - _attach_purpose_group: 'purpose_group' field (slice #968 / PRD #957 §2 #5)
+    - _attach_what_to_do: 'what_to_do' field for actionable checks (slice #968 §2 #7)
+    - _build_hook_trio_composite: hook-trio composite row (slice #968 §2 #6)
     """
-    # _enrich_group adds the 'group' field used by the Health tab section headers
-    # (slice #931 / PRD #927 §2 #10) — presentation only, no check-logic change.
-    # _attach_descriptions adds the 'description' field to non-DOCS/AS groups
-    # (slice #966 / PRD #957) — sourced from CHECK_REGISTRY function docstrings.
-    # _attach_data_state adds data_state ∈ {pass, actionable, no-data} to every
-    # check dict (slice #967 / PRD #957 §2 #4).
     audit = audit_meta()
     _enrich_group(audit["checks"])
     _attach_data_state(audit["checks"])
-    substrate_checks = _attach_data_state(_attach_descriptions(_enrich_group([
-        check_capture_slo(),
-        check_hook_integrity(),
-        check_hook_liveness(),
+    _attach_purpose_group(audit["checks"])
+    _attach_what_to_do(audit["checks"])
+
+    # Run the three hook checks individually (needed for composite + substrate)
+    slo_result   = check_capture_slo()
+    integ_result = check_hook_integrity()
+    live_result  = check_hook_liveness()
+    for r in [slo_result, integ_result, live_result]:
+        _attach_data_state([r])
+        _attach_descriptions([r])
+        _enrich_group([r])
+        _attach_purpose_group([r])
+        _attach_what_to_do([r])
+
+    def _enrich_all(checks):
+        return _attach_what_to_do(_attach_purpose_group(_attach_data_state(
+            _attach_descriptions(_enrich_group(checks)))))
+
+    substrate_checks = _enrich_all([
+        slo_result,
+        integ_result,
+        live_result,
         check_isolation_group(),
         check_rule_coverage(),
         check_spec_coverage(),
@@ -4996,8 +5263,8 @@ def _build_health_data() -> dict:
         check_eval_reviewer(),
         check_eval_prd_critic(),
         check_eval_slicer_critic(),
-    ])))
-    verification_checks = _attach_data_state(_attach_descriptions(_enrich_group([
+    ])
+    verification_checks = _enrich_all([
         check_blind_dispatch_rate(),
         check_residual_ratio(),
         check_proof_presence(),
@@ -5006,25 +5273,69 @@ def _build_health_data() -> dict:
         check_capture_shape(),
         check_green_main(),
         check_silent_drift(),
-    ])))
-    registry_checks = _attach_data_state(_attach_descriptions(_enrich_group([
+    ])
+    registry_checks = _enrich_all([
         check_parity(),
-    ])))
-    hygiene_checks = _attach_data_state(_attach_descriptions(_enrich_group([
+    ])
+    hygiene_checks = _enrich_all([
         check_untracked_size(),
         check_log_rotation(),
         check_stale_branches(),
         check_required_labels(),
         check_dead_routes(),
         check_session_injection(),
-    ])))
-    promotion_checks = _attach_data_state(_attach_descriptions(_enrich_group([
+    ])
+    promotion_checks = _enrich_all([
         check_branch_topology(),
         check_promotion_lag(),
         check_release_ready(),
         check_r_sensitive_detector(),
         check_meta_tripwire(),
-    ])))
+    ])
+
+    # Hook-trio composite (slice #968 §2 #6): one "Telemetry live" row
+    hook_trio_composite = _build_hook_trio_composite(slo_result, integ_result, live_result)
+
+    # Build the purpose-grouped payload: all checks by purpose_group, with the
+    # hook-trio appearing as a single composite in "Telemetry live" instead of 3 rows.
+    # The 4 registered-but-UI-invisible checks (BRANCH-TOPOLOGY, FRONTMATTER-COVERAGE,
+    # META-TRIPWIRE, RELEASE-READY) are excluded (purpose_group == None for them).
+    _all_flat_checks = (
+        list(audit["checks"])
+        + substrate_checks
+        + verification_checks
+        + registry_checks
+        + hygiene_checks
+        + promotion_checks
+    )
+    # Deduplicate by id (substrateMeta may have individual hook checks; keep first)
+    _seen_ids: set = set()
+    _deduped: list = []
+    for chk in _all_flat_checks:
+        cid = chk.get("id", "")
+        if cid not in _seen_ids:
+            _seen_ids.add(cid)
+            _deduped.append(chk)
+
+    # Build purpose_groups: replace the three hook checks with the composite
+    _hook_ids = {"CAPTURE-SLO", "HOOK-INTEGRITY", "HOOK-LIVENESS"}
+    purpose_groups: dict = {}
+    for group in PURPOSE_GROUP_ORDER:
+        purpose_groups[group] = []
+
+    hook_trio_inserted = False
+    for chk in _deduped:
+        pg = chk.get("purpose_group")
+        if pg is None:
+            continue  # excluded from purpose-group view
+        if chk.get("id") in _hook_ids:
+            if not hook_trio_inserted:
+                purpose_groups.setdefault("Telemetry live", []).append(hook_trio_composite)
+                hook_trio_inserted = True
+            # individual hook checks are NOT added — the composite replaces them
+            continue
+        purpose_groups.setdefault(pg, []).append(chk)
+
     return {
         "auditMeta": audit,
         "auditSubagents": audit_subagents(),
@@ -5034,6 +5345,12 @@ def _build_health_data() -> dict:
         "registryIntegrity": {"checks": registry_checks},
         "hygieneIntegrity": {"checks": hygiene_checks},
         "promotionIntegrity": {"checks": promotion_checks},
+        # Purpose-groups view (slice #968 / PRD #957 §2 #5):
+        # Each group is a list of check dicts with purpose_group == group name.
+        # Telemetry live group has the hook-trio composite (not 3 separate rows).
+        "purposeGroups": purpose_groups,
+        "purposeGroupOrder": PURPOSE_GROUP_ORDER,
+        "hookTrioComposite": hook_trio_composite,
     }
 
 

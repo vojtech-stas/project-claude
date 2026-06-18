@@ -90,6 +90,10 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
     report["runtime_edges"] = obs["runtime_edges"]
     report["runtime_coverage"] = obs["runtime_coverage"]
     report["capture_liveness"] = obs.get("capture_liveness", False)
+    # capture_unavailable: True when NEITHER transcript NOR hook log had events
+    # in the PRD window — the Architecture tab renders a "capture dark" banner
+    # instead of silent grey edges (PRD #956 slice 3 AC #7).
+    report["capture_unavailable"] = obs.get("capture_unavailable", False)
 
     # Update the main edges dict: replace not-evaluated entries for runtime/unmeasurable edges
     for eid, rt_entry in obs["runtime_edges"].items():

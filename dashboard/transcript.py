@@ -567,25 +567,6 @@ def _prd_cache_reset_if_stale() -> None:
         _prd_cache_ts = time.time()
 
 
-def _is_prd_issue(number: int) -> bool | None:
-    """Return True if issue N is labeled 'prd', False if 'slice', None on error."""
-    rc, stdout = _gh_run_transcript([
-        "issue", "view", str(number),
-        "--json", "number,labels,body",
-    ])
-    if rc != 0 or not stdout.strip():
-        return None
-    try:
-        data = json.loads(stdout)
-    except Exception:
-        return None
-    labels = data.get("labels", [])
-    label_names = {lbl.get("name", "") for lbl in labels}
-    if "prd" in label_names:
-        return True
-    return False
-
-
 def _parent_prd_from_issue_body(body: str) -> int | None:
     """Extract parent PRD number from a slice issue body, or None."""
     if not body:

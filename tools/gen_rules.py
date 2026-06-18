@@ -800,7 +800,7 @@ def generate(check_mode: bool = False) -> int:
     """
     Generate (or diff-check) scope outputs per SCOPE_TARGET classification.
 
-    GLOBAL scopes → CLAUDE.md generated-region blocks (between markers).
+    GLOBAL scopes → .claude/rules/_global.md (@imported by CLAUDE.md).
     AREA scopes   → .claude/rules/<scope>.md (with paths: frontmatter).
 
     Args:

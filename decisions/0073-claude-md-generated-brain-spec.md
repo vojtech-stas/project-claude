@@ -21,7 +21,7 @@ The operator, in a 2026-06-18 design review, settled the intended convention: th
 
 ### D1: Rules-location convention — global rules in CLAUDE.md, area rules path-scoped
 
-Every rule scope is classified GLOBAL or AREA. GLOBAL (always-relevant) scopes are generated into CLAUDE.md (via a CLAUDE.md generated region or an `@import`-ed generated file; this PRD uses generated-region markers) so the load-bearing rules live in the always-loaded brain-file. AREA (context-specific) scopes are generated into `.claude/rules/<scope>.md` carrying `paths:` frontmatter, so Claude Code loads them only when editing matching files. **A scope earns a separate path-scoped rules file only when it is path-scoped**; unconditional rules belong in CLAUDE.md. This reshapes PRD #888 (which put every scope in an unconditionally-loaded `.claude/rules/` file). A scope is EITHER global OR area — never both (no double-load).
+Every rule scope is classified GLOBAL or AREA. GLOBAL (always-relevant) scopes are generated into CLAUDE.md (via a CLAUDE.md generated region or an `@import`-ed generated file; this PRD uses `@import`-ed generated files) so the load-bearing rules live in the always-loaded brain-file. AREA (context-specific) scopes are generated into `.claude/rules/<scope>.md` carrying `paths:` frontmatter, so Claude Code loads them only when editing matching files. **A scope earns a separate path-scoped rules file only when it is path-scoped**; unconditional rules belong in CLAUDE.md. This reshapes PRD #888 (which put every scope in an unconditionally-loaded `.claude/rules/` file). A scope is EITHER global OR area — never both (no double-load).
 
 ### D2: CLAUDE.md is the generated brain-spec — global rules + generated repo-map, drift-gated
 

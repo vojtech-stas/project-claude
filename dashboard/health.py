@@ -89,65 +89,33 @@ _HEALTH_TTL = 30               # seconds — balance freshness vs. latency
 # Low-level helpers
 # ---------------------------------------------------------------------------
 
-def _skill_md_for_check(check_id: str) -> Path:
-    """Return the source file that declares the given check ID.
+def _description_from_docstring(fn) -> str:
+    """Return the first paragraph of fn's docstring (slice #966 / PRD #957).
 
-    DOCS-*/STRUCT-* checks were declared in audit-meta/SKILL.md; after PRD #919
-    slice #920 retired that skill, their canonical declared-ID source is
-    codebase-critic.md (the Deterministic pre-checks section).
-    AS-* checks were declared in audit-subagents/SKILL.md; after PRD #919
-    slice #921 retired that skill, AS-AUDIT is registered directly in
-    CHECK_REGISTRY — rationale text lives in the check_audit_subagents docstring.
+    Replaces the former _parse_skill_rationale SKILL.md grep (regression #955:
+    PRD #919 deleted the SKILL.md files that grep relied on, causing every
+    DOCS-*/AS-* row to show "rationale unavailable — see SKILL.md").
+
+    Returns the first non-blank paragraph of fn.__doc__, collapsing internal
+    newlines to spaces.  Returns "" for None or undocumented functions.
     """
-    return _CODEBASE_CRITIC_MD
-
-
-def _parse_skill_rationale(check_id: str) -> tuple:
-    """Parse purpose (Rationale) and command (Mechanic) for a check from its SKILL.md.
-
-    Pins the parse to the ``### <check_id> —`` heading (§6 trap) to avoid
-    picking up prose mentions of the same ID elsewhere in the file.
-
-    Returns:
-        (purpose: str, command: str)
-        On no match: purpose = "rationale unavailable — see SKILL.md", command = "".
-    """
-    skill_path = _skill_md_for_check(check_id)
-    try:
-        text = skill_path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return ("rationale unavailable — see SKILL.md", "")
-
-    # Find the heading line: "### <check_id> — ..."
-    heading_pattern = re.compile(
-        r'^###\s+' + re.escape(check_id) + r'\s+—',
-        re.MULTILINE,
-    )
-    m = heading_pattern.search(text)
-    if not m:
-        return ("rationale unavailable — see SKILL.md", "")
-
-    # Slice from the heading to the next "### " heading (or end of file).
-    section_start = m.start()
-    next_heading = re.search(r'^###\s+', text[m.end():], re.MULTILINE)
-    section_end = m.end() + next_heading.start() if next_heading else len(text)
-    section = text[section_start:section_end]
-
-    # Extract **Rationale:** block
-    rationale_m = re.search(r'\*\*Rationale:\*\*\s*(.+?)(?=\n\n|\n\*\*|\n---|\Z)',
-                             section, re.DOTALL)
-    purpose = rationale_m.group(1).strip() if rationale_m else "rationale unavailable — see SKILL.md"
-    purpose = re.sub(r'\s*\n\s*', ' ', purpose).strip()
-
-    # Extract **Mechanic:** block
-    mechanic_m = re.search(r'\*\*Mechanic:\*\*\s*(.*?)(?=\n\n\*\*|\n\n###|\n---|\Z)',
-                            section, re.DOTALL)
-    command = mechanic_m.group(1).strip() if mechanic_m else ""
-    command = re.sub(r'^```[a-z]*\n?', '', command)
-    command = re.sub(r'\n?```$', '', command)
-    command = command.strip()
-
-    return (purpose, command)
+    if fn is None:
+        return ""
+    doc = fn.__doc__
+    if not doc:
+        return getattr(fn, "__name__", "")
+    lines = doc.expandtabs().splitlines()
+    # Strip leading blank lines
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    # Collect until first blank line
+    para_lines: list = []
+    for line in lines:
+        if not line.strip():
+            break
+        para_lines.append(line.strip())
+    para = " ".join(para_lines).strip()
+    return para if para else getattr(fn, "__name__", "")
 
 
 def _read_file(path: Path) -> str:
@@ -967,20 +935,36 @@ def _is_critic(stem: str, path: Path) -> bool:
 
 
 def _enrich_checks(checks: list) -> list:
-    """Add purpose + command fields to each check dict from the SKILL.md (slice #629).
+    """Add description field to each check dict from its function docstring (slice #966).
+
+    Replaces the former SKILL.md-grep approach (_parse_skill_rationale, slice #629)
+    which broke when PRD #919 deleted the SKILL.md files (regression #955).
+    Now uses CHECK_REGISTRY lookup + _description_from_docstring to source the
+    description directly from the check function's __doc__ first paragraph.
 
     Mutates each dict in-place and returns the list for convenience.
-    purpose / command are sourced from the SKILL.md rationale/mechanic blocks
-    so CHECK 9 stays green (no hand-authored copies in dashboard source).
     """
     for c in checks:
         check_id = c.get("id", "")
-        if check_id:
-            purpose, command = _parse_skill_rationale(check_id)
-        else:
-            purpose, command = ("rationale unavailable — see SKILL.md", "")
-        c["purpose"] = purpose
-        c["command"] = command
+        fn = CHECK_REGISTRY.get(check_id) if check_id else None
+        c["description"] = _description_from_docstring(fn) or check_id
+    return checks
+
+
+def _attach_descriptions(checks: list) -> list:
+    """Add description field to check dicts that don't already have one (slice #966).
+
+    Used for non-DOCS/AS groups (substrate, verification, registry, hygiene,
+    promotion) where _enrich_checks is not called. Sources from CHECK_REGISTRY
+    + _description_from_docstring. Falls back to the check id string.
+
+    Mutates each dict in-place and returns the list for convenience.
+    """
+    for c in checks:
+        check_id = c.get("id", "")
+        fn = CHECK_REGISTRY.get(check_id) if check_id else None
+        if "description" not in c:
+            c["description"] = _description_from_docstring(fn) or check_id
     return checks
 
 
@@ -4920,66 +4904,63 @@ def _build_health_data() -> dict:
     """
     # _enrich_group adds the 'group' field used by the Health tab section headers
     # (slice #931 / PRD #927 §2 #10) — presentation only, no check-logic change.
+    # _attach_descriptions adds the 'description' field to non-DOCS/AS groups
+    # (slice #966 / PRD #957) — sourced from CHECK_REGISTRY function docstrings.
     audit = audit_meta()
     _enrich_group(audit["checks"])
+    substrate_checks = _attach_descriptions(_enrich_group([
+        check_capture_slo(),
+        check_hook_integrity(),
+        check_hook_liveness(),
+        check_isolation_group(),
+        check_rule_coverage(),
+        check_spec_coverage(),
+        check_critic_health(),
+        check_tests_collected(),
+        check_test_ordering(),
+        check_quarantine_sla(),
+        # Eval rows (ADR-0067 D5) — slice #817
+        check_eval_reviewer(),
+        check_eval_prd_critic(),
+        check_eval_slicer_critic(),
+    ]))
+    verification_checks = _attach_descriptions(_enrich_group([
+        check_blind_dispatch_rate(),
+        check_residual_ratio(),
+        check_proof_presence(),
+        check_proof_integrity(),
+        check_merge_integrity(),
+        check_capture_shape(),
+        check_green_main(),
+        check_silent_drift(),
+    ]))
+    registry_checks = _attach_descriptions(_enrich_group([
+        check_parity(),
+    ]))
+    hygiene_checks = _attach_descriptions(_enrich_group([
+        check_untracked_size(),
+        check_log_rotation(),
+        check_stale_branches(),
+        check_required_labels(),
+        check_dead_routes(),
+        check_session_injection(),
+    ]))
+    promotion_checks = _attach_descriptions(_enrich_group([
+        check_branch_topology(),
+        check_promotion_lag(),
+        check_release_ready(),
+        check_r_sensitive_detector(),
+        check_meta_tripwire(),
+    ]))
     return {
         "auditMeta": audit,
         "auditSubagents": audit_subagents(),
         "cascadeFinder": cascade_finder_summary(),
-        "substrateMeta": {
-            "checks": _enrich_group([
-                check_capture_slo(),
-                check_hook_integrity(),
-                check_hook_liveness(),
-                check_isolation_group(),
-                check_rule_coverage(),
-                check_spec_coverage(),
-                check_critic_health(),
-                check_tests_collected(),
-                check_test_ordering(),
-                check_quarantine_sla(),
-                # Eval rows (ADR-0067 D5) — slice #817
-                check_eval_reviewer(),
-                check_eval_prd_critic(),
-                check_eval_slicer_critic(),
-            ])
-        },
-        "verificationIntegrity": {
-            "checks": _enrich_group([
-                check_blind_dispatch_rate(),
-                check_residual_ratio(),
-                check_proof_presence(),
-                check_proof_integrity(),
-                check_merge_integrity(),
-                check_capture_shape(),
-                check_green_main(),
-                check_silent_drift(),
-            ])
-        },
-        "registryIntegrity": {
-            "checks": _enrich_group([
-                check_parity(),
-            ])
-        },
-        "hygieneIntegrity": {
-            "checks": _enrich_group([
-                check_untracked_size(),
-                check_log_rotation(),
-                check_stale_branches(),
-                check_required_labels(),
-                check_dead_routes(),
-                check_session_injection(),
-            ])
-        },
-        "promotionIntegrity": {
-            "checks": _enrich_group([
-                check_branch_topology(),
-                check_promotion_lag(),
-                check_release_ready(),
-                check_r_sensitive_detector(),
-                check_meta_tripwire(),
-            ])
-        },
+        "substrateMeta": {"checks": substrate_checks},
+        "verificationIntegrity": {"checks": verification_checks},
+        "registryIntegrity": {"checks": registry_checks},
+        "hygieneIntegrity": {"checks": hygiene_checks},
+        "promotionIntegrity": {"checks": promotion_checks},
     }
 
 

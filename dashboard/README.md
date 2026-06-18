@@ -19,6 +19,7 @@ The backend is split into flat sibling modules under `dashboard/`; `server.py` i
 | `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode |
 | `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report; violation detectors include `merged_without_ci` (non-trivial PR merged without SUCCESS `ci` statusCheckRollup — bootstrap-mode: PRs predating ADR-0042 are grandfathered); failed/not-found collection returns `run_pass: false` plus an explicit `error` (and `not_found: true`) field — never a vacuous PASS |
 | `runtime_observer.py` | Runtime observation layer (ADR-0055): reads v2 workflow-events.jsonl within a PRD's time window and evaluates all 24 runtime-tier edge predicates (user→skill, critic-dispatch, sequence-ordering, verdict-return, bash-evidence, conditional-advisory classes); returns per-edge states (`runtime-confirmed` / `runtime-unobserved` / `not-observable` / `not-exercised`) + a `coverage_strip` summary; never touches `run_pass` or violations |
+| `transcript.py` | Session transcript reader (PRD #898): resolves the active Claude Code session transcript JSONL + subagent JSONL files, normalises records into v2 event shape; `get_session_events()` powers `/api/session-live`; `build_firing_tree()` / `get_session_firing()` powers `/api/session-firing`; `get_runtime_reading()` powers `/api/runtime-reading`; CLI: `--self` (event count + last 5 events) and `--firing` (dispatch tree) |
 
 ## Usage
 
@@ -87,6 +88,7 @@ Then open `http://localhost:8765` in any modern browser.
 | `/api/live-poll` | Incremental event poll with opaque cursor; Lane B |
 | `/api/workitems` | GitHub Issues fetch for the Architecture tab |
 | `/api/file` | Serve repo file contents (path-traversal-protected) |
+| `/api/runtime-reading` | Current-session runtime reading from transcript (slice #928): event count, session age, last event timestamp + type, `source` field naming the transcript file; `no_session: true` when no transcript found |
 | `/api/meta` | Server sha + session handshake (banner freshness gate per slice #773) |
 
 ## Configuration

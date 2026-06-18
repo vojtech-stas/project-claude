@@ -128,7 +128,7 @@ The reviewer applies `needs-human` on round-3 BLOCK ([ADR-0003](decisions/0003-a
 
 ## Pipeline diagram
 
-The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary`, captured→backlog autopilot) live in their own subgraph or fire transparently around the main pipeline.
+The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/glossary`, captured→backlog autopilot) live in their own subgraph or fire transparently around the main pipeline. Subagent-prompt quality audits run automatically in CI via CHECK 18 (`AS-AUDIT`), so there is no longer a separate `/audit-subagents` side workflow (retired PRD #919 slice #921).
 
 ```mermaid
 flowchart TD
@@ -165,7 +165,6 @@ flowchart TD
   subgraph SS["Side workflows"]
     glossary["/glossary"]
     promote_to_backlog["/promote-to-backlog"]
-    audit_subagents["/audit-subagents"]
     glossary_critic{{glossary-critic}}
     backlog_critic{{backlog-critic}}
     codebase_critic{{codebase-critic}}
@@ -208,8 +207,6 @@ flowchart TD
   glossary --> glossary_critic
   glossary_critic -->|APPROVE| glossary_pr
   glossary_pr --> reviewer
-  user -.- audit_subagents
-  audit_subagents -.per-PRD.- reviewer
   orchestrator -.capture.- captured_issue
   user -.- promote_to_backlog
   captured_issue --> promote_to_backlog
@@ -223,7 +220,7 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class user human
-  class audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
+  class build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
@@ -235,7 +232,7 @@ flowchart TD
 | Color | Class | Node type | Examples in the diagram |
 |---|---|---|---|
 | 🟦 Blue | `human` | Human checkpoint | `User` (input at `/grill-me`, acceptance at `/qa-plan`) |
-| 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/audit-subagents`, `/promote-to-backlog`, `/glossary` |
+| 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/promote-to-backlog`, `/glossary` |
 | 🟢 Green | `gen` | Generator subagent | `slicer` (single decomposition per ADR-0044), `implementer` (slice → PR) |
 | 🟧 Orange | `critic` | Adversarial critic (≤3-round loop) | `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic`, `codebase-critic` |
 | 🟥 Red | `reviewer` | Auto-merge gate (per [ADR-0002](decisions/0002-autonomous-merge-policy.md)) | `reviewer` — the only critic that auto-merges on APPROVE |
@@ -334,7 +331,6 @@ Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionS
 
 User-invocable commands under `.claude/skills/`:
 
-- **[`/audit-subagents`](.claude/skills/audit-subagents/SKILL.md)** — Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 11-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
 - **[`/build`](.claude/skills/build/SKILL.md)** — Full-lifecycle orchestrator — one command from idea to merged + verified PR. Use when user says "/build", "build this", "implement this", "let's ship", or wants to drive a feature all the way through from idea to production-verified done. Chains dashboard-autostart → grill (conditional) → /ship → doc-regeneration → production-verify gate (mandatory, blocking per ADR-0037 D1). Thin conductor per ADR-0034 D1; sub-skills remain standalone.
 - **[`/glossary`](.claude/skills/glossary/SKILL.md)** — Glossary management skill with two subcommands — `/glossary add` for single-term interactive entry flow; `/glossary fold` for bulk-fold of skill-local vocabulary sections. Both flows gate through glossary-critic before opening a PR. Use `/glossary add` when the user wants to land a new vocabulary term; use `/glossary fold` to scan and promote skill-local vocabulary entries to CLAUDE.md. Per ADR-0038 D3 (consolidation of former /glossary-add + /glossary-fold skills).
 - **[`/grill-me`](.claude/skills/grill-me/SKILL.md)** — Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions "grill me".
@@ -384,7 +380,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ## Subagent-quality maintenance
 
-Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies an 11-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer, skill-vs-agent placement), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the critic-parsimony principle per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 (skill ownership, not a critic). Invoke periodically or after merging a convention-changing ADR.
+Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The 10-check subagent-prompt rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer) is now wired into **CI CHECK 18** via `python3 dashboard/health.py --check AS-AUDIT` — it runs automatically on every PR without requiring a manual skill invocation. The former `/audit-subagents` skill was retired by PRD #919 slice #921.
 
 Per [ADR-0017](decisions/0017-audit-meta-consolidation.md) (PRD #919), the adjacent meta-quality concerns (codebase **structure**, file-counts, depth, naming conventions, and **documentation currency** — dangling refs, supersession notes) are now absorbed into the `codebase-critic` subagent's deterministic pre-check phase, which runs automatically on every PRD close via `/ship`.
 
@@ -400,7 +396,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 10 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 70 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 70 ADR(s).
 
 ## License
 

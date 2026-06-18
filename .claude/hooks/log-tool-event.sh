@@ -155,7 +155,7 @@ try:
         _tn2 = str(payload.get("tool_name", ""))
         if _tn2 in ("Edit", "MultiEdit", "Write") and re.search(r'\.claude[/\\]agents[/\\].*\.md$', _fp):
             _ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-            _nudge = "{} {} (edit detected; consider running /audit-subagents)\n".format(_ts, _fp)
+            _nudge = "{} {} (edit detected; AS-AUDIT runs in CI CHECK 18)\n".format(_ts, _fp)
             _wdir = os.environ.get("WORKFLOW_LOG_DIR", "") or log_dir
             os.makedirs(_wdir, exist_ok=True)
             try:

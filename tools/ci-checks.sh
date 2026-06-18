@@ -922,6 +922,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 18: AS-AUDIT subagent-prompt quality check (PRD #919 slice #921)
+#   Runs the AS-* audit-subagents checks across all .claude/agents/*.md via
+#   the health registry.  WARN is allowed (advisory quality signal); only
+#   FAIL trips CI.  Replaces the manual /audit-subagents skill on every PR.
+#   Delegates to registry CLI (single-source per ADR-0064 D3).
+# ---------------------------------------------------------------------------
+echo "--- CHECK 18: AS-AUDIT subagent-prompt quality check ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 18 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK18_OUTPUT=$(python3 dashboard/health.py --check AS-AUDIT 2>&1)
+    CHECK18_EXIT=$?
+    if [ "$CHECK18_EXIT" -eq 0 ]; then
+        pass "CHECK 18 (AS-AUDIT): $CHECK18_OUTPUT"
+    else
+        fail "CHECK 18 (AS-AUDIT): $CHECK18_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

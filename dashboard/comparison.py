@@ -101,7 +101,8 @@ def _apply_runtime_observation(report: dict, trail: dict) -> dict:
                 report["edges"][eid]["event_evidence"] = rt_entry["event_evidence"]
 
     # Build coverage strip (ADR-0055 D5):
-    # 45 declared = 17 github + 26 runtime + 2 unmeasurable
+    # 43 declared = 17 github + 24 runtime + 2 unmeasurable
+    # (E-USER-AUDITSUBAGENTS + E-AUDITSUBAGENTS-REVIEWER removed PRD #919 slice #921)
     # Per-state counts over ALL edges (github + runtime + unmeasurable)
     all_edges = report.get("edges", {})
     per_state: dict[str, int] = {}

@@ -127,7 +127,7 @@ The reviewer applies `needs-human` on round-3 BLOCK ([ADR-0003](decisions/0003-a
 
 ## Pipeline diagram
 
-The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/audit-subagents`, `/glossary`, captured→backlog autopilot) live in their own subgraph or fire transparently around the main pipeline.
+The whole autonomous composition at a glance: the human enters at **`/grill-me`** and exits at **`/qa-plan`**, with everything in between — PRD authoring, slice decomposition, implementation, review, merge — chained by **`/ship`** and gated by adversarial critic loops (≤3 rounds each). The joint `prd-critic` + `adr-critic` gate, the `reviewer` auto-merge red-gate, and the `needs-human` forward-block paths are all shown; side workflows (`/glossary`, captured→backlog autopilot) live in their own subgraph or fire transparently around the main pipeline. Subagent-prompt quality audits run automatically in CI via CHECK 18 (`AS-AUDIT`), so there is no longer a separate `/audit-subagents` side workflow (retired PRD #919 slice #921).
 
 {{GENERATED:pipeline-diagram}}
 
@@ -136,7 +136,7 @@ The whole autonomous composition at a glance: the human enters at **`/grill-me`*
 | Color | Class | Node type | Examples in the diagram |
 |---|---|---|---|
 | 🟦 Blue | `human` | Human checkpoint | `User` (input at `/grill-me`, acceptance at `/qa-plan`) |
-| 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/audit-subagents`, `/promote-to-backlog`, `/glossary` |
+| 🟩 Teal | `skill` | User-invocable skill | `/grill-me`, `/ship`, `/to-prd`, `/to-issues`, `/qa-plan`, `/promote-to-backlog`, `/glossary` |
 | 🟢 Green | `gen` | Generator subagent | `slicer` (single decomposition per ADR-0044), `implementer` (slice → PR) |
 | 🟧 Orange | `critic` | Adversarial critic (≤3-round loop) | `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic`, `codebase-critic` |
 | 🟥 Red | `reviewer` | Auto-merge gate (per [ADR-0002](decisions/0002-autonomous-merge-policy.md)) | `reviewer` — the only critic that auto-merges on APPROVE |
@@ -229,7 +229,7 @@ Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionS
 
 ## Subagent-quality maintenance
 
-Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies an 11-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer, skill-vs-agent placement), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the critic-parsimony principle per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 (skill ownership, not a critic). Invoke periodically or after merging a convention-changing ADR.
+Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The 10-check subagent-prompt rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer) is now wired into **CI CHECK 18** via `python3 dashboard/health.py --check AS-AUDIT` — it runs automatically on every PR without requiring a manual skill invocation. The former `/audit-subagents` skill was retired by PRD #919 slice #921.
 
 Per [ADR-0017](decisions/0017-audit-meta-consolidation.md) (PRD #919), the adjacent meta-quality concerns (codebase **structure**, file-counts, depth, naming conventions, and **documentation currency** — dangling refs, supersession notes) are now absorbed into the `codebase-critic` subagent's deterministic pre-check phase, which runs automatically on every PRD close via `/ship`.
 

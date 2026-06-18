@@ -252,9 +252,9 @@ class TestSubagentEditNudge(unittest.TestCase):
             "subagent-edits.log must contain the edited file path",
         )
         self.assertIn(
-            "/audit-subagents",
+            "AS-AUDIT",
             log_text,
-            "subagent-edits.log nudge must mention /audit-subagents",
+            "subagent-edits.log nudge must mention AS-AUDIT (CI CHECK 18)",
         )
 
     def test_subagent_edit_no_workflow_event(self):

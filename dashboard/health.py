@@ -16,6 +16,7 @@ Exports:
     check_r_sensitive_detector() -> dict   (slice #840/ADR-0070 D4: guardrail-touching promotions counter)
     check_meta_tripwire() -> dict          (slice #840/ADR-0070 D4: promotion meta-tripwire — FAIL if guardrail-path batch lacks promotion-ack)
     audit_subagents() -> dict
+    check_audit_subagents() -> dict  (slice #921/PRD #919: AS-AUDIT registry entry)
     audit_meta() -> dict
     cascade_finder_summary() -> dict
     check_test_ordering() -> dict         (slice #816/ADR-0067 D2: fix-type PR test-first ordering rate)
@@ -59,9 +60,9 @@ _HEALTH_REPO_ROOT = Path(__file__).resolve().parent.parent
 # _AUDIT_META_SKILL was the former source for DOCS-*/STRUCT-* check IDs; after PRD #919
 # slice #920, the canonical declared-ID source for those checks moved to codebase-critic.md
 # (the ### STRUCT-N / ### DOCS-N headings in its "Deterministic pre-checks" section).
-# _AUDIT_SUBAGENTS_SKILL remains the source for AS-* check IDs until slice #921 folds it.
+# _AUDIT_SUBAGENTS_SKILL was the former source for AS-* check IDs; after PRD #919
+# slice #921, AS-* checks are registered in CHECK_REGISTRY (AS-AUDIT) — no separate source.
 _CODEBASE_CRITIC_MD = _HEALTH_REPO_ROOT / ".claude" / "agents" / "codebase-critic.md"
-_AUDIT_SUBAGENTS_SKILL = _HEALTH_REPO_ROOT / ".claude" / "skills" / "audit-subagents" / "SKILL.md"
 
 # Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
 _KNOWN_CRITICS = {
@@ -91,13 +92,13 @@ _HEALTH_TTL = 30               # seconds — balance freshness vs. latency
 def _skill_md_for_check(check_id: str) -> Path:
     """Return the source file that declares the given check ID.
 
-    AS-* checks are declared in audit-subagents/SKILL.md (until slice #921
-    folds them). DOCS-*/STRUCT-* checks were declared in audit-meta/SKILL.md;
-    after PRD #919 slice #920 retired that skill, their canonical declared-ID
-    source is codebase-critic.md (the Deterministic pre-checks section).
+    DOCS-*/STRUCT-* checks were declared in audit-meta/SKILL.md; after PRD #919
+    slice #920 retired that skill, their canonical declared-ID source is
+    codebase-critic.md (the Deterministic pre-checks section).
+    AS-* checks were declared in audit-subagents/SKILL.md; after PRD #919
+    slice #921 retired that skill, AS-AUDIT is registered directly in
+    CHECK_REGISTRY — rationale text lives in the check_audit_subagents docstring.
     """
-    if check_id.startswith("AS-") or check_id.startswith("as-"):
-        return _AUDIT_SUBAGENTS_SKILL
     return _CODEBASE_CRITIC_MD
 
 
@@ -386,9 +387,10 @@ def check_docs10_backlog_surfacing() -> dict:
     text ("### DOCS-10 — no `backlog`-labeled prose...") contains the pattern as
     documentation of the check, not as an instruction to skip the backlog-critic
     gate. audit-meta/SKILL.md was formerly allowlisted for the same reason; it
-    was deleted by PRD #919 slice #920.
+    was deleted by PRD #919 slice #920. audit-subagents/SKILL.md was similarly
+    allowlisted for AS-ALL-4 check text; it was deleted by PRD #919 slice #921.
     """
-    allowlist = {"backlog-critic.md", "promote-to-backlog", "audit-subagents/SKILL.md",
+    allowlist = {"backlog-critic.md", "promote-to-backlog",
                  "codebase-critic.md"}
     pattern = re.compile(r'(`backlog`-labeled|--label backlog)')
     offenders = []
@@ -863,8 +865,13 @@ def _check_as_all_3(path: Path) -> dict:
 
 
 def _check_as_all_4(path: Path) -> dict:
-    """AS-ALL-4: no backlog-label surfacing idiom (backlog-critic excluded)."""
-    if path.name == "backlog-critic.md":
+    """AS-ALL-4: no backlog-label surfacing idiom (backlog-critic + codebase-critic excluded).
+
+    codebase-critic.md is excluded (PRD #919 slice #921 / CI promotion) for the
+    same reason as in DOCS-10: its "### DOCS-10 —" heading text documents the check
+    pattern as metadata, not as an instruction to bypass the backlog-critic gate.
+    """
+    if path.name in ("backlog-critic.md", "codebase-critic.md"):
         return {"id": "AS-ALL-4", "result": "N/A", "detail": "excluded"}
     text = _read_file(path)
     has_drift = bool(re.search(r'(`backlog`-labeled|--label backlog)', text))
@@ -885,11 +892,17 @@ def _check_as_crit_1(path: Path) -> dict:
 
 
 def _check_as_crit_2(path: Path) -> dict:
-    """AS-CRIT-2: paranoid OR Adversarial mindset (backlog-critic excluded)."""
+    """AS-CRIT-2: paranoid OR Adversarial.*mindset (backlog-critic excluded).
+
+    Pattern broadened (PRD #919 slice #921 / CI promotion): accepts
+    "Adversarial mindset", "Adversarial-SRE mindset", etc. — any form
+    of "Adversarial" followed within 30 chars by "mindset" — alongside
+    the original "paranoid" literal.
+    """
     if path.name == "backlog-critic.md":
         return {"id": "AS-CRIT-2", "result": "N/A", "detail": "excluded"}
     text = _read_file(path)
-    ok = bool(re.search(r'(paranoid|Adversarial mindset)', text))
+    ok = bool(re.search(r'(paranoid|Adversarial.{0,30}mindset)', text))
     return {"id": "AS-CRIT-2", "result": "PASS" if ok else "FAIL", "detail": ""}
 
 
@@ -1000,6 +1013,51 @@ def audit_subagents() -> dict:
             "checks": _enrich_checks(checks),
         }
     return results
+
+
+def check_audit_subagents() -> dict:
+    """AS-AUDIT: aggregate zero-arg wrapper over all AS-* subagent-prompt checks.
+
+    Runs audit_subagents() across all .claude/agents/*.md files and aggregates
+    per-file, per-check results into a single registry-compatible verdict:
+      FAIL  — any individual check returned FAIL
+      WARN  — any individual check returned WARN (and none FAIL)
+      PASS  — all checks passed or N/A
+
+    This function is the CHECK_REGISTRY entry for AS-AUDIT (PRD #919 slice #921):
+    the audit-subagents skill was retired; its checks now run automatically in CI
+    via `python3 dashboard/health.py --check AS-AUDIT`.
+
+    Rationale: subagent prompts drift silently between slices. The AS-* checks
+    (frontmatter, tool-boundaries, cross-ref section, surfacing convention,
+    entry-protocol, CRITIC trailer, generator trailer, etc.) are the mechanical
+    drift-detector per ADR-0011 D4. Running them in CI ensures every PR is
+    checked, not just when the operator remembers to invoke a skill.
+    """
+    results = audit_subagents()
+    fail_ids = []
+    warn_ids = []
+    for stem, entry in results.items():
+        for c in entry.get("checks", []):
+            r = c.get("result", "")
+            cid = c.get("id", "")
+            label = f"{stem}/{cid}"
+            if r == "FAIL":
+                fail_ids.append(label)
+            elif r == "WARN":
+                warn_ids.append(label)
+
+    if fail_ids:
+        detail = f"FAIL: {fail_ids}"
+        if warn_ids:
+            detail += f"; WARN: {warn_ids}"
+        return {"id": "AS-AUDIT", "result": "FAIL", "detail": detail}
+    if warn_ids:
+        return {"id": "AS-AUDIT", "result": "WARN",
+                "detail": f"WARN: {warn_ids}"}
+    agent_count = len(results)
+    return {"id": "AS-AUDIT", "result": "PASS",
+            "detail": f"all checks passed across {agent_count} agent file(s)"}
 
 
 def audit_meta() -> dict:
@@ -4661,6 +4719,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "META-TRIPWIRE": check_meta_tripwire,
     # Server-staleness check (ADR-0071 D5 — slice #907)
     "STALE-SERVER": check_stale_server,
+    # Audit-subagents aggregate check (PRD #919 slice #921 — replaces /audit-subagents skill)
+    "AS-AUDIT": check_audit_subagents,
 }
 
 
@@ -4671,30 +4731,28 @@ def check_parity() -> dict:
 
     Three ID sets are compared:
     1. Registry IDs: keys of CHECK_REGISTRY (the single-source implementation).
-    2. Declared IDs: DOCS-*/STRUCT-* and AS-* IDs extracted from ### <id> —
-       headings in their canonical declared-ID sources:
+    2. Declared IDs: DOCS-*/STRUCT-* IDs extracted from ### <id> — headings in
+       their canonical declared-ID source:
        - DOCS-*/STRUCT-*: codebase-critic.md "Deterministic pre-checks" section
          (moved from audit-meta/SKILL.md by PRD #919 slice #920).
-       - AS-*: audit-subagents/SKILL.md (until slice #921 folds them into CI).
+       - AS-*: AS-AUDIT is registered directly in CHECK_REGISTRY (PRD #919
+         slice #921 retired audit-subagents/SKILL.md); no separate declared-ID
+         source is scanned for AS-* (the individual AS-ALL/CRIT/GEN check IDs
+         are internal helpers, not declared IDs in the registry sense).
     3. CI-consumed IDs: IDs extracted from python3 dashboard/health.py invocations
        in tools/ci-checks.sh (lines matching --check <ID> or --list patterns).
 
     The check is honest about what it can and cannot measure today:
     - Declared = the ### headings that look like "### DOCS-N — " or
-      "### AS-*-N — " or "### STRUCT-N — " in the source files above.
-      If the format changes, the parse documents what it found rather than
-      silently under-counting.
+      "### STRUCT-N — " in codebase-critic.md.
     - CI-consumed = `--check <ID>` arguments in ci-checks.sh.  Post-migration
       CHECK 4/5 use registry calls; the set grows as later slices add more.
     - Registry IDs are the authoritative set (per ADR-0064 D3).
 
-    Deferred-gap acknowledgement: some declared IDs are not individually
-    registered because they are either:
-    (a) STRUCT-* checks: run as a group via audit_meta() inside the
-        codebase-critic per-PRD pass (PRD #919 slice #920); individual
-        registration is deferred to a later slice.
-    (b) AS-* checks: the audit-subagents skill declares these but they will
-        be moved to CI as individual registry entries by slice #921.
+    Deferred-gap acknowledgement: STRUCT-* declared IDs are not individually
+    registered because they run grouped via audit_meta() inside the
+    codebase-critic per-PRD pass (PRD #919 slice #920); individual
+    registration is deferred to a later slice.
     These known-deferred IDs are excluded from skill_gaps to avoid spurious
     WARN. The orphan-ci check (FAIL trigger) is unaffected — it catches any
     CI invocation of a check the registry does not have, regardless of deferral.
@@ -4707,13 +4765,11 @@ def check_parity() -> dict:
             <ci_count> CI-consumed; orphan-ci=[] skill-gaps=[]
     """
     # IDs declared in source files but legitimately not individually registered
-    # because they run grouped (STRUCT-*) or are deferred to slice #921 (AS-*).
+    # because they run grouped (STRUCT-*) via codebase-critic per-PRD pass.
     _DEFERRED_GAPS: set = set()
     # STRUCT-1..10: run via audit_meta() group call in codebase-critic per-PRD pass.
     for i in range(1, 11):
         _DEFERRED_GAPS.add(f"STRUCT-{i}")
-    # AS-*: deferred to slice #921 which will fold audit-subagents into CI.
-    _as_pat = re.compile(r"^AS-")
 
     # --- 1. Registry IDs ---
     registry_ids = set(CHECK_REGISTRY.keys())
@@ -4721,19 +4777,18 @@ def check_parity() -> dict:
     # --- 2. Declared IDs ---
     # Parse ### <id> — headings from canonical declared-ID sources.
     # DOCS-*/STRUCT-* declared in codebase-critic.md (post slice #920).
-    # AS-* declared in audit-subagents/SKILL.md (until slice #921).
+    # AS-AUDIT is registered directly in CHECK_REGISTRY; no separate source file.
     _skill_id_pat = re.compile(
-        r"^###\s+((?:DOCS|AS|STRUCT)-[A-Z0-9_-]+)\s+—",
+        r"^###\s+((?:DOCS|STRUCT)-[A-Z0-9_-]+)\s+—",
         re.MULTILINE,
     )
     skill_ids: set = set()
-    for skill_path in [_CODEBASE_CRITIC_MD, _AUDIT_SUBAGENTS_SKILL]:
-        try:
-            text = skill_path.read_text(encoding="utf-8", errors="replace")
-            for m in _skill_id_pat.finditer(text):
-                skill_ids.add(m.group(1))
-        except Exception:
-            pass
+    try:
+        text = _CODEBASE_CRITIC_MD.read_text(encoding="utf-8", errors="replace")
+        for m in _skill_id_pat.finditer(text):
+            skill_ids.add(m.group(1))
+    except Exception:
+        pass
 
     # --- 3. CI-consumed IDs ---
     # Scan tools/ci-checks.sh for: --check <ID> patterns.
@@ -4750,13 +4805,13 @@ def check_parity() -> dict:
     # --- Compute diffs ---
     orphan_ci = sorted(ci_ids - registry_ids)   # CI calls non-existent registry check
     all_skill_gaps = skill_ids - registry_ids    # declared IDs not in registry
-    # Exclude known-deferred IDs (STRUCT-* group-registered, AS-* slice #921)
+    # Exclude known-deferred IDs (STRUCT-* group-registered)
     skill_gaps = sorted(
         gid for gid in all_skill_gaps
-        if gid not in _DEFERRED_GAPS and not _as_pat.match(gid)
+        if gid not in _DEFERRED_GAPS
     )
     deferred = sorted(gid for gid in all_skill_gaps
-                      if gid in _DEFERRED_GAPS or _as_pat.match(gid))
+                      if gid in _DEFERRED_GAPS)
 
     r_count = len(registry_ids)
     s_count = len(skill_ids)

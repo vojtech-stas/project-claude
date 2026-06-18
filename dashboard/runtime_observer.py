@@ -2,11 +2,13 @@
 dashboard/runtime_observer.py — runtime observation layer (ADR-0055).
 
 Reads the v2 workflow-events.jsonl within a PRD's time window and evaluates
-ALL 26 runtime-tier evaluators across six classes:
+ALL 24 runtime-tier evaluators across six classes:
 
 Slice 1 (shipped):
-  user→skill class (6): E-USER-SHIP, E-USER-BUILD, E-USER-GLOSSARY,
-    E-USER-AUDITMETA, E-USER-AUDITSUBAGENTS, E-USER-PTB
+  user→skill class (5): E-USER-SHIP, E-USER-BUILD, E-USER-GLOSSARY,
+    E-USER-AUDITMETA, E-USER-PTB
+  Note: E-USER-AUDITSUBAGENTS removed (PRD #919 slice #921: /audit-subagents
+  skill retired; AS-AUDIT now runs automatically in CI CHECK 18).
 
 Slice 2 (this file extends):
   skill-sequence class (4): E-BUILD-SHIP, E-SHIP-TOPRD, E-PRDISSUE-TOISSUES,
@@ -18,8 +20,9 @@ Slice 2 (this file extends):
   verdict-return class (4): E-QAPLAN-QATESTER, E-QATESTER-VERDICT,
     E-MERGE-QAPLAN, E-MERGE-QAREVIEW
   bash-evidence class (1): E-CAPTURED-PTB
-  conditional-advisory class (3): E-AUDITMETA-REVIEWER,
-    E-AUDITSUBAGENTS-REVIEWER, E-CODEBASECRITIC-REVIEWER
+  conditional-advisory class (2): E-AUDITMETA-REVIEWER,
+    E-CODEBASECRITIC-REVIEWER
+  Note: E-AUDITSUBAGENTS-REVIEWER removed (PRD #919 slice #921).
 
 Plus: explicit `unmeasurable` state for E-USER-GRILLME + E-GRILLME-SHIP
      (both declared unmeasurable-by-design in SPEC; handled in observe()).
@@ -59,7 +62,9 @@ _FIXTURE_SID_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
-# All 26 runtime-tier edge ids covered by the observer
+# All 24 runtime-tier edge ids covered by the observer
+# (E-USER-AUDITSUBAGENTS + E-AUDITSUBAGENTS-REVIEWER removed PRD #919 slice #921:
+#  /audit-subagents skill retired; AS-AUDIT runs in CI CHECK 18.)
 # ---------------------------------------------------------------------------
 COVERED_EDGE_IDS = [
     # user→skill class (slice 1)
@@ -67,7 +72,6 @@ COVERED_EDGE_IDS = [
     "E-USER-BUILD",
     "E-USER-GLOSSARY",
     "E-USER-AUDITMETA",
-    "E-USER-AUDITSUBAGENTS",
     "E-USER-PTB",
     # skill-sequence class (slice 2)
     "E-BUILD-SHIP",
@@ -93,7 +97,6 @@ COVERED_EDGE_IDS = [
     "E-CAPTURED-PTB",
     # conditional-advisory class (slice 2)
     "E-AUDITMETA-REVIEWER",
-    "E-AUDITSUBAGENTS-REVIEWER",
     "E-CODEBASECRITIC-REVIEWER",
 ]
 
@@ -110,7 +113,6 @@ _EDGE_SKILL: dict[str, tuple[str, str]] = {
     "E-USER-BUILD":          ("build",            "/build"),
     "E-USER-GLOSSARY":       ("glossary",         "/glossary"),
     "E-USER-AUDITMETA":      ("audit-meta",       "/audit-meta"),
-    "E-USER-AUDITSUBAGENTS": ("audit-subagents",  "/audit-subagents"),
     "E-USER-PTB":            ("promote-to-backlog", "/promote-to-backlog"),
 }
 
@@ -840,15 +842,15 @@ def observe(
     trail: dict,
     log_path: Path | None = None,
 ) -> dict:
-    """Evaluate all 26 runtime-tier edges + 2 unmeasurable edges for the given PRD trail.
+    """Evaluate all 24 runtime-tier edges + 2 unmeasurable edges for the given PRD trail.
 
     Args:
         trail: output of collector.get_trail() — needs prd_created_at, prd_closed_at
         log_path: override for the workflow-events.jsonl path (for sandbox testing)
 
     Returns dict with keys:
-        runtime_edges: {edge_id: {state, detail, evidence, required}} — 28 entries
-          (26 runtime + 2 unmeasurable-by-design)
+        runtime_edges: {edge_id: {state, detail, evidence, required}} — 26 entries
+          (24 runtime + 2 unmeasurable-by-design)
         runtime_coverage: {confirmed, unobserved, not_observable, not_exercised,
                            unmeasurable}
         capture_liveness: bool — True iff any event found in the window
@@ -894,13 +896,13 @@ def observe(
     capture_live, index = _build_window_index(win_start, win_end, log_path)
 
     # ---------------------------------------------------------------------------
-    # Evaluate all 26 runtime-tier edges
+    # Evaluate all 24 runtime-tier edges
     # ---------------------------------------------------------------------------
     results: dict[str, tuple[str, str, dict | None]] = {}
 
     # -- user→skill class (slice 1) --
     for eid in ["E-USER-SHIP", "E-USER-BUILD", "E-USER-GLOSSARY",
-                "E-USER-AUDITMETA", "E-USER-AUDITSUBAGENTS", "E-USER-PTB"]:
+                "E-USER-AUDITMETA", "E-USER-PTB"]:
         skill_name, slash_cmd = _EDGE_SKILL[eid]
         results[eid] = _eval_user_skill_edge(eid, skill_name, slash_cmd, index, capture_live)
 
@@ -1018,9 +1020,6 @@ def observe(
     results["E-AUDITMETA-REVIEWER"] = _eval_advisory_to_reviewer(
         "audit-meta", index, capture_live
     )
-    results["E-AUDITSUBAGENTS-REVIEWER"] = _eval_advisory_to_reviewer(
-        "audit-subagents", index, capture_live
-    )
     results["E-CODEBASECRITIC-REVIEWER"] = _eval_codebasecritic_reviewer(index, capture_live)
 
     # ---------------------------------------------------------------------------
@@ -1030,7 +1029,7 @@ def observe(
     _REQUIRED: dict[str, str] = {
         "E-USER-SHIP": "conditional", "E-USER-BUILD": "conditional",
         "E-USER-GLOSSARY": "conditional", "E-USER-AUDITMETA": "conditional",
-        "E-USER-AUDITSUBAGENTS": "conditional", "E-USER-PTB": "conditional",
+        "E-USER-PTB": "conditional",
         "E-BUILD-SHIP": "always", "E-SHIP-TOPRD": "always",
         "E-PRDISSUE-TOISSUES": "always", "E-TOISSUES-SLICER": "always",
         "E-TOPRD-PRDCRITIC": "always", "E-TOPRD-ADRCRITIC": "conditional",
@@ -1040,7 +1039,7 @@ def observe(
         "E-QAPLAN-QATESTER": "always", "E-QATESTER-VERDICT": "always",
         "E-MERGE-QAPLAN": "always", "E-MERGE-QAREVIEW": "conditional",
         "E-CAPTURED-PTB": "conditional",
-        "E-AUDITMETA-REVIEWER": "conditional", "E-AUDITSUBAGENTS-REVIEWER": "conditional",
+        "E-AUDITMETA-REVIEWER": "conditional",
         "E-CODEBASECRITIC-REVIEWER": "conditional",
     }
 

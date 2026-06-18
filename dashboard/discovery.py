@@ -149,7 +149,7 @@ def _read_hook_description(cmd: str) -> str:
     if "workflow-events.jsonl" in cmd_lower and "session_stop" in cmd_lower:
         return "logs session-stop event to workflow-events.jsonl"
     if "subagent-edits.log" in cmd_lower:
-        return "logs agent file edits; suggests /audit-subagents on agent .md changes"
+        return "logs agent file edits; notes AS-AUDIT runs in CI CHECK 18"
     if "workflow-events.jsonl" in cmd_lower:
         return "logs workflow event to workflow-events.jsonl"
 

@@ -162,12 +162,6 @@ NODES = {
         "stage": "SS",
         "path": ".claude/skills/promote-to-backlog/SKILL.md",
     },
-    "audit-subagents": {
-        "kind": "skill",
-        "label": "/audit-subagents",
-        "stage": "SS",
-        "path": ".claude/skills/audit-subagents/SKILL.md",
-    },
 
     # --- agents (Side workflows) -------------------------------------------
     "glossary-critic": {
@@ -747,36 +741,6 @@ EDGES = [
         "label": "",
         "style": "solid",
         "description": "Glossary PR reviewed by reviewer agent.",
-    },
-
-    # =========================================================================
-    # Side workflows: audit utilities (advisory; runtime)
-    # =========================================================================
-
-    # user → /audit-subagents (runtime)
-    {
-        "id": "E-USER-AUDITSUBAGENTS",
-        "from_node": "user",
-        "to_node": "audit-subagents",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "user_invokes_audit_subagents",
-        "label": "",
-        "style": "dashed",
-        "description": "User invokes /audit-subagents advisory check.",
-    },
-
-    # /audit-subagents → reviewer (advisory per-PRD; runtime)
-    {
-        "id": "E-AUDITSUBAGENTS-REVIEWER",
-        "from_node": "audit-subagents",
-        "to_node": "reviewer",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "audit_subagents_feeds_reviewer",
-        "label": "per-PRD",
-        "style": "dashed",
-        "description": "/audit-subagents advisory findings fed to reviewer (per-PRD).",
     },
 
     # =========================================================================

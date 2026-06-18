@@ -440,6 +440,19 @@
     padding: 6px 8px;
     margin-top: 3px;
   }
+  /* Health check group header rows (slice #931 / PRD #927 §2 #10) */
+  tr.health-group-header td {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: rgba(255,255,255,0.03);
+    border-top: 1px solid var(--border);
+    padding: 6px 8px 4px;
+    pointer-events: none;
+  }
+  tr.health-group-header:first-child td { border-top: none; }
   /* Clickable check rows */
   .check-row-clickable {
     cursor: pointer;
@@ -1246,6 +1259,18 @@
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
     <h2 style="margin:0;">Health checks</h2>
     <button class="refresh" onclick="loadHealth()">Refresh</button>
+  </div>
+  <!-- Purpose header (slice #931 / PRD #927 §2 #9): plain-language explanation -->
+  <div id="health-purpose-header" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:14px 18px;margin-bottom:20px;line-height:1.5;">
+    <strong style="font-size:13px;">What is this board?</strong>
+    <p style="margin:6px 0 0;font-size:12px;color:var(--muted);">
+      A real-time honesty board: each check verifies that one workflow invariant
+      actually holds <em>right now</em> — docs in sync, rules enforced, hooks live,
+      no drift. The board is <span style="color:var(--pass);font-weight:600;">green</span>
+      only when the guarantee is real, not when prose claims it.
+      This is the make-real goal: surface gaps immediately so every "done" claim
+      is backed by evidence.
+    </p>
   </div>
   <!-- audit-meta: check list + detail panel side-by-side (slice #629) -->
   <div class="card" style="margin-bottom:16px;">
@@ -2190,6 +2215,20 @@ function sanitizeMdHtml(html) {
 let docsCheckStore = {};   // check_id → check object (DOCS-*)
 let asCheckStore = {};     // "stem:check_id" → check object (AS-*)
 
+/**
+ * Emit a group-header <tr> when the check's group label changes (slice #931).
+ * Returns the updated lastGroup string.
+ * Usage: lastGroup = maybeGroupHeader(html_ref, c.group, lastGroup, colSpan);
+ * Mutates html via ref object: { v: htmlString }.
+ */
+function maybeGroupHeader(htmlRef, groupLabel, lastGroup, colSpan) {
+  const label = groupLabel || 'Other';
+  if (label !== lastGroup) {
+    htmlRef.v += `<tr class="health-group-header"><td colspan="${colSpan}">${escHtml(label)}</td></tr>`;
+  }
+  return label;
+}
+
 async function loadHealth() {
   try {
     const [healthResp, promoResp] = await Promise.all([
@@ -2216,6 +2255,7 @@ async function loadHealth() {
 /**
  * Render substrate health check grid (CAPTURE-SLO, HOOK-INTEGRITY, ISOLATION-GROUP, RULE-COVERAGE).
  * Slice #767/#768: simple table rows, red on FAIL, amber on WARN.
+ * Slice #931: group headers injected via check.group field.
  */
 function renderSubstrateGrid(substrateMeta) {
   const grid = document.getElementById('substrate-grid');
@@ -2228,18 +2268,20 @@ function renderSubstrateGrid(substrateMeta) {
     grid.innerHTML = '<span style="color:var(--muted)">No checks</span>';
     return;
   }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
+  let lastGroup = null;
   for (const c of checks) {
+    lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
     const detSnippet = c.detail && c.detail.length > 0
       ? escHtml(c.detail.slice(0, 120)) + (c.detail.length > 120 ? '…' : '')
       : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
+    h.v += `<tr>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    h.v += `</tr>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  h.v += '</table>';
+  grid.innerHTML = h.v;
 }
 
 /**
@@ -2294,6 +2336,7 @@ function renderCriticHealth(substrateMeta) {
 /**
  * Render verification-integrity card (slice #783 / ADR-0060/0061/0062/0063).
  * Shows BLIND-RATE, PROOF-PRESENCE, MERGE-INTEGRITY, CAPTURE-SHAPE, GREEN-MAIN rows.
+ * Slice #931: group headers injected via check.group field.
  */
 function renderVerificationIntegrity(vi) {
   const grid = document.getElementById('verification-integrity-grid');
@@ -2302,24 +2345,27 @@ function renderVerificationIntegrity(vi) {
     grid.innerHTML = '<span style="color:var(--muted)">No verification-integrity data</span>';
     return;
   }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
+  let lastGroup = null;
   for (const c of vi.checks) {
+    lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
+    h.v += `<tr>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    h.v += `</tr>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  h.v += '</table>';
+  grid.innerHTML = h.v;
 }
 
 /**
  * Render registry-integrity card (slice #795 / ADR-0064 D3: PARITY row).
  * Shows PARITY check verdict + detail (registry IDs == skill-declared == CI-consumed).
+ * Slice #931: group headers injected via check.group field.
  */
 function renderRegistryIntegrity(ri) {
   const grid = document.getElementById('registry-integrity-grid');
@@ -2328,25 +2374,28 @@ function renderRegistryIntegrity(ri) {
     grid.innerHTML = '<span style="color:var(--muted)">No registry-integrity data</span>';
     return;
   }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
+  let lastGroup = null;
   for (const c of ri.checks) {
+    lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
+    h.v += `<tr>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    h.v += `</tr>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  h.v += '</table>';
+  grid.innerHTML = h.v;
 }
 
 /**
  * Render hygiene-integrity card (slice #826 / ADR-0068 D1/D3).
  * Shows UNTRACKED-SIZE, LOG-ROTATION, STALE-BRANCHES, REQUIRED-LABELS,
  * DEAD-ROUTES, SESSION-INJECTION, R-SENSITIVE-DETECTOR rows.
+ * Slice #931: group headers injected via check.group field.
  */
 function renderHygieneIntegrity(hi) {
   const grid = document.getElementById('hygiene-integrity-grid');
@@ -2355,24 +2404,27 @@ function renderHygieneIntegrity(hi) {
     grid.innerHTML = '<span style="color:var(--muted)">No hygiene-integrity data</span>';
     return;
   }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
+  let lastGroup = null;
   for (const c of hi.checks) {
+    lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
+    h.v += `<tr>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    h.v += `</tr>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  h.v += '</table>';
+  grid.innerHTML = h.v;
 }
 
 /**
  * Render promotion-integrity card (slice #843 / ADR-0070 D1/D3).
  * Shows BRANCH-TOPOLOGY, PROMOTION-LAG, RELEASE-READY, R-SENSITIVE-DETECTOR, META-TRIPWIRE.
+ * Slice #931: group headers injected via check.group field.
  */
 function renderPromotionIntegrity(pi) {
   const grid = document.getElementById('promotion-integrity-grid');
@@ -2381,19 +2433,21 @@ function renderPromotionIntegrity(pi) {
     grid.innerHTML = '<span style="color:var(--muted)">No promotion-integrity data</span>';
     return;
   }
-  let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
+  const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
+  let lastGroup = null;
   for (const c of pi.checks) {
+    lastGroup = maybeGroupHeader(h, c.group, lastGroup, 3);
     const det = c.detail || '';
     const detSnippet = det.length > 0
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
-    html += `<tr>`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
-    html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
-    html += `</tr>`;
+    h.v += `<tr>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
+    h.v += `</tr>`;
   }
-  html += '</table>';
-  grid.innerHTML = html;
+  h.v += '</table>';
+  grid.innerHTML = h.v;
 }
 
 /**

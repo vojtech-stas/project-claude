@@ -901,22 +901,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK 17: .claude/rules/ regen-clean guard (PRD #888 / tools/gen_rules.py)
+# CHECK 17: gen_rules.py regen-clean guard (PRD #888 / tools/gen_rules.py)
 #   Mirrors CHECK 2 (README regen-clean): runs gen_rules.py --check, which
-#   diffs committed .claude/rules/<scope>.md files against a fresh generation.
-#   Exits non-zero if any scope file is stale or missing.
+#   diffs committed .claude/rules/<scope>.md AREA files AND CLAUDE.md GLOBAL
+#   regions against a fresh generation.  Exits non-zero if any output is stale
+#   or missing.  (ADR-0073 D3: gen_rules.py is the single-source for all scope
+#   outputs; updated in slice #938 to cover CLAUDE.md regions.)
 #   Soft-degrades if python3 or tools/gen_rules.py is unavailable.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 17: .claude/rules/ regen-clean (gen_rules.py) ---"
+echo "--- CHECK 17: gen_rules.py regen-clean (.claude/rules/ + CLAUDE.md regions) ---"
 if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/gen_rules.py" ]; then
     echo "SKIP: CHECK 17 — python3 or tools/gen_rules.py not available (soft-degrade)"
 else
     CHECK17_OUTPUT=$(python3 tools/gen_rules.py --check 2>&1)
     CHECK17_EXIT=$?
     if [ "$CHECK17_EXIT" -eq 0 ]; then
-        pass "CHECK 17: .claude/rules/ is up-to-date with gen_rules.py output"
+        pass "CHECK 17: gen_rules.py outputs are up-to-date (.claude/rules/ + CLAUDE.md regions)"
     else
-        fail "CHECK 17: .claude/rules/ is stale — run 'python3 tools/gen_rules.py' and commit"
+        fail "CHECK 17: gen_rules.py outputs are stale — run 'python3 tools/gen_rules.py' and commit"
         echo "$CHECK17_OUTPUT" >&2
     fi
 fi
@@ -962,6 +964,38 @@ else
         pass "CHECK 19 (slicer-provenance): $CHECK19_OUTPUT"
     else
         fail "CHECK 19 (slicer-provenance): $CHECK19_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# CHECK 20: CLAUDE.md generated-region regen-clean (slice #938 / ADR-0073 D2/D5)
+#   Confirms that CLAUDE.md contains the expected generated-region markers for
+#   every GLOBAL scope declared in SCOPE_TARGET (tools/gen_rules.py).
+#   Mirrors CHECK 2 (README regen-clean) for CLAUDE.md's generated regions.
+#   Runs gen_rules.py --check which diffs CLAUDE.md regions AND .claude/rules/
+#   area files; exits non-zero if any CLAUDE.md region is missing or stale.
+#   Soft-degrades if python3 or tools/gen_rules.py is unavailable.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 20: CLAUDE.md generated-region regen-clean (ADR-0073) ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/gen_rules.py" ]; then
+    echo "SKIP: CHECK 20 — python3 or tools/gen_rules.py not available (soft-degrade)"
+elif [ ! -f "CLAUDE.md" ]; then
+    fail "CHECK 20: CLAUDE.md not found"
+else
+    # Verify the CLAUDE.md generated region for the pipeline scope (sentinel
+    # for the global-scope generation introduced in ADR-0073 D1).
+    if grep -q "BEGIN GENERATED:rules:pipeline" CLAUDE.md; then
+        # Markers present — run full gen_rules.py --check for drift detection
+        CHECK20_OUTPUT=$(python3 tools/gen_rules.py --check 2>&1)
+        CHECK20_EXIT=$?
+        if [ "$CHECK20_EXIT" -eq 0 ]; then
+            pass "CHECK 20: CLAUDE.md generated regions are up-to-date"
+        else
+            fail "CHECK 20: CLAUDE.md generated region is stale — run 'python3 tools/gen_rules.py' and commit"
+            echo "$CHECK20_OUTPUT" >&2
+        fi
+    else
+        fail "CHECK 20: CLAUDE.md missing <!-- BEGIN GENERATED:rules:pipeline --> marker — run 'python3 tools/gen_rules.py' and commit"
     fi
 fi
 

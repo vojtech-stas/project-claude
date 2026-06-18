@@ -63,6 +63,9 @@ logs/
 # Local Claude Code hook output (per ADR-0015 D4)
 .claude/logs/
 
+# Runtime cache (non-logs, non-tracked — e.g. PRD-correlation disk cache)
+.claude/cache/
+
 # Human-ack sentinel for promote.sh gate (slice #881, fixes #880).
 # Gitignored so it never exists in subagent worktrees (which check out
 # tracked files only), structurally blocking any subagent from promoting.

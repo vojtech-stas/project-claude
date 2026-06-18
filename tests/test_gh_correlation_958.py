@@ -183,17 +183,30 @@ class TestResolveDispatchToPrd(unittest.TestCase):
 
     def setUp(self):
         _inject_dashboard()
+        import tempfile
         import transcript as tr
         self._tr = tr
-        # Clear cache before each test
+        # Clear all caches before each test (in-process + disk in-memory)
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None  # force disk-cache reload (slice #959 perf fix)
+        # Use an isolated temp disk-cache so pre-existing entries don't affect
+        # call-count or value assertions
+        self._tmp = tempfile.mkdtemp()
+        self._cache_file = Path(self._tmp) / "test-resolve-cache.json"
+        self._patcher = patch("transcript._disk_cache_path",
+                              return_value=self._cache_file)
+        self._patcher.start()
 
     def tearDown(self):
-        # Clear cache after each test to avoid cross-test pollution
+        import shutil
+        self._patcher.stop()
+        # Clear all caches after each test to avoid cross-test pollution
         import transcript as tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _fake_gh_run(self, args, timeout=15):
         """Fake _gh_run_transcript that returns canned responses for known numbers."""
@@ -270,15 +283,28 @@ class TestFallbackOnGhUnavailable(unittest.TestCase):
 
     def setUp(self):
         _inject_dashboard()
+        import tempfile
         import transcript as tr
         self._tr = tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None  # clear disk-cache in-memory (slice #959 perf fix)
+        # Use an empty temp disk-cache file so pre-existing on-disk data
+        # (from prior test runs that resolved #958→#956) doesn't bleed in.
+        self._tmp = tempfile.mkdtemp()
+        self._cache_file = Path(self._tmp) / "empty-cache.json"
+        self._patcher = patch("transcript._disk_cache_path",
+                              return_value=self._cache_file)
+        self._patcher.start()
 
     def tearDown(self):
+        import shutil
+        self._patcher.stop()
         import transcript as tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _always_fail_gh(self, args, timeout=15):
         """Always return a non-zero exit code (gh unavailable)."""
@@ -334,6 +360,7 @@ class TestFiringTreeGhGrouping(unittest.TestCase):
         self._tr = tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None  # clear disk-cache in-memory (slice #959 perf fix)
 
         # Fixture: implementer dispatch for slice #958 (parent PRD #956)
         self._main_path, self._tmpdir = _build_session_fixture(
@@ -360,6 +387,7 @@ class TestFiringTreeGhGrouping(unittest.TestCase):
         import transcript as tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None
 
     def _fake_gh_run(self, args, timeout=15):
         """Fake gh that maps slice #958 → PRD #956."""
@@ -456,6 +484,7 @@ class TestFiringTreeFallback(unittest.TestCase):
         self._tr = tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None  # clear disk-cache in-memory (slice #959 perf fix)
 
         self._main_path, self._tmpdir = _build_session_fixture(
             session_id="test-gh-fallback-958",
@@ -475,6 +504,7 @@ class TestFiringTreeFallback(unittest.TestCase):
         import transcript as tr
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
+        tr._disk_cache_data = None
 
     def test_fallback_returns_non_empty_groups(self):
         """Even with gh unavailable, build_firing_tree() returns ≥1 bucket."""

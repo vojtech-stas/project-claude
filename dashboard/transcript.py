@@ -546,6 +546,74 @@ def _gh_run_transcript(args: list[str], timeout: int = 15) -> tuple[int, str]:
 
 
 # ---------------------------------------------------------------------------
+# Disk cache for gh issue/PR → parent-PRD lookups (perf fix, slice #959)
+# ---------------------------------------------------------------------------
+# The mapping is immutable once a slice/PR exists, so we cache permanently.
+# Location: .claude/cache/prd-correlation-cache.json (gitignored via cache/).
+# On lookup: check disk → in-process → only then gh; write-through on gh hit.
+# ---------------------------------------------------------------------------
+
+def _disk_cache_path() -> Path:
+    """Return the path to the persistent PRD-correlation disk cache file.
+
+    Location: <repo-root>/.claude/cache/prd-correlation-cache.json
+    The .claude/cache/ directory is gitignored; the mapping is append-only
+    (immutable once a slice/PR is created, so we never invalidate).
+
+    Falls back to a sibling of this file if the repo root cannot be found.
+    """
+    # Walk up from this file to find the repo root (contains .git)
+    here = Path(__file__).resolve()
+    for parent in [here.parent, here.parent.parent, here.parent.parent.parent]:
+        if (parent / ".git").exists():
+            cache_dir = parent / ".claude" / "cache"
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            return cache_dir / "prd-correlation-cache.json"
+    # Fallback: next to this file
+    return here.parent / "prd-correlation-cache.json"
+
+
+_disk_cache_lock_flag: bool = False  # simple re-entrancy guard (not thread-safe)
+_disk_cache_data: dict[str, int | None] | None = None  # loaded once, written through
+
+
+def _load_disk_cache() -> dict[str, int | None]:
+    """Load the disk cache from JSON file.
+
+    Keys are stringified issue/PR numbers; values are parent PRD ints or null.
+    Returns an empty dict if the file is missing or malformed.
+    """
+    global _disk_cache_data
+    if _disk_cache_data is not None:
+        return _disk_cache_data
+
+    p = _disk_cache_path()
+    try:
+        with p.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            _disk_cache_data = data
+            return _disk_cache_data
+    except Exception:
+        pass
+    _disk_cache_data = {}
+    return _disk_cache_data
+
+
+def _write_disk_cache(data: dict) -> None:
+    """Persist the disk cache to JSON (write-through on every gh resolve)."""
+    p = _disk_cache_path()
+    try:
+        with p.open("w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+    except Exception:
+        pass  # disk write failure is non-fatal; in-process cache still works
+
+
+# ---------------------------------------------------------------------------
 # In-process cache for gh issue/PR lookups
 # ---------------------------------------------------------------------------
 
@@ -662,6 +730,7 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
     """Map a dispatch issue/PR number to its parent PRD number.
 
     This is the primary correlation helper for slice #958 (PRD #956 §2 #1).
+    Perf fix (slice #959 / captured #962): checks disk cache before gh.
 
     Given a number N extracted from a dispatch description:
       - If N is a PRD issue:      return N.
@@ -669,19 +738,35 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
       - If N looks like a PR:     resolve PR → Closes-slice → PRD.
       - If gh is unavailable:     return None (caller uses fallback label).
 
-    Results are cached in-process with a 5-minute TTL (mtime-style).
+    Lookup order: disk cache → in-process cache → gh (write-through on hit).
 
     Returns int (parent PRD) or None (gh unavailable / unresolvable).
     """
     _prd_cache_reset_if_stale()
 
+    # 1. Check in-process cache first (fastest path)
     if n in _prd_cache:
         cached = _prd_cache[n]
         if cached is _GH_UNAVAILABLE:
             return None
         return cached  # type: ignore[return-value]
 
-    # Try as an issue first (slice or PRD)
+    # 2. Check disk cache (warm path; avoids gh on restart)
+    disk_data = _load_disk_cache()
+    disk_key = str(n)
+    if disk_key in disk_data:
+        val = disk_data[disk_key]
+        # val is an int (parent PRD) or None (was a PRD itself, stored as N)
+        # Disk cache uses int values; None means "was a PRD" (val=n when PRD)
+        # Actually: disk stores the resolved parent, or None for "gh failed"
+        if val is None:
+            # Could not resolve (gh was unavailable at write time) — retry gh
+            pass  # fall through to gh
+        else:
+            _prd_cache[n] = val
+            return val  # type: ignore[return-value]
+
+    # 3. Try gh (slow path)
     result = _resolve_slice_to_prd(n)
 
     if result is _GH_UNAVAILABLE:
@@ -689,17 +774,24 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
         pr_result = _resolve_pr_to_prd(n)
         if pr_result is _GH_UNAVAILABLE or pr_result is None:
             _prd_cache[n] = _GH_UNAVAILABLE
+            # Do NOT write None to disk for gh failures — we want to retry on restart
             return None
         _prd_cache[n] = pr_result
+        disk_data[disk_key] = pr_result
+        _write_disk_cache(disk_data)
         return pr_result  # type: ignore[return-value]
 
     if result is None:
         # Issue is a PRD itself — return N
         _prd_cache[n] = n
+        disk_data[disk_key] = n
+        _write_disk_cache(disk_data)
         return n
 
     # result is the parent PRD int
     _prd_cache[n] = result
+    disk_data[disk_key] = result
+    _write_disk_cache(disk_data)
     return result  # type: ignore[return-value]
 
 
@@ -929,6 +1021,66 @@ def _derive_tool_target(description: str, agent_type: str) -> str:
     return agent_type or "unknown"
 
 
+# Built-in Task agent types that go to research/other, not PRD/slice nodes
+_TASK_RESEARCH_TYPES = frozenset({
+    "explore", "plan", "general-purpose", "claude-code-guide",
+    "task",  # plain Task tool calls (no subagent_type override)
+})
+
+_TASK_TOOL_NAME = frozenset({"Task", "task"})  # tool.name in transcript records
+
+
+def _is_research_task(agent_type: str) -> bool:
+    """Return True if agent_type is a built-in Task type → research/other bucket."""
+    return agent_type.lower() in _TASK_RESEARCH_TYPES
+
+
+def _get_prd_subissue_slices(prd_n: int) -> list[int]:
+    """Fetch the slice sub-issue numbers for a PRD via gh CLI.
+
+    Returns a list of sub-issue numbers (ints) labeled 'slice'.
+    Returns [] if gh is unavailable or the PRD has no sub-issues.
+
+    Uses gh issue view with --json subIssues to get the native GitHub
+    sub-issue list. Falls back to [] gracefully on any error.
+    """
+    rc, stdout = _gh_run_transcript([
+        "issue", "view", str(prd_n),
+        "--json", "subIssues",
+    ], timeout=15)
+    if rc != 0 or not stdout.strip():
+        return []
+    try:
+        data = json.loads(stdout)
+    except Exception:
+        return []
+    sub_issues = (data.get("subIssues") or {}).get("nodes") or []
+    if not isinstance(sub_issues, list):
+        # Older gh CLI returns subIssues as a flat list (no .nodes wrapper)
+        # Handle both shapes
+        if isinstance(data.get("subIssues"), list):
+            sub_issues = data["subIssues"]
+        else:
+            return []
+    result: list[int] = []
+    for node in sub_issues:
+        if not isinstance(node, dict):
+            continue
+        n = node.get("number")
+        labels = node.get("labels") or []
+        if not isinstance(labels, list):
+            continue
+        label_names = {
+            (lbl.get("name", "") if isinstance(lbl, dict) else str(lbl))
+            for lbl in labels
+        }
+        # Accept if labeled 'slice', or if no labels field (graceful)
+        if not labels or "slice" in label_names:
+            if n:
+                result.append(int(n))
+    return result
+
+
 def _count_transcript_firing_events(path: Path) -> int:
     """Count unique agent-dispatch events in the full transcript (deduped by tool_use_id).
 
@@ -968,29 +1120,34 @@ def build_firing_tree(path: Path) -> dict:
     4. Enriches each dispatch with actor, tool_target, outcome (slice #929).
     5. Computes completeness_count: unique agent_start events in full transcript
        (deduped by tool_use_id) for AC #6 completeness assertion.
+    6. (slice #959) Builds a nested PRD→slice→dispatch structure with:
+       - Task-type segregation (Explore/Plan/general-purpose → research_other)
+       - Partial marker: PRD node is "partial" when gh sub-issues include slices
+         whose dispatches are absent from this transcript.
+       - Deduplication: each dispatch appears in exactly one leaf
+         (deduped by tool_use_id across all nesting levels).
 
     Returns:
       {
-        "groups": {
-          "<prd-label>": [
-            {
-              "agent":       str,   # agent type (implementer, reviewer, …)
-              "actor":       str,   # WHO fired: orchestrator / <agent-type>
-              "description": str,   # raw description from meta.json
-              "tool_target": str,   # tool/target resource (PR #N / #N / excerpt)
-              "outcome":     str,   # APPROVE / BLOCK / SUCCESS / dispatched / …
-              "start":       str,   # ISO timestamp
-              "end":         str,   # ISO timestamp
-              "verdict":     str,   # raw APPROVE / BLOCK / SUCCESS / … or ""
-              "tool_use_id": str,   # for cross-referencing
-            },
-            …
-          ],
+        "groups": {                  # flat groups (backward-compat)
+          "<prd-label>": [dispatch, …],
           …
         },
-        "dispatch_count":      int,   # rendered rows (meta-map based, deduped)
-        "completeness_count":  int,   # transcript agent_start events (deduped by id)
-        "source": str,   # transcript path
+        "nested_groups": {           # nested PRD → slice → dispatch (slice #959)
+          "<prd-label>": {
+            "prd_n":    int | None,  # resolved PRD number, or None
+            "partial":  bool,        # True when gh sub-issues have absent slices
+            "slices": {
+              "<slice-label>": [dispatch, …]
+            },
+            "unresolved": [dispatch, …],  # dispatches not matched to any slice
+          },
+          …
+        },
+        "research_other": [dispatch, …],  # built-in Task types (Explore/Plan/…)
+        "dispatch_count":      int,
+        "completeness_count":  int,
+        "source": str,
         "error": str | None,
       }
 
@@ -998,6 +1155,8 @@ def build_firing_tree(path: Path) -> dict:
     """
     empty_result: dict = {
         "groups": {},
+        "nested_groups": {},
+        "research_other": [],
         "dispatch_count": 0,
         "completeness_count": 0,
         "source": str(path) if path else "",
@@ -1025,18 +1184,25 @@ def build_firing_tree(path: Path) -> dict:
     # Build actor map: tool_use_id -> actor label
     actor_map = _build_actor_map(path, meta_map)
 
-    # Also collect dispatches from the main transcript for ordering/timestamps
-    # (the meta_map already has toolUseId, so we use that as the primary key)
+    # Build dispatch list; dedupe by tool_use_id
     groups: dict = {}
+    research_other: list = []
     dispatch_count = 0
+    seen_ids: set = set()
+
+    # Collect all dispatches
+    all_dispatches: list[dict] = []
 
     for tool_use_id, meta in meta_map.items():
+        if tool_use_id in seen_ids:
+            continue
+        seen_ids.add(tool_use_id)
+
         agent_type   = meta["agent_type"]
         description  = meta["description"]
         sub_path     = meta["subagent_file"]
 
         outcome_data = _parse_subagent_outcome(sub_path)
-        label        = _derive_prd_label(description, agent_type)
 
         # Derive WHO fired this dispatch
         actor = actor_map.get(tool_use_id, "orchestrator") or "orchestrator"
@@ -1059,18 +1225,94 @@ def build_firing_tree(path: Path) -> dict:
             "verdict":     raw_verdict,
             "tool_use_id": tool_use_id,
         }
-
-        if label not in groups:
-            groups[label] = []
-        groups[label].append(dispatch)
         dispatch_count += 1
+
+        # Task segregation: built-in Task types go to research_other
+        if _is_research_task(agent_type):
+            research_other.append(dispatch)
+        else:
+            label = _derive_prd_label(description, agent_type)
+            if label not in groups:
+                groups[label] = []
+            groups[label].append(dispatch)
+
+        all_dispatches.append(dispatch)
 
     # Sort dispatches within each group by start timestamp
     for label in groups:
         groups[label].sort(key=lambda d: d.get("start") or "")
+    research_other.sort(key=lambda d: d.get("start") or "")
+
+    # ---------------------------------------------------------------------------
+    # Build nested_groups: PRD → slice → dispatch structure
+    # ---------------------------------------------------------------------------
+    nested_groups: dict = {}
+
+    # For each PRD-labeled group, attempt to nest by slice sub-issue
+    for label, dispatches in groups.items():
+        # Extract PRD number from label ("PRD #956" -> 956)
+        prd_n_match = _re.search(r"PRD\s+#(\d+)", label)
+        prd_n: int | None = int(prd_n_match.group(1)) if prd_n_match else None
+
+        # For each dispatch, derive the slice number it references
+        # (the raw #N in the description, before PRD resolution)
+        slice_buckets: dict[str, list] = {}
+        unresolved: list = []
+
+        for d in dispatches:
+            desc = d.get("description", "")
+            # Find the raw issue number from description
+            raw_m = _ISSUE_RE.search(desc)
+            raw_n = int(raw_m.group(1)) if raw_m else None
+
+            # Determine slice label
+            slice_label: str | None = None
+            if raw_n is not None and prd_n is not None and raw_n != prd_n:
+                # raw_n might be a slice or a PR — label it
+                slice_label = f"#{raw_n}"
+            elif raw_n is not None and raw_n == prd_n:
+                # Dispatch references the PRD directly — place in unresolved
+                slice_label = None
+
+            if slice_label:
+                if slice_label not in slice_buckets:
+                    slice_buckets[slice_label] = []
+                slice_buckets[slice_label].append(d)
+            else:
+                unresolved.append(d)
+
+        # Sort dispatches within each slice bucket
+        for sl in slice_buckets:
+            slice_buckets[sl].sort(key=lambda d: d.get("start") or "")
+
+        # Partial marker: check if any gh sub-issue slices are absent from
+        # this transcript's dispatch set.
+        partial = False
+        if prd_n is not None:
+            try:
+                gh_slices = _get_prd_subissue_slices(prd_n)
+                if gh_slices:
+                    # Slices present in transcript: set of raw #N numbers in dispatches
+                    transcript_slice_labels = set(slice_buckets.keys())
+                    # Compare: any gh sub-issue slice NOT in transcript?
+                    for gs in gh_slices:
+                        if f"#{gs}" not in transcript_slice_labels:
+                            partial = True
+                            break
+            except Exception:
+                pass  # gh failure — leave partial=False (honest unknown)
+
+        nested_groups[label] = {
+            "prd_n":      prd_n,
+            "partial":    partial,
+            "slices":     slice_buckets,
+            "unresolved": unresolved,
+        }
 
     return {
         "groups": groups,
+        "nested_groups": nested_groups,
+        "research_other": research_other,
         "dispatch_count": dispatch_count,
         "completeness_count": completeness_count,
         "source": str(path),
@@ -1100,6 +1342,8 @@ def get_session_firing() -> dict:
     if path is None:
         return {
             "groups": {},
+            "nested_groups": {},
+            "research_other": [],
             "dispatch_count": 0,
             "source": "",
             "error": "no transcript file found",
@@ -1110,6 +1354,8 @@ def get_session_firing() -> dict:
     except Exception as exc:
         return {
             "groups": {},
+            "nested_groups": {},
+            "research_other": [],
             "dispatch_count": 0,
             "source": str(path),
             "error": f"stat failed: {exc}",

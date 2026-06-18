@@ -1025,6 +1025,70 @@
   }
   .firing-completeness-ok   { border-color: var(--green); color: var(--green); }
   .firing-completeness-warn { border-color: var(--amber); color: var(--amber); }
+
+  /* Nested firing tree (slice #959): PRD → slice → dispatch */
+  .firing-prd-node {
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .firing-prd-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: #1c2128; cursor: pointer;
+    user-select: none;
+  }
+  .firing-prd-label {
+    color: var(--cyan); font-size: 12px; font-weight: 700; flex: 1;
+  }
+  .firing-prd-partial {
+    font-size: 10px; color: var(--amber);
+    border: 1px solid var(--amber); border-radius: 8px;
+    padding: 1px 7px; flex-shrink: 0;
+  }
+  .firing-prd-count {
+    color: var(--muted); font-size: 10px; flex-shrink: 0;
+  }
+  .firing-slice-node {
+    border-top: 1px solid var(--border);
+    padding: 4px 0 4px 16px;
+  }
+  .firing-slice-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 3px 8px; color: var(--text); font-size: 11px;
+  }
+  .firing-slice-label {
+    color: var(--text); font-size: 11px; font-weight: 600;
+  }
+  .firing-slice-count {
+    color: var(--muted); font-size: 10px;
+  }
+  .firing-slice-dispatches {
+    padding: 4px 0 4px 16px;
+  }
+  .firing-nested-row {
+    display: flex; align-items: flex-start; gap: 6px;
+    padding: 3px 8px; border-bottom: 1px solid #21262d; font-size: 10px;
+  }
+  .firing-nested-row:last-child { border-bottom: none; }
+  .firing-nested-agent {
+    flex-shrink: 0; min-width: 90px;
+    color: var(--cyan); font-weight: 600;
+  }
+  .firing-nested-outcome { flex-shrink: 0; min-width: 70px; font-weight: 700; }
+  .firing-nested-target { color: var(--muted); flex-shrink: 0; min-width: 60px; }
+  .firing-nested-ts { color: var(--muted); flex-shrink: 0; font-size: 9px; }
+  .firing-nested-desc { color: var(--muted); flex: 1; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+  .firing-research-section {
+    margin-top: 8px; border: 1px solid var(--border); border-radius: 6px;
+    overflow: hidden;
+  }
+  .firing-research-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px; background: #1c2128;
+  }
+  .firing-research-label {
+    color: var(--muted); font-size: 11px; font-style: italic; flex: 1;
+  }
 </style>
 </head>
 <body>
@@ -1202,19 +1266,19 @@
       <div class="lane-b-header">
         <h3>Session live (transcript) &mdash; primary source</h3>
         <span id="session-live-source" style="color:var(--muted);font-size:10px;margin-left:8px;">—</span>
-        <button class="refresh" onclick="reloadSessionLive()" style="margin-left:auto;">Refresh</button>
+        <button class="refresh" onclick="reloadSessionLive()" style="margin-left:auto;">Refresh (auto 15s)</button>
       </div>
       <div id="session-live-content" style="padding:10px 14px;">
         <span style="color:var(--muted);font-size:11px;">Loading transcript events…</span>
       </div>
     </div>
 
-    <!-- Session-firing panel (slice #901): per-PRD dispatch tree from transcript -->
+    <!-- Session-firing panel (slice #901/#959): nested PRD→slice→dispatch tree -->
     <div class="lane-b" id="session-firing-panel" style="margin-top:8px;">
       <div class="lane-b-header">
-        <h3>Session firing tree (transcript) &mdash; dispatches by PRD</h3>
+        <h3>Session firing tree (transcript) &mdash; nested PRD &rsaquo; slice &rsaquo; dispatch</h3>
         <span id="session-firing-source" style="color:var(--muted);font-size:10px;margin-left:8px;">—</span>
-        <button class="refresh" onclick="reloadSessionFiring()" style="margin-left:auto;">Refresh</button>
+        <button class="refresh" onclick="reloadSessionFiring()" style="margin-left:auto;">Refresh (auto 30s)</button>
       </div>
       <div id="session-firing-content" style="padding:10px 14px;">
         <span style="color:var(--muted);font-size:11px;">Loading firing tree…</span>
@@ -2998,55 +3062,94 @@ registerTabHook('live', startSessionLive);
 let _sessionFiringLoaded = false;
 let _sessionFiringTimer = null;
 
-const _FIRING_VERDICT_CLASS = {
-  'APPROVE':  'firing-badge-approve',
-  'SUCCESS':  'firing-badge-approve',
-  'BLOCK':    'firing-badge-block',
-  'BLOCKED':  'firing-badge-block',
-  'CONFUSION':'firing-badge-critic',
-  'INVALID_INPUT': 'firing-badge-block',
-};
-
 function _firingOutcomeClass(outcome) {
   const o = (outcome || '').toUpperCase();
   if (o === 'APPROVE') return 'firing-outcome-approve';
   if (o === 'BLOCK')   return 'firing-outcome-block';
-  if (o === 'SUCCESS' || o === 'BLOCKED') return o === 'SUCCESS' ? 'firing-outcome-success' : 'firing-outcome-block';
+  if (o === 'SUCCESS') return 'firing-outcome-success';
+  if (o === 'BLOCKED') return 'firing-outcome-block';
   if (o === 'DISPATCHED') return 'firing-outcome-dispatched';
   return 'firing-outcome-other';
 }
 
-function _renderFiringGroup(label, dispatches) {
-  const rows = dispatches.map(function(d) {
-    const agent   = escHtml(d.agent || '?');
-    const actor   = escHtml(d.actor || 'orchestrator');
-    const verdict = d.verdict || '';
-    const outcome = escHtml(d.outcome || (verdict || 'dispatched'));
-    const toolTarget = escHtml((d.tool_target || '').slice(0, 30));
-    const vClass  = _FIRING_VERDICT_CLASS[verdict.toUpperCase()] || 'firing-badge-critic';
-    const vBadge  = verdict
-      ? '<span class="firing-badge ' + vClass + '">' + escHtml(verdict) + '</span>'
-      : '<span style="color:var(--muted);font-size:9px;">pending</span>';
-    const startTs = d.start ? new Date(d.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
-    const endTs   = d.end   ? new Date(d.end).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
-    const desc    = escHtml((d.description || '').slice(0, 50));
-    const outcomeClass = _firingOutcomeClass(outcome);
-    return '<div class="firing-event">' +
-      '<span class="firing-badge firing-badge-' + (agent.indexOf('implementer') >= 0 ? 'implementer' : 'critic') + '" title="subagent: ' + agent + '">' + agent + '</span>' +
-      '<div class="firing-event-actor" title="WHO fired">&#9656; ' + actor + '</div>' +
-      '<div class="firing-event-target" title="tool/target">' + (toolTarget || '—') + '</div>' +
-      '<div class="firing-event-outcome ' + outcomeClass + '" title="outcome">' + outcome + '</div>' +
-      '<div class="firing-event-label">' + desc + '</div>' +
-      '<div class="firing-event-ts">' + startTs + ' &rarr; ' + endTs + '</div>' +
-      '<div style="margin-top:3px;">' + vBadge + '</div>' +
-      '</div>';
-  }).join('');
-  return '<div class="firing-pr-card">' +
-    '<div class="firing-pr-header">' +
-    '<span class="firing-pr-number">' + escHtml(label) + '</span>' +
-    '<span class="firing-pr-closes">' + dispatches.length + ' dispatch' + (dispatches.length !== 1 ? 'es' : '') + '</span>' +
+// Render a single dispatch as a compact nested row
+function _renderNestedDispatchRow(d) {
+  const agent   = escHtml(d.agent || '?');
+  const outcome = escHtml(d.outcome || 'dispatched');
+  const target  = escHtml((d.tool_target || '').slice(0, 25));
+  const desc    = escHtml((d.description || '').slice(0, 55));
+  const startTs = d.start ? new Date(d.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+  const endTs   = d.end   ? new Date(d.end).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+  const tsStr   = startTs ? (startTs + (endTs && endTs !== startTs ? ' → ' + endTs : '')) : '—';
+  const oCls    = _firingOutcomeClass(outcome);
+  return '<div class="firing-nested-row">' +
+    '<span class="firing-nested-agent" title="' + agent + '">' + agent + '</span>' +
+    '<span class="firing-nested-outcome ' + oCls + '">' + outcome + '</span>' +
+    '<span class="firing-nested-target">' + (target || '—') + '</span>' +
+    '<span class="firing-nested-ts">' + escHtml(tsStr) + '</span>' +
+    '<span class="firing-nested-desc" title="' + escHtml(d.description || '') + '">' + desc + '</span>' +
+    '</div>';
+}
+
+// Render a slice sub-node with its dispatches
+function _renderSliceNode(sliceLabel, dispatches) {
+  const cnt = dispatches.length;
+  const rows = dispatches.map(_renderNestedDispatchRow).join('');
+  return '<div class="firing-slice-node">' +
+    '<div class="firing-slice-header">' +
+    '<span class="firing-slice-label">' + escHtml(sliceLabel) + '</span>' +
+    '<span class="firing-slice-count">&nbsp;&mdash;&nbsp;' + cnt + ' dispatch' + (cnt !== 1 ? 'es' : '') + '</span>' +
     '</div>' +
-    '<div class="firing-timeline">' + rows + '</div>' +
+    '<div class="firing-slice-dispatches">' + rows + '</div>' +
+    '</div>';
+}
+
+// Render a PRD top-level node with its nested slices
+function _renderNestedPrdNode(label, nodeData) {
+  const slices     = nodeData.slices || {};
+  const unresolved = nodeData.unresolved || [];
+  const partial    = nodeData.partial || false;
+
+  // Count total dispatches in this PRD node
+  const totalDispatches = Object.values(slices).reduce(function(sum, arr) { return sum + arr.length; }, 0)
+    + unresolved.length;
+
+  const partialBadge = partial
+    ? '<span class="firing-prd-partial">partial / current-session</span>'
+    : '';
+
+  const sliceLabels = Object.keys(slices).sort();
+  let sliceHtml = sliceLabels.map(function(sl) {
+    return _renderSliceNode(sl, slices[sl]);
+  }).join('');
+
+  // Unresolved dispatches (reference the PRD directly or uncategorised)
+  if (unresolved.length > 0) {
+    sliceHtml += _renderSliceNode('(direct / unresolved)', unresolved);
+  }
+
+  return '<div class="firing-prd-node">' +
+    '<div class="firing-prd-header">' +
+    '<span class="firing-prd-label">' + escHtml(label) + '</span>' +
+    partialBadge +
+    '<span class="firing-prd-count">' + totalDispatches + ' dispatch' + (totalDispatches !== 1 ? 'es' : '') +
+      ' &mdash; ' + sliceLabels.length + ' slice' + (sliceLabels.length !== 1 ? 's' : '') + '</span>' +
+    '</div>' +
+    sliceHtml +
+    '</div>';
+}
+
+// Render the research/other section for built-in Task types
+function _renderResearchSection(dispatches) {
+  if (!dispatches || dispatches.length === 0) return '';
+  const cnt  = dispatches.length;
+  const rows = dispatches.map(_renderNestedDispatchRow).join('');
+  return '<div class="firing-research-section">' +
+    '<div class="firing-research-header">' +
+    '<span class="firing-research-label">research / other (Explore · Plan · general-purpose · claude-code-guide)</span>' +
+    '<span class="firing-prd-count">' + cnt + ' dispatch' + (cnt !== 1 ? 'es' : '') + '</span>' +
+    '</div>' +
+    '<div style="padding:4px 0 4px 8px;">' + rows + '</div>' +
     '</div>';
 }
 
@@ -3066,31 +3169,46 @@ async function fetchSessionFiring() {
       srcEl.textContent = src ? src.split(/[\\/]/).slice(-3).join('/') : '—';
       srcEl.title = src;
     }
-    const groups  = data.groups || {};
-    const total   = data.dispatch_count || 0;
-    const complete = typeof data.completeness_count === 'number' ? data.completeness_count : null;
-    const labels  = Object.keys(groups).sort();
-    if (labels.length === 0) {
+
+    const nestedGroups  = data.nested_groups || {};
+    const researchOther = data.research_other || [];
+    const total         = data.dispatch_count || 0;
+    const complete      = typeof data.completeness_count === 'number' ? data.completeness_count : null;
+    const prdLabels     = Object.keys(nestedGroups).sort();
+
+    // Fall back to flat view if nested_groups is missing (old server)
+    if (prdLabels.length === 0 && researchOther.length === 0) {
       const errMsg = data.error ? ' (' + data.error + ')' : '';
       el.innerHTML = '<span style="color:var(--muted);font-size:11px;">No dispatches found' + escHtml(errMsg) + '.</span>';
       return;
     }
-    // Completeness badge: rendered rows vs transcript firing-event count (deduped)
+
+    // Completeness badge
     let completeBadge = '';
     if (complete !== null) {
       const match = (total === complete);
       const badgeClass = match ? 'firing-completeness-ok' : 'firing-completeness-warn';
       const icon = match ? '&#10003;' : '&#9888;';
       completeBadge = '<div class="firing-completeness-badge ' + badgeClass + '">' +
-        icon + ' completeness: ' + total + ' rendered / ' + complete + ' transcript events (deduped)' +
+        icon + ' ' + total + ' rendered / ' + complete + ' transcript dispatches (deduped)' +
         '</div>';
     }
+
     let html = completeBadge +
       '<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">' +
-      total + ' dispatch' + (total !== 1 ? 'es' : '') + ' across ' + labels.length + ' PRD bucket' + (labels.length !== 1 ? 's' : '') + '</div>';
-    html += labels.map(function(lbl) {
-      return _renderFiringGroup(lbl, groups[lbl]);
+      total + ' dispatch' + (total !== 1 ? 'es' : '') +
+      ' &mdash; ' + prdLabels.length + ' PRD node' + (prdLabels.length !== 1 ? 's' : '') +
+      (researchOther.length ? ' + ' + researchOther.length + ' research/other' : '') +
+      '</div>';
+
+    // Nested PRD nodes
+    html += prdLabels.map(function(lbl) {
+      return _renderNestedPrdNode(lbl, nestedGroups[lbl]);
     }).join('');
+
+    // Research/other section
+    html += _renderResearchSection(researchOther);
+
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';

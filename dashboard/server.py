@@ -19,6 +19,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
         GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
         GET /api/promotion            -> JSON develop/main topology + last promotions + held_reason (slice #843)
+        GET /api/runtime-reading      -> JSON current-session runtime reading from transcript (slice #928)
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
         (GET /api/dora removed — slice #854, fleet-economics machinery retired)
@@ -725,6 +726,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(_prd_firing_mod.fetch_prd_firing(limit))
             except Exception as exc:
                 self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
+
+        elif path == "/api/runtime-reading":
+            # GET /api/runtime-reading — current-session runtime reading from transcript
+            # (slice #928). Derives session age, event count, and most-recent event type
+            # from the transcript-sourced event list; honest no_session flag when no
+            # transcript is found.  Cached by transcript file mtime.
+            # Returns {source, event_count, session_age_s, last_event_ts,
+            #          last_event_type, no_session, error}.
+            try:
+                self._send_json(_transcript_mod.get_runtime_reading())
+            except Exception as exc:
+                self._send_json(
+                    {"source": "", "event_count": 0, "session_age_s": None,
+                     "last_event_ts": "", "last_event_type": "",
+                     "no_session": True, "error": str(exc)}, 500
+                )
 
         elif path == "/api/session-live":
             # GET /api/session-live — current-session events from transcript (slice #899).

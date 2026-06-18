@@ -28,6 +28,7 @@ Public API:
   get_session_events() -> dict  (for /api/session-live)
   build_firing_tree(path: Path) -> dict  (for /api/session-firing)
   get_session_firing() -> dict  (cached, for /api/session-firing)
+  get_runtime_reading() -> dict  (cached, for /api/runtime-reading)
 
 CLI:
   python dashboard/transcript.py --self
@@ -846,6 +847,113 @@ def get_session_events() -> dict:
         "event_count": len(events),
         "error": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Runtime reading cache for /api/runtime-reading
+# ---------------------------------------------------------------------------
+
+_runtime_cache: dict = {
+    "path":   None,   # Path | None
+    "mtime":  None,   # float | None
+    "result": None,   # dict | None
+}
+
+
+def get_runtime_reading() -> dict:
+    """Return a current-session runtime reading derived from the transcript.
+
+    Uses the session-events cache (same mtime key as get_session_events) to
+    avoid a full re-parse per request.
+
+    Returns:
+      {
+        "source":       str,   # transcript file path (or "" when no transcript)
+        "event_count":  int,   # total normalised events in transcript
+        "session_age_s": float | None,  # seconds since first event timestamp
+        "last_event_ts": str,  # ISO-8601 timestamp of most-recent event
+        "last_event_type": str,  # event type of most-recent event (or "")
+        "no_session":   bool,  # True when no transcript file was found
+        "error":        str | None,
+      }
+
+    Legitimately returns no_session=True when there is no active transcript —
+    per PRD #927 §6 rabbit-hole: "not observable" is correct when no session
+    exists; only the false/incorrect cases are fixed by this function.
+    """
+    global _runtime_cache
+
+    path = resolve_transcript()
+    if path is None:
+        return {
+            "source": "",
+            "event_count": 0,
+            "session_age_s": None,
+            "last_event_ts": "",
+            "last_event_type": "",
+            "no_session": True,
+            "error": None,
+        }
+
+    try:
+        mtime = path.stat().st_mtime
+    except Exception as exc:
+        return {
+            "source": str(path),
+            "event_count": 0,
+            "session_age_s": None,
+            "last_event_ts": "",
+            "last_event_type": "",
+            "no_session": False,
+            "error": f"stat failed: {exc}",
+        }
+
+    # Cache hit
+    if _runtime_cache["path"] == path and _runtime_cache["mtime"] == mtime:
+        return _runtime_cache["result"]  # type: ignore[return-value]
+
+    # Reuse (or trigger) the session-events cache for the parsed events
+    session_data = get_session_events()
+    events = session_data.get("events", [])
+    parse_error = session_data.get("error")
+
+    # Derive reading from events
+    event_count = len(events)
+    last_event_ts = ""
+    last_event_type = ""
+    session_age_s = None
+
+    if events:
+        first = events[0]
+        last = events[-1]
+        last_event_ts = last.get("ts", "")
+        last_event_type = last.get("event", "")
+
+        # Session age: now − first-event timestamp
+        first_ts_str = first.get("ts", "")
+        if first_ts_str:
+            try:
+                import time as _time
+                from datetime import datetime as _dt
+                first_dt = _dt.fromisoformat(first_ts_str.replace("Z", "+00:00"))
+                session_age_s = round(_time.time() - first_dt.timestamp(), 1)
+            except Exception:
+                pass
+
+    result = {
+        "source": str(path),
+        "event_count": event_count,
+        "session_age_s": session_age_s,
+        "last_event_ts": last_event_ts,
+        "last_event_type": last_event_type,
+        "no_session": False,
+        "error": parse_error,
+    }
+
+    _runtime_cache["path"]   = path
+    _runtime_cache["mtime"]  = mtime
+    _runtime_cache["result"] = result
+    return result
 
 
 # ---------------------------------------------------------------------------

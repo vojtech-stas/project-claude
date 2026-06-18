@@ -1126,6 +1126,18 @@
 
 <!-- LIVE TAB -->
 <div id="tab-live" class="tab">
+  <!-- Runtime panel (slice #928): transcript-sourced session runtime reading -->
+  <div class="lane-b" id="runtime-panel" style="margin-bottom:8px;">
+    <div class="lane-b-header">
+      <h3>Runtime reading (transcript)</h3>
+      <span id="runtime-source" style="color:var(--muted);font-size:10px;margin-left:8px;">—</span>
+      <button class="refresh" onclick="reloadRuntimeReading()" style="margin-left:auto;">Refresh</button>
+    </div>
+    <div id="runtime-content" style="padding:10px 14px;">
+      <span style="color:var(--muted);font-size:11px;">Loading runtime reading…</span>
+    </div>
+  </div>
+
   <div class="live-lane-a">
     <!-- Lane A header: PRD title + capture pill + refresh -->
     <div class="live-header">
@@ -2743,6 +2755,86 @@ function startRuns() {
 }
 // Register runs fetch into the tab registry — fires once on Live tab activation
 registerTabHook('live', startRuns);
+
+// ---------------------------------------------------------------------------
+// /api/runtime-reading — transcript-sourced session runtime reading (slice #928)
+// ---------------------------------------------------------------------------
+// Polls once on Live tab activation and every 15s; Refresh button reloads.
+// Primary source for the Runtime panel; replaces runtime_observer.py fallback.
+// Defensive: honest no_session state when no transcript found.
+
+let _runtimeReadingTimer = null;
+
+function _formatAge(seconds) {
+  if (seconds == null) return '?';
+  if (seconds < 60) return Math.round(seconds) + 's';
+  if (seconds < 3600) return Math.round(seconds / 60) + 'm';
+  return (seconds / 3600).toFixed(1) + 'h';
+}
+
+async function fetchRuntimeReading() {
+  const el = document.getElementById('runtime-content');
+  const srcEl = document.getElementById('runtime-source');
+  if (!el) return;
+  try {
+    const resp = await fetch('/api/runtime-reading');
+    if (!resp.ok) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: HTTP ' + resp.status + '</span>';
+      return;
+    }
+    const d = await resp.json();
+
+    // Update source label (last 3 path segments for readability)
+    if (srcEl) {
+      const src = d.source || '';
+      srcEl.textContent = src ? src.split(/[\\/]/).slice(-3).join('/') : '—';
+      srcEl.title = src;
+    }
+
+    if (d.no_session) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">' +
+        'not observable — no active session transcript found</span>';
+      return;
+    }
+
+    if (d.error && d.event_count === 0) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' +
+        escHtml(d.error) + '</span>';
+      return;
+    }
+
+    // Render a compact reading row
+    const age = d.session_age_s != null ? _formatAge(d.session_age_s) : '?';
+    const lastTs = d.last_event_ts
+      ? new Date(d.last_event_ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      : '—';
+    const lastType = d.last_event_type || '—';
+
+    el.innerHTML =
+      '<div style="display:flex;gap:24px;flex-wrap:wrap;font-size:11px;padding:2px 0;">' +
+        '<div><span style="color:var(--muted);">events:</span> <strong>' + escHtml(String(d.event_count)) + '</strong></div>' +
+        '<div><span style="color:var(--muted);">session age:</span> <strong>' + escHtml(age) + '</strong></div>' +
+        '<div><span style="color:var(--muted);">last event:</span> <strong>' + escHtml(lastTs) + '</strong></div>' +
+        '<div><span style="color:var(--muted);">last type:</span> <strong>' + escHtml(lastType) + '</strong></div>' +
+      '</div>';
+  } catch (e) {
+    el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Error: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function reloadRuntimeReading() {
+  fetchRuntimeReading();
+}
+
+function startRuntimeReading() {
+  fetchRuntimeReading();
+  _runtimeReadingTimer = setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    fetchRuntimeReading();
+  }, 15000);
+}
+// Register runtime-reading to fire on Live tab activation
+registerTabHook('live', startRuntimeReading);
 
 // ---------------------------------------------------------------------------
 // /api/session-live — transcript-sourced current-session event feed (slice #899)

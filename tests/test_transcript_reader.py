@@ -776,5 +776,181 @@ class TestServerFiringRoutePresent(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Group 7: /api/runtime-reading — transcript-sourced runtime panel (slice #928)
+# ---------------------------------------------------------------------------
+
+class TestRuntimeReading(unittest.TestCase):
+    """get_runtime_reading() returns a dict with source + reading fields."""
+
+    def setUp(self):
+        _inject_dashboard()
+        import transcript as tr
+        self._tr = tr
+
+    def test_returns_dict(self):
+        """get_runtime_reading() must return a dict."""
+        result = self._tr.get_runtime_reading()
+        self.assertIsInstance(result, dict,
+                              "get_runtime_reading() must return a dict")
+
+    def test_has_source_field(self):
+        """Result must have a 'source' field (AC #1: source names the transcript)."""
+        result = self._tr.get_runtime_reading()
+        self.assertIn("source", result,
+                      "get_runtime_reading() result must have 'source' field")
+
+    def test_has_required_keys(self):
+        """Result must have all required reading keys."""
+        result = self._tr.get_runtime_reading()
+        for key in ("source", "event_count", "session_age_s",
+                    "last_event_ts", "last_event_type", "no_session"):
+            self.assertIn(key, result,
+                          f"get_runtime_reading() result must have key '{key}'")
+
+    def test_event_count_is_int(self):
+        """event_count must be an integer."""
+        result = self._tr.get_runtime_reading()
+        self.assertIsInstance(result["event_count"], int,
+                              "'event_count' must be an int")
+
+    def test_no_session_is_bool(self):
+        """no_session must be a bool."""
+        result = self._tr.get_runtime_reading()
+        self.assertIsInstance(result["no_session"], bool,
+                              "'no_session' must be a bool")
+
+
+class TestRuntimeReadingFromFixture(unittest.TestCase):
+    """Fixture transcript yields a runtime reading with a non-empty source field.
+
+    This is the regression test for AC #1 (slice #928):
+      a fixture transcript JSONL yields ≥1 runtime reading whose payload
+      carries the 'source' field naming the transcript file.
+    """
+
+    def setUp(self):
+        _inject_dashboard()
+        import transcript as tr
+        self._tr = tr
+        # Write fixture to a temp file and patch resolve_transcript
+        self._path = _make_fixture_jsonl(_FIXTURE_RECORDS)
+
+    def tearDown(self):
+        self._path.unlink(missing_ok=True)
+
+    def _reading_from_fixture(self):
+        """Return get_runtime_reading() result using the fixture transcript directly."""
+        import os
+        # Inject the fixture path via the env var used by resolve_transcript
+        old = os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+        try:
+            os.environ["CLAUDE_TRANSCRIPT_PATH"] = str(self._path)
+            # Clear the runtime cache so the env var takes effect
+            self._tr._runtime_cache["path"] = None
+            self._tr._runtime_cache["mtime"] = None
+            self._tr._runtime_cache["result"] = None
+            # Also clear the session-events cache
+            self._tr._cache["path"] = None
+            self._tr._cache["mtime"] = None
+            result = self._tr.get_runtime_reading()
+        finally:
+            if old:
+                os.environ["CLAUDE_TRANSCRIPT_PATH"] = old
+            else:
+                os.environ.pop("CLAUDE_TRANSCRIPT_PATH", None)
+            # Reset caches after test
+            self._tr._runtime_cache["path"] = None
+            self._tr._runtime_cache["mtime"] = None
+            self._tr._runtime_cache["result"] = None
+            self._tr._cache["path"] = None
+            self._tr._cache["mtime"] = None
+        return result
+
+    def test_source_field_names_transcript_file(self):
+        """AC #1: source field must name the transcript file path."""
+        result = self._reading_from_fixture()
+        src = result.get("source", "")
+        self.assertTrue(src,
+                        "source field must be non-empty when a transcript exists")
+        self.assertIn(self._path.stem, src,
+                      "source field must contain the transcript filename stem")
+
+    def test_event_count_positive(self):
+        """Fixture transcript must yield ≥1 runtime reading (event_count > 0)."""
+        result = self._reading_from_fixture()
+        self.assertGreater(result.get("event_count", 0), 0,
+                           "event_count must be > 0 for a non-empty fixture transcript")
+
+    def test_no_session_false(self):
+        """no_session must be False when a transcript file is present."""
+        result = self._reading_from_fixture()
+        self.assertFalse(result.get("no_session", True),
+                         "no_session must be False when a transcript file was found")
+
+    def test_session_age_present(self):
+        """session_age_s must be a positive float when events have timestamps."""
+        result = self._reading_from_fixture()
+        age = result.get("session_age_s")
+        self.assertIsNotNone(age, "session_age_s must not be None for a transcript with timestamps")
+        self.assertGreater(age, 0,
+                           "session_age_s must be > 0 (fixture timestamps are in the past)")
+
+    def test_last_event_type_non_empty(self):
+        """last_event_type must be a non-empty string for a non-empty transcript."""
+        result = self._reading_from_fixture()
+        self.assertTrue(result.get("last_event_type", ""),
+                        "last_event_type must be non-empty for a transcript with events")
+
+
+class TestRuntimeReadingRoutePresent(unittest.TestCase):
+    """server.py must expose /api/runtime-reading; index.html must fetch it."""
+
+    def test_server_py_has_runtime_reading_route(self):
+        """server.py must contain '/api/runtime-reading' route."""
+        src = SERVER_PY.read_text(encoding="utf-8")
+        self.assertIn(
+            '"/api/runtime-reading"',
+            src,
+            "server.py must contain the /api/runtime-reading route handler",
+        )
+
+    def test_server_py_calls_get_runtime_reading(self):
+        """server.py must call get_runtime_reading() in the route handler."""
+        src = SERVER_PY.read_text(encoding="utf-8")
+        self.assertIn(
+            "get_runtime_reading",
+            src,
+            "server.py must call get_runtime_reading() for the /api/runtime-reading route",
+        )
+
+    def test_index_html_fetches_runtime_reading(self):
+        """index.html must reference /api/runtime-reading (DEAD-ROUTES compliance)."""
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn(
+            "/api/runtime-reading",
+            html,
+            "index.html must fetch /api/runtime-reading (DEAD-ROUTES compliance)",
+        )
+
+    def test_index_html_has_runtime_panel(self):
+        """index.html must have the runtime-content div."""
+        html = INDEX_HTML.read_text(encoding="utf-8")
+        self.assertIn(
+            "runtime-content",
+            html,
+            "index.html must contain the runtime-content element",
+        )
+
+    def test_transcript_get_runtime_reading_exists(self):
+        """transcript.py must export get_runtime_reading()."""
+        _inject_dashboard()
+        import transcript as tr
+        self.assertTrue(
+            callable(getattr(tr, "get_runtime_reading", None)),
+            "transcript.py must define and export get_runtime_reading()",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

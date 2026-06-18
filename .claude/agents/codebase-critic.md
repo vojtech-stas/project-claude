@@ -65,10 +65,10 @@ These classes are distinct from the per-PRD rubric; they look for cross-PRD / cr
 
 #### WR-DUPLICATED-MECHANISM
 
-**What it checks:** the same logical mechanism is implemented independently in two or more subsystem files, creating divergence risk. This is the dashboard-re-implements-`/audit-meta` class.
+**What it checks:** the same logical mechanism is implemented independently in two or more subsystem files, creating divergence risk. This is the dashboard-re-implements-audit-checks class.
 
 **Signal examples:**
-- Dashboard `server.py` re-implements checks that `tools/ci-checks.sh` or `.claude/skills/audit-meta/SKILL.md` already define.
+- Dashboard `server.py` re-implements checks that `tools/ci-checks.sh` or `dashboard/health.py` already define in the check registry.
 - Two agent files each define the same critic-loop contract inline rather than cross-referencing the canonical source.
 - A skill and an agent both embed the same ADR D-ID list with no shared reference.
 
@@ -116,7 +116,7 @@ FINDINGS_COUNT: <integer ≥ 0>
 
 - **Does not file issues.** The main agent harvests findings and files `captured` issues per rule #11. This agent stays read-only.
 - **Does not block anything.** Whole-repo mode is a non-blocking reflection tool per ADR-0051 D3.
-- **Does not re-run mechanical detectors.** `audit-meta` and `tools/ci-checks.sh` own the deterministic layer. This mode judges only the semantic/cross-subsystem concerns they cannot catch.
+- **Does not re-run mechanical detectors.** The STRUCT-*/DOCS-* checks (now absorbed into per-PRD mode) and `tools/ci-checks.sh` own the deterministic layer. Whole-repo mode judges only the semantic/cross-subsystem concerns they cannot catch.
 - **Does not emit a CRITIC trailer.** Whole-repo mode is a generator (GENERATOR trailer only), not a critic gate.
 - **Does not deep-read every file.** The protocol is map + bounded seam spot-reads (cap per Step 2 above). A full deep read would not fit in context and is deliberately out of scope (ADR-0051 D5 + PRD #601 §6).
 
@@ -134,6 +134,154 @@ FINDINGS_COUNT: <integer ≥ 0>
 - **HEAD ref** — the current last-slice branch HEAD (before merge).
 
 If any of these is missing → return `INVALID_INPUT: <reason>` and stop.
+
+---
+
+## Deterministic pre-checks (absorbed from audit-meta, PRD #919 slice #920)
+
+Before applying the three judgment criteria below, run the full set of
+structure (STRUCT-*) and docs-currency (DOCS-*) registry checks automatically.
+These were formerly the manual `/audit-meta` skill; they now execute as the
+first step of every per-PRD codebase-critic pass.
+
+**Mechanic:** iterate the STRUCT-* and DOCS-* IDs listed in this section; for
+each, call `python dashboard/health.py --check <ID>` from the repo root.
+Collect PASS/WARN/FAIL per check. Any FAIL result is a BLOCK (mechanically
+broken invariant); a WARN is reported but does not block. Include the results
+as a "Pre-check results" table at the top of your per-PRD rubric output.
+
+**Why here?** The checks are deterministic (grep/count/file-exists) and must
+run on every PRD close. Absorbing them into the per-PRD critic pass means they
+run automatically via `/ship`, eliminating the need to remember a separate
+`/audit-meta` invocation. The implementation lives in `dashboard/health.py`'s
+check registry (the single source of truth per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D3); this section is the canonical
+declared-ID source for the PARITY check.
+
+### STRUCT-1 — `.claude/agents/` file count cap (≤ 12)
+
+**Registry:** `python dashboard/health.py --check STRUCT-1`
+
+**Rationale:** The 6-critic-cap from ADR-0008 D7 implies ~12 subagents at full saturation. Past that, the cognitive cost of maintaining a unified mental model of the agent fleet rises sharply. Three-band: ≤12 PASS; 13–15 WARN; >15 FAIL.
+
+### STRUCT-2 — `.claude/skills/` directory count cap (≤ 16)
+
+**Registry:** `python dashboard/health.py --check STRUCT-2`
+
+**Rationale:** 16-skill cap. New skills past 16 should justify why an existing skill cannot absorb the concern. Three-band: ≤16 PASS; 17–19 WARN; >19 FAIL.
+
+### STRUCT-3 — no markdown file > 500 LoC (split-candidate detector)
+
+**Registry:** `python dashboard/health.py --check STRUCT-3`
+
+**Rationale:** 500-LoC threshold is the "split me" smoke alarm. WARN-level; surfaces split candidates for the user to triage without forcing a split.
+
+### STRUCT-4 — no directory depth > 4 (nesting-bloat detector)
+
+**Registry:** `python dashboard/health.py --check STRUCT-4`
+
+**Rationale:** Depth-4 cap reflects the project's natural tree. Nesting > 4 is a hard structural smell. FAIL-level.
+
+### STRUCT-5 — `decisions/` ADR count cap (≤ 20)
+
+**Registry:** `python dashboard/health.py --check STRUCT-5`
+
+**Rationale:** Past 20, the README index becomes painful to scan. Informational cap — hitting it is a signal to review. Three-band: ≤20 PASS; 21–25 WARN; >25 FAIL.
+
+### STRUCT-6 — `.claude/agents/*.md` filenames match kebab-case pattern
+
+**Registry:** `python dashboard/health.py --check STRUCT-6`
+
+**Rationale:** The `[a-z-]+(-critic)?\.md` shape is how the ADR-0011 D3 classifier distinguishes critics from generators. Naming is a hard contract — FAIL, not WARN.
+
+### STRUCT-7 — each `.claude/skills/*/` directory contains exactly one `SKILL.md`
+
+**Registry:** `python dashboard/health.py --check STRUCT-7`
+
+**Rationale:** The one-SKILL.md-per-directory convention is the Claude Code skills runtime contract. FAIL on any extra `.md`.
+
+### STRUCT-8 — `decisions/NNNN-*.md` filenames match `NNNN-<kebab-slug>.md` pattern
+
+**Registry:** `python dashboard/health.py --check STRUCT-8`
+
+**Rationale:** The `NNNN-<kebab-slug>.md` shape is how ADR cross-references resolve. FAIL if any ADR file uses a non-canonical name pattern.
+
+### STRUCT-9 — root `README.md` exists and is non-empty
+
+**Registry:** `python dashboard/health.py --check STRUCT-9`
+
+**Rationale:** `README.md` is what GitHub renders on the repo landing page. A missing or empty README is a hard signal of repo abandonment or misconfiguration.
+
+### STRUCT-10 — root `CLAUDE.md` exists and is non-empty
+
+**Registry:** `python dashboard/health.py --check STRUCT-10`
+
+**Rationale:** `CLAUDE.md` is what Claude Code auto-loads on every session. A missing or empty `CLAUDE.md` means agents operate without project rules.
+
+### DOCS-1 — every `decisions/README.md` index entry resolves to an existing file
+
+**Registry:** `python dashboard/health.py --check DOCS-1`
+
+**Rationale:** The ADR index is the primary discovery surface for the project's decision history. Dangling rows mean readers chase 404s and lose trust.
+
+### DOCS-2 — every `decisions/NNNN-*.md` on disk has a row in `decisions/README.md`
+
+**Registry:** `python dashboard/health.py --check DOCS-2`
+
+**Rationale:** If the index omits ADRs that DO exist, readers don't discover them. DOCS-1 + DOCS-2 together guarantee the index neither lies nor omits.
+
+### DOCS-3 — every `.claude/agents/*.md` ref in CLAUDE.md Map resolves
+
+**Registry:** `python dashboard/health.py --check DOCS-3`
+
+**Rationale:** The CLAUDE.md Map is the agent/skill discovery surface. A dangling reference means an agent fails silently or falls back to default behavior.
+
+### DOCS-4 — every `.claude/skills/*/SKILL.md` ref in CLAUDE.md Map resolves
+
+**Registry:** `python dashboard/health.py --check DOCS-4`
+
+**Rationale:** Same Map-forward rationale as DOCS-3, applied to the skill half of the Map.
+
+### DOCS-5 — no bare `N=3` literal in `README.md` without adjacent ADR-0013 reference
+
+**Registry:** `python dashboard/health.py --check DOCS-5`
+
+**Rationale:** ADR-0013 refined the slicer's N-decompositions contract; DOCS-5 ensures the literal doesn't regress without a proper ADR-0013 citation. Scoped to README.md only.
+
+### DOCS-6 — no `GLOSSARY.md` references outside the known-legitimate allowlist
+
+**Registry:** `python dashboard/health.py --check DOCS-6`
+
+**Rationale:** ADR-0012 deleted the standalone `GLOSSARY.md`. Any remaining reference is dead. Two files are allowlisted; decisions/* exempt as immutable historical record.
+
+### DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves
+
+**Registry:** `python dashboard/health.py --check DOCS-7`
+
+**Rationale:** ADR references propagate aggressively. A dangling citation means readers chase 404s and agents can't ground behavior in the ADR.
+
+### DOCS-8 — `decisions/README.md` Status column carries "superseded by ADR-NNNN" annotations (WARN)
+
+**Registry:** `python dashboard/health.py --check DOCS-8`
+
+**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history. WARN-level; README annotation is a discoverability convenience.
+
+### DOCS-9 — CLAUDE.md glossary entry count ≤ 35 (WARN)
+
+**Registry:** `python dashboard/health.py --check DOCS-9`
+
+**Rationale:** Past ~35 entries, the context-window cost-benefit shifts unfavorably. WARN (not FAIL) — hitting the cap is a signal to act.
+
+### DOCS-10 — no `` `backlog`-labeled `` prose or `--label backlog` literal in agent or skill files
+
+**Registry:** `python dashboard/health.py --check DOCS-10`
+
+**Rationale:** The captured-vs-backlog two-tier convention from ADR-0008 D8 + ADR-0009 D2 applies to every agent and skill. Skipping the `backlog-critic` gate is the exact #105/#107 regression.
+
+### DOCS-11 — no dead citations of fully-superseded ADRs in `.claude/` runtime prompts
+
+**Registry:** `python dashboard/health.py --check DOCS-11`
+
+**Rationale:** Runtime prompts that cite a fully-superseded ADR without naming its superseder send agents toward retired decisions. Per ADR-0064 D2.
 
 ---
 
@@ -248,7 +396,7 @@ For each RECOMMEND finding, you MUST create a `captured`-labeled GitHub issue an
 
 ## What this critic does NOT do
 
-- **Does not re-run mechanical detectors.** `audit-meta` and `tools/ci-checks.sh` own the deterministic layer (grep-based drift, README regen-clean, ADR index consistency). This critic owns only the *judgment* layer — semantics a grep cannot catch.
+- **Runs mechanical detectors first.** The STRUCT-*/DOCS-* pre-checks (absorbed from the retired `/audit-meta` skill, PRD #919 slice #920) run automatically at the start of every per-PRD pass. `tools/ci-checks.sh` runs independently on every PR. This critic additionally owns the *judgment* layer — semantics a grep cannot catch.
 - **Does not judge a single diff.** That is the `reviewer`'s job per [ADR-0002](../../decisions/0002-autonomous-merge-policy.md). This critic sees the cumulative PRD change.
 - **Does not merge.** The `reviewer` remains the sole merge gate. This critic is a pre-review stage, mirroring how `prd-critic`/`slicer-critic` gate their stages without merging.
 - **Does not BLOCK pre-existing drift.** BLOCK only PRD-*introduced* regressions. Optional cleanups on pre-existing prose are always RECOMMEND. Per ADR-0009 D3 (default-conservative means don't invent failures; it does not mean escalate pre-existing lint).

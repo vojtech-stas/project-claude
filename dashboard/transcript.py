@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -500,6 +501,207 @@ _RESULT_RE  = _re.compile(r"^\s*RESULT\s*:\s*(\w+)\s*$", _re.IGNORECASE | _re.MU
 # e.g. "implementer for #901", "reviewer PR #823 (closing slice)", "backlog-critic for #725"
 _ISSUE_RE   = _re.compile(r"#(\d+)")
 
+# Pattern to extract parent PRD from a slice body.
+# Handles all observed canonical formats:
+#   "Walking-skeleton slice of PRD #956 ..."   (PRD #956-era slices)
+#   "slice 2 of PRD #737."
+#   "Parent: PRD #123"
+#   "## Parent\n\nPRD #713 — desc"            (older slice template)
+_PARENT_PRD_BODY_RE = _re.compile(
+    r"(?:"
+    r"(?:(?:slice\s+\d+\s+of|walking-skeleton\s+slice\s+of)\s+PRD)"
+    r"|(?:parent\s*:?\s*PRD)"
+    r"|(?:##\s*[Pp]arent\s*\n+\s*PRD)"
+    r")\s+#(\d+)",
+    _re.IGNORECASE | _re.MULTILINE,
+)
+
+# Pattern to extract Closes #N from a PR body (mirrors prd_firing.py)
+_PR_CLOSES_RE = _re.compile(
+    r"(?:Closes|closes|Fixes|fixes|Resolves|resolves)\s+#(\d+)",
+    _re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# gh CLI helper (mirrors prd_firing._gh_run pattern)
+# ---------------------------------------------------------------------------
+
+def _gh_run_transcript(args: list[str], timeout: int = 15) -> tuple[int, str]:
+    """Run a gh CLI command; return (returncode, stdout).
+
+    Uses UTF-8 with errors='replace' to avoid cp1252 decode failures on
+    Windows (mirrors prd_firing._gh_run — issue #934 root cause).
+    Returns (1, '') when gh is not found or times out (fallback-safe).
+    """
+    try:
+        r = subprocess.run(
+            ["gh"] + args,
+            capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
+        )
+        return r.returncode, r.stdout or ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return 1, ""
+
+
+# ---------------------------------------------------------------------------
+# In-process cache for gh issue/PR lookups
+# ---------------------------------------------------------------------------
+
+# Maps issue/PR number -> parent PRD number (int) or None (known non-slice)
+# or the sentinel _GH_UNAVAILABLE (str) when gh failed.
+_GH_UNAVAILABLE = "__gh_unavailable__"
+
+_prd_cache: dict[int, "int | str | None"] = {}
+# Timestamp of last successful gh call (used to expire cache on long runs)
+_prd_cache_ts: float = 0.0
+_PRD_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _prd_cache_reset_if_stale() -> None:
+    """Expire the cache if older than _PRD_CACHE_TTL seconds."""
+    global _prd_cache, _prd_cache_ts
+    if time.time() - _prd_cache_ts > _PRD_CACHE_TTL:
+        _prd_cache = {}
+        _prd_cache_ts = time.time()
+
+
+def _parent_prd_from_issue_body(body: str) -> int | None:
+    """Extract parent PRD number from a slice issue body, or None."""
+    if not body:
+        return None
+    m = _PARENT_PRD_BODY_RE.search(body)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
+    """Resolve a slice issue number to its parent PRD.
+
+    Returns:
+      int   — the parent PRD number
+      None  — issue is itself a PRD (or unresolvable without gh)
+      _GH_UNAVAILABLE — gh call failed; caller should fall back
+
+    Strategy:
+      1. Fetch issue N with --json number,labels,body.
+      2. If labeled 'prd': return None (already a PRD).
+      3. Parse body for "slice of PRD #N" canonical pattern.
+      4. If found: return that PRD number.
+      5. Otherwise: return None (unresolved but not a crash).
+    """
+    rc, stdout = _gh_run_transcript([
+        "issue", "view", str(slice_n),
+        "--json", "number,labels,body",
+    ])
+    if rc != 0 or not stdout.strip():
+        return _GH_UNAVAILABLE
+
+    try:
+        data = json.loads(stdout)
+    except Exception:
+        return _GH_UNAVAILABLE
+
+    labels = data.get("labels", [])
+    label_names = {lbl.get("name", "") for lbl in labels}
+
+    if "prd" in label_names:
+        # Issue IS a PRD — no parent to resolve
+        return None
+
+    # Try to parse parent PRD from body
+    body = data.get("body", "")
+    parent = _parent_prd_from_issue_body(body)
+    if parent is not None:
+        return parent
+
+    # Could not determine parent — return None (honest unknown)
+    return None
+
+
+def _resolve_pr_to_prd(pr_n: int) -> "int | str | None":
+    """Resolve a PR number to its parent PRD via Closes #slice → slice → PRD.
+
+    Returns:
+      int   — the parent PRD number
+      None  — could not resolve
+      _GH_UNAVAILABLE — gh call failed
+    """
+    rc, stdout = _gh_run_transcript([
+        "pr", "view", str(pr_n),
+        "--json", "number,body",
+    ])
+    if rc != 0 or not stdout.strip():
+        return _GH_UNAVAILABLE
+
+    try:
+        data = json.loads(stdout)
+    except Exception:
+        return _GH_UNAVAILABLE
+
+    body = data.get("body", "")
+    closes_nums = [int(m) for m in _PR_CLOSES_RE.findall(body)]
+
+    if not closes_nums:
+        return None
+
+    # Try each closed issue as a potential slice
+    for slice_candidate in closes_nums:
+        result = _resolve_slice_to_prd(slice_candidate)
+        if result is _GH_UNAVAILABLE:
+            return _GH_UNAVAILABLE
+        if isinstance(result, int):
+            return result
+
+    return None
+
+
+def resolve_dispatch_to_prd(n: int) -> "int | None":
+    """Map a dispatch issue/PR number to its parent PRD number.
+
+    This is the primary correlation helper for slice #958 (PRD #956 §2 #1).
+
+    Given a number N extracted from a dispatch description:
+      - If N is a PRD issue:      return N.
+      - If N is a slice issue:    return its parent PRD.
+      - If N looks like a PR:     resolve PR → Closes-slice → PRD.
+      - If gh is unavailable:     return None (caller uses fallback label).
+
+    Results are cached in-process with a 5-minute TTL (mtime-style).
+
+    Returns int (parent PRD) or None (gh unavailable / unresolvable).
+    """
+    _prd_cache_reset_if_stale()
+
+    if n in _prd_cache:
+        cached = _prd_cache[n]
+        if cached is _GH_UNAVAILABLE:
+            return None
+        return cached  # type: ignore[return-value]
+
+    # Try as an issue first (slice or PRD)
+    result = _resolve_slice_to_prd(n)
+
+    if result is _GH_UNAVAILABLE:
+        # gh unavailable — try as PR as a secondary attempt
+        pr_result = _resolve_pr_to_prd(n)
+        if pr_result is _GH_UNAVAILABLE or pr_result is None:
+            _prd_cache[n] = _GH_UNAVAILABLE
+            return None
+        _prd_cache[n] = pr_result
+        return pr_result  # type: ignore[return-value]
+
+    if result is None:
+        # Issue is a PRD itself — return N
+        _prd_cache[n] = n
+        return n
+
+    # result is the parent PRD int
+    _prd_cache[n] = result
+    return result  # type: ignore[return-value]
+
 
 def _read_subagent_meta(subagents_dir: Path) -> dict:
     """Read all agent-*.meta.json files in subagents_dir.
@@ -609,24 +811,38 @@ def _parse_subagent_outcome(subagent_path: Path) -> dict:
     return {"start": start, "end": end, "verdict": verdict}
 
 
-def _derive_prd_label(description: str, agent_type: str) -> str:
+def _derive_prd_label(description: str, agent_type: str, use_gh: bool = True) -> str:
     """Derive a PRD-bucket label from a dispatch description.
+
+    When use_gh=True (default), attempts to resolve the first issue number
+    in the description to its parent PRD via resolve_dispatch_to_prd().
+    This maps slice/PR numbers to their parent PRD bucket so that all
+    dispatches for a given PRD are grouped together (PRD #956 §2 #1).
+
+    When gh is unavailable or use_gh=False, falls back to the raw #N label
+    with a "(gh unavailable)" suffix — honest-empty per fallback AC.
 
     Strategy:
       1. Extract the first issue number #N from the description.
-         For implementer/reviewer dispatches these are typically slice numbers.
-         The label is used for grouping — exact PRD mapping via gh would be
-         round-trip expensive; we use the issue reference as a bucket label.
-      2. Fall back to the agent_type as the bucket.
-      3. Ultimate fallback: "unattributed (this session)".
-
-    This keeps the function stdlib-only and fast (no gh calls in the hot path).
-    The UI shows the label as-is; the caller can enrich it if desired.
+      2. (use_gh=True) Resolve N to its parent PRD via resolve_dispatch_to_prd().
+         - On success: label = "PRD #<parent>" to make it clear this is a PRD bucket.
+         - On gh failure: label = "#N (gh unavailable)".
+      3. (use_gh=False) label = "#N".
+      4. If no issue number found: fall back to agent_type, then "unattributed".
     """
     if description:
         m = _ISSUE_RE.search(description)
         if m:
-            return f"#{m.group(1)}"
+            raw_n = int(m.group(1))
+            if use_gh:
+                parent_prd = resolve_dispatch_to_prd(raw_n)
+                if parent_prd is not None:
+                    return f"PRD #{parent_prd}"
+                else:
+                    # gh unavailable or truly unresolvable — honest fallback
+                    return f"#{raw_n} (gh unavailable)"
+            else:
+                return f"#{raw_n}"
     if agent_type:
         return agent_type
     return "unattributed (this session)"

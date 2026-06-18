@@ -6,13 +6,13 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 
 ## 1. Cross-cutting constraints (apply to every action you take)
 
-> **Generated atomic rules** — The current atomic rules are generated into `.claude/rules/` by `tools/gen_rules.py` from non-superseded ADR frontmatter (always-loaded by Claude Code; never hand-edit those files). Rules below that are not yet atomized remain inline; `grep -c ".claude/rules" CLAUDE.md` ≥ 1 (PRD #888 criterion 5). See `.claude/rules/<scope>.md` for rule_ids: CAP-001..008, COM-001..002, HOK-001..009, SLI-001..005, VER-001..008, CRI-001..005, ISO-001..006, DOC-001..006, OUT-001..005, REG-001..003, GLO-001..004, PIP-001..013.
+> **Generated atomic rules (ADR-0073 D1)** — `tools/gen_rules.py` classifies scopes as GLOBAL or AREA. GLOBAL scopes (pipeline, capture, commits, critics, verification, regression, output-contracts, glossary) are rendered into CLAUDE.md generated-region blocks at the bottom of this file — they are always-loaded here. AREA scopes (hooks, isolation, docs, slicing) are in path-scoped `.claude/rules/<scope>.md` files — Claude Code loads them only when editing matching files. Never hand-edit generated outputs; run `python tools/gen_rules.py` after ADR frontmatter changes. Rule IDs: CAP-001..008, COM-001..002, HOK-001..009, SLI-001..005, VER-001..008, CRI-001..005, ISO-001..006, DOC-001..006, OUT-001..005, REG-001..003, GLO-001..004, PIP-001..013.
 
 1. **YAGNI — rule #1.** Never add code outside the current slice's scope. If you feel the urge to add something "while you're here", STOP and ask the user. (Reviewer's first enforcement job.)
 2. **Walking-skeleton mindset — rule #2.** Smallest end-to-end version first; iterate on the weakest stage. Never build a primitive perfectly before the whole pipeline runs.
 3. **Build primitives first, orchestrate last — rule #3.** Do not write an orchestrator before the things it orchestrates exist and have been dogfooded.
 4. **Two-tier delivery — rule #4.** Agents never push directly to `main`. Agents merge to `develop` via PR; `main` advances ONLY through the deterministic promotion gate (`tools/promote.sh` + `RELEASE-READY`). Branch protection enforces on `develop` (the PR-merge gate); `main` is protected by the promotion gate. The human's only blocking roles are (1) acking guardrail-machinery promotions and (2) grilling future features. **Guardrail-machinery promotion ack:** when a promotion batch touches guardrail paths (`.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or the promotion gate itself), `promote.sh` requires the file `.claude/PROMOTE_OK` to exist; create it manually (`touch .claude/PROMOTE_OK`) to ack the promotion — `promote.sh` removes it after a successful promotion. Per [ADR-0070](decisions/0070-two-tier-autonomous-delivery.md) D1.
-5. **Conventional Commits, tightened — rule #5.** See `.claude/rules/commits.md` (COM-001, COM-002). `<type>(<scope>): <subject>` — lowercase subject, ≤72-char cap, `Co-authored-by:` trailer on every agent commit, `Closes #` in PR body not commit subject. (Mechanized by CI CHECK 3; reviewer enforces R-CONV-COMMITS.)
+5. **Conventional Commits, tightened — rule #5.** See COM-001, COM-002 in the generated commits region below. `<type>(<scope>): <subject>` — lowercase subject, ≤72-char cap, `Co-authored-by:` trailer on every agent commit, `Closes #` in PR body not commit subject. (Mechanized by CI CHECK 3; reviewer enforces R-CONV-COMMITS.)
 6. **`git log` is the changelog — rule #6.** Don't create a separate CHANGELOG file. Good commit messages do the job.
 8. **One PR per slice — rule #8.** One PR per slice (1:1); independent slices may run in parallel; only dependent work serializes. Per [ADR-0036](decisions/0036-worktree-isolation-all-dispatches.md) D1–D3.
 9. **DRY for docs — rule #9.** Don't duplicate info. Link/point to where the canonical version lives.
@@ -20,28 +20,28 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 
 ### Capture discipline
 
-11. **Surface deferred work as captured issues — rule #11.** See `.claude/rules/capture.md` (CAP-001..004). Every agent MUST capture every deferred/follow-up item as a `captured`-labeled issue; `backlog-critic` filters downstream. (Mechanized by CAPTURE-SHAPE health row.)
-13. **Root-cause workflow capture — rule #13.** See `.claude/rules/capture.md` (CAP-005..008). STOP → PRESERVE → DIAGNOSE → FIX → GUARD → RESUME; capture a `captured`+`root-cause`-labeled issue with `**Symptom:**` / `**Root cause:**` / `**Proposed:**` sections; verbatim evidence first. (Mechanized by CAPTURE-SHAPE health row.) **Regression rider (ADR-0067 D3):** when the capture documents a CODE defect, the fixing PR MUST include a regression test that fails before and passes after the fix — committed in that order. (Mechanized by TEST-ORDERING health row.)
+11. **Surface deferred work as captured issues — rule #11.** See CAP-001..004 in the generated capture region below. Every agent MUST capture every deferred/follow-up item as a `captured`-labeled issue; `backlog-critic` filters downstream. (Mechanized by CAPTURE-SHAPE health row.)
+13. **Root-cause workflow capture — rule #13.** See CAP-005..008 in the generated capture region below. STOP → PRESERVE → DIAGNOSE → FIX → GUARD → RESUME; capture a `captured`+`root-cause`-labeled issue with `**Symptom:**` / `**Root cause:**` / `**Proposed:**` sections; verbatim evidence first. (Mechanized by CAPTURE-SHAPE health row.) **Regression rider (ADR-0067 D3):** when the capture documents a CODE defect, the fixing PR MUST include a regression test that fails before and passes after the fix — committed in that order. (Mechanized by TEST-ORDERING health row.)
 
 Both rules share the same downstream mechanism: `backlog-critic` filters `captured` → `backlog` per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3/D4. Rule #11 = forward-work; rule #13 = backward/root-cause. Complementary per [ADR-0024](decisions/0024-root-cause-workflow-capture-discipline.md) D2.
 
 12. **Claude Code hooks have five authorized categories — rule #12.** See `.claude/rules/hooks.md` (HOK-001..009): logging, validation, notification (ADR-0015 D2), tooling-spawn (ADR-0033 D1), context injection (ADR-0057 D4). Hooks may NOT auto-invoke skills or subagents — that hard line is preserved across all five categories. (Mechanized by HOOK-INTEGRITY health row.)
 
-15. **Every feature is production-verified before "done" — rule #15.** See `.claude/rules/verification.md` (VER-001). `qa-tester` must return `PRODUCTION_VERIFY: PASS` (via `/build` step 5 or `/ship` step 6) before a feature is complete. (Mechanized by PROOF-PRESENCE health row.)
+15. **Every feature is production-verified before "done" — rule #15.** See VER-001 in the generated verification region below. `qa-tester` must return `PRODUCTION_VERIFY: PASS` (via `/build` step 5 or `/ship` step 6) before a feature is complete. (Mechanized by PROOF-PRESENCE health row.)
 
 _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) D2. Slot explicitly retired; the separate KB layer no longer exists. Future rules may use #15+.)_
 
 16. **Slice-decomposition is the slicer's job — rule #16.** How many slices, where boundaries fall, and the walking-skeleton cut are owned by the `slicer` + `slicer-critic`. The grill / PRD-authoring phase settles design + acceptance criteria, then hands off — never decide slicing during grill. Per [ADR-0013](decisions/0013-slicer-n3-contract-refined.md) (decomposition contract) + [ADR-0005](decisions/0005-output-shape-and-slicing-methodology.md) D3 (cascade-doc identification at decomposition time).
 17. **Skill-vs-subagent litmus — rule #17.** Subagent = isolated-context + handed-a-task + returns-a-result. Skill = the orchestrator's own interactive/orchestrating/multi-step procedure. Only the main agent dispatches subagents; subagents never dispatch subagents. Per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D1.
 18. **Never cite an ADR decision-ID from memory — rule #18.** See `.claude/rules/docs.md` (DOC-005, DOC-006). Before citing `ADR-NNNN D<n>` in any doc, open the cited ADR and verify the `### D<n>` heading. `decisions/README.md` is the canonical index.
-19. **Revise the whole flagged class — rule #19.** See `.claude/rules/critics.md` (CRI-001, CRI-002). Fix the ENTIRE flagged defect class when revising a critic BLOCK, not just the named instance. Round-3 BLOCK is strict-stop — escalate via `needs-human`.
+19. **Revise the whole flagged class — rule #19.** See CRI-001, CRI-002 in the generated critics region below. Fix the ENTIRE flagged defect class when revising a critic BLOCK, not just the named instance. Round-3 BLOCK is strict-stop — escalate via `needs-human`.
 20. **Proof-per-claim in wrap-up summaries — rule #20.** Every "done/verified" claim in a final wrap-up or build summary MUST be accompanied by its route-appropriate proof artifact (the concrete evidence produced by `qa-tester`). A claim without a checkable artifact is NOT a valid "done". Every proof also states its **data source** (real session/PRD/PR id + timestamp, never fixture-patterned data) and **environment freshness** (e.g. dashboard restarted from merged code when `server.py` changed). Route scope — use the type that fits the change:
    - **browser** change (dashboard, UI): a screenshot path (`.png`/`.jpg`) + an `inner_text:` excerpt.
    - **hook-fire** change (`.claude/hooks/*`, `.claude/settings.json`): a log line with `exit=` result.
    - **command-run** change (skill, `tools/*`): the command output excerpt with `exit=` code.
    - **static** change (docs, ADRs, `decisions/*`, one-line edits): the grep/assertion result (`grep count=`).
    The orchestrator surfaces each proof artifact via `SendUserFile` at wrap-up (see `/build` step 5 + `/ship` step 7). Per [ADR-0037](decisions/0037-production-verification-gate.md) D3 + [ADR-0054](decisions/0054-critic-output-contracts-and-trailer-standard.md) D4. (Mechanized by PROOF-PRESENCE health row.)
-21. **Fixture discipline — rule #21.** See `.claude/rules/critics.md` (CRI-004). Fixture/synthetic data NEVER enters production data stores (`.claude/logs/*`); verification evidence from fixture-tagged data is INVALID. (Mechanized by reviewer rule R-FIXTURE.)
+21. **Fixture discipline — rule #21.** See CRI-004 in the generated critics region below. Fixture/synthetic data NEVER enters production data stores (`.claude/logs/*`); verification evidence from fixture-tagged data is INVALID. (Mechanized by reviewer rule R-FIXTURE.)
 22. **System skeleton — rule #22.** A feature implementing stage N of a multi-PRD pipeline must, in slice 1, demonstrate one REAL datum traversing stages 1..N in the production environment. Per-PRD walking-skeleton discipline is necessary but not sufficient — the system-level pipeline must be walked end-to-end with real data before any downstream stage ships. Per [ADR-0054](decisions/0054-critic-output-contracts-and-trailer-standard.md) D6. (Enforced at decomposition time by slicer-critic SC-SYSTEM-SKELETON; at PRD gate by prd-critic PC-LIVE-FEED.)
 23. **No rule without a check — rule #23.** Every NEW numbered rule, ordering convention, or orchestrator posting obligation introduced after [ADR-0056](decisions/0056-no-rule-without-a-check.md) MUST ship, in the same PR, with a deterministic enforcement mechanism — one of: an output-contract field (trailer schema), a hook validation, a CI grep (`tools/ci-checks.sh`), a pre-commit check, or a dashboard evaluator (health check or trail evaluator). A rule whose enforcement is genuinely impossible or not yet worth building MUST be explicitly tagged `(advisory)` in its rule text. Untagged + uncheckered new rules are a reviewer BLOCK under R-RULE-CHECK. Binds forward per ADR-0004 D2; per [ADR-0056](decisions/0056-no-rule-without-a-check.md).
 
@@ -137,8 +137,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Health check registry CLI | `python dashboard/health.py --check <id>` / `--list` | run any registered DOCS-*/AS-* check headlessly; exit 0 on PASS/WARN, 1 on FAIL; `--list` prints all IDs; consumed by ci-checks.sh CHECK 4/5; per [ADR-0064](decisions/0064-rule-layer-integrity.md) D3 |
 | Regression test suite | `tests/` | stdlib unittest + pytest suite; seeded with events.py interleave regression; `quarantine.txt` for flaky tests (30-day SLA); `evals/` for critic golden-set fixtures; per [ADR-0067](decisions/0067-regression-memory.md) D1/D4/D5 |
 | Eval runner | `tools/run_evals.py` | invokes `claude -p` per critic golden-set fixture, parses CRITIC trailer VERDICT, writes `tests/evals/results.json`; on-demand only (not a CI stage); per [ADR-0067](decisions/0067-regression-memory.md) D5 |
-| Generated atomic rules | `.claude/rules/<scope>.md` | generated from non-superseded ADR frontmatter by `tools/gen_rules.py` — never hand-edit; CI CHECK 17 keeps them fresh; per PRD #888 |
-| Rules generator | `tools/gen_rules.py` | stdlib-only; reads ADR YAML frontmatter, filters to non-superseded, emits `.claude/rules/<scope>.md`; run to regenerate after ADR frontmatter changes |
+| Generated atomic rules | CLAUDE.md generated regions (GLOBAL) + `.claude/rules/<scope>.md` (AREA) | generated by `tools/gen_rules.py`; GLOBAL scopes in CLAUDE.md regions (always-loaded), AREA scopes in path-scoped rules files; never hand-edit outputs; CI CHECK 17+20 keep them fresh; per ADR-0073 D1 |
+| Rules generator | `tools/gen_rules.py` | stdlib-only; reads ADR YAML frontmatter, applies `SCOPE_TARGET` map (ADR-0073 D3): GLOBAL → CLAUDE.md generated-region blocks, AREA → `.claude/rules/<scope>.md` with `paths:` frontmatter; run after ADR frontmatter changes |
 | Two-tier promotion gate | `tools/promote.sh` | fast-forwards `main` to `develop` HEAD; requires RELEASE-READY `verdict="true"` (pre-flight guard) AND the `.claude/PROMOTE_OK` human-ack sentinel (operators must create this file to unblock guardrail-machinery promotions); appends a `promotion` event to the workflow event log; per [ADR-0070](decisions/0070-two-tier-autonomous-delivery.md) D2/D3 |
 | Session transcript reader | `dashboard/transcript.py` | reads Claude Code session transcript JSONL + subagent JSONL files, normalises records into v2 event shape; powers `/api/session-live` + `/api/session-firing` (firing tree); per PRD #898 |
 
@@ -170,3 +170,158 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 - **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
 - **walking-skeleton** — practice of shipping the smallest end-to-end version of the whole pipeline first, then iterating on the weakest stage; slice 1 of every multi-slice PRD must be a walking-skeleton per SC-WALKING-SKELETON.
 - **YAGNI** — "You Aren't Gonna Need It"; rule #1 — never add code or content outside the current slice's scope; the reviewer's first job is to enforce this on every PR.
+
+<!-- BEGIN GENERATED:rules:capture -->
+### Capture rules
+Atomic rules for the `capture` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0006 (`decisions/0006-backlog-and-session-continuity.md`)
+- **CAP-001:** Agents write `captured`-labeled issues for every deferred or forward-looking item they identify.
+- **CAP-002:** Session continuity is achieved via live-state reconstruction (git log + open issues + PRs) — no formal handoff document.
+
+#### Source: ADR-0008 (`decisions/0008-workflow-autolog-bootstrap-and-naming.md`)
+- **CAP-003:** Captured items are auto-evaluated by `backlog-critic`; APPROVE promotes to `backlog`, BLOCK leaves in `captured` for human review.
+- **CAP-004:** Backlog-critic evaluates four criteria: Actionable, Scoped, Not-duplicate, Clear — defaulting to BLOCK when uncertain.
+
+#### Source: ADR-0024 (`decisions/0024-root-cause-workflow-capture-discipline.md`)
+- **CAP-005:** Every workflow mistake MUST produce a `captured`-labeled root-cause capture (rule #13): symptom + root cause + proposed fix.
+- **CAP-006:** Root-cause captures use the 3-section shape: Symptom observed / Root cause analyzed / Proposed workflow change.
+
+#### Source: ADR-0063 (`decisions/0063-root-cause-capture-shape.md`)
+- **CAP-007:** Root-cause captures carry a `root-cause` label alongside `captured` to make the class mechanically queryable.
+- **CAP-008:** Root-cause section headings are regex-detectable: `**Symptom:**` / `**Root cause:**` / `**Proposed:**`; evidence is preserved verbatim before diagnosing (STOP → PRESERVE → DIAGNOSE → FIX → GUARD → RESUME).
+<!-- END GENERATED:rules:capture -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- BEGIN GENERATED:rules:commits -->
+### Commits rules
+Atomic rules for the `commits` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0001 (`decisions/0001-foundational-design.md`)
+- **COM-001:** Every commit message follows `<type>(<optional scope>): <subject>` (Conventional Commits); subject is lowercase; subject line is capped at ≤72 chars; types: feat/fix/docs/chore/refactor/test/perf/style/build/ci (ADR-0001 D12, source=CLAUDE.md #5).
+- **COM-002:** Every agent-authored commit MUST carry a `Co-Authored-By: Claude …` trailer; `Closes #<slice-issue>` belongs in the PR body, NOT the commit subject; the git log is the changelog — no separate CHANGELOG file (ADR-0001 D12, source=CLAUDE.md #5/#6).
+<!-- END GENERATED:rules:commits -->
+
+
+
+<!-- BEGIN GENERATED:rules:critics -->
+### Critics rules
+Atomic rules for the `critics` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0048 (`decisions/0048-critic-loop-r3-policy-and-complete-class-revision.md`)
+- **CRI-001:** Round-3 BLOCK from any critic is strict-stop: the pipeline escalates via the I5 surface (`needs-human` label + parent-context comment) and stops regardless of the residual's apparent magnitude — no fix-and-ship exception exists (ADR-0048 D1).
+- **CRI-002:** When revising in response to a critic BLOCK, sweep the ENTIRE flagged defect class (every instance of the cited pattern — every `ADR-NNNN D<n>` cite, every over-cap commit, etc.), not only the single named instance; this is CLAUDE.md rule #19 (ADR-0048 D2).
+
+#### Source: ADR-0054 (`decisions/0054-critic-output-contracts-and-trailer-standard.md`)
+- **CRI-003:** Every critic verdict MUST be accompanied by an output contract — a fenced field-schema block (`VERDICT`/`REASON`/`ROUND` + optionals) that the orchestrator can parse programmatically; free-text BLOCKs without a trailer are non-conforming (ADR-0054 D1/D2).
+- **CRI-004:** Fixture/synthetic data NEVER enters production data stores (`.claude/logs/*`); fixtures live in `dashboard/fixtures/` and load only behind an explicit flag; any verification whose evidence derives from fixture-tagged data is INVALID — this is CLAUDE.md rule #21 (ADR-0054 D3).
+- **CRI-005:** Every 'done/verified' claim in a wrap-up MUST carry a route-appropriate proof artifact with data source (real session/PRD/PR id + timestamp) and environment freshness; a claim without a checkable artifact is NOT a valid 'done' — this is CLAUDE.md rule #20 (ADR-0054 D4).
+<!-- END GENERATED:rules:critics -->
+
+
+
+<!-- BEGIN GENERATED:rules:glossary -->
+### Glossary rules
+Atomic rules for the `glossary` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0007 (`decisions/0007-vocabulary-glossary-and-grill-me-extension.md`)
+- **GLO-001:** Each glossary entry has a fixed shape: bold term, em-dash, one-sentence definition ending with a parenthetical citation of the ADR that introduces or owns the term (ADR-0007 D2).
+- **GLO-002:** Three inclusion categories qualify for the glossary: (1) pipeline-stage names and their roles, (2) project-specific jargon that would confuse a new agent, and (3) terms whose usage is project-specific rather than standard; everyday English words do not qualify (ADR-0007 D3).
+
+#### Source: ADR-0012 (`decisions/0012-glossary-consolidation-single-tier.md`)
+- **GLO-003:** The glossary lives in a single tier: CLAUDE.md §4 (auto-loaded on every session); the separate long-tail glossary file (ADR-0007 D1) is retired; all entries must earn their place in the auto-loaded context (ADR-0012 D1).
+- **GLO-004:** The glossary soft-cap is ~35 entries; new entries are added only via `/glossary add` (gated by `glossary-critic`); the cap is enforced by `glossary-critic` which BLOCKs additions that fail the tightened inclusion threshold (ADR-0012 D2/D5).
+<!-- END GENERATED:rules:glossary -->
+
+
+
+<!-- BEGIN GENERATED:rules:output-contracts -->
+### Output-contracts rules
+Atomic rules for the `output-contracts` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0059 (`decisions/0059-output-contract-schema-v2.md`)
+- **OUT-001:** The CRITIC trailer gains a `CRITIC:` field identifying the critic subagent by name; the orchestrator uses this for provenance tracking and dispatch-trail recording (ADR-0059 D1).
+- **OUT-002:** The GENERATOR trailer gains `DIDNT_TOUCH:` (scope-discipline evidence: files deliberately left alone) and `CONCERNS:` (self-disclosed risk entry points — doubts, not success claims) fields; both are required keys (ADR-0059 D2).
+- **OUT-003:** A third GENERATOR RESULT enum is defined: `CONFUSION` — returned when the agent encounters contradictory instructions or an impossible acceptance criterion; the agent MUST STOP and name the conflict with 2–3 resolution options rather than guessing (ADR-0059 D3).
+
+#### Source: ADR-0066 (`decisions/0066-upstream-spec-contract.md`)
+- **OUT-004:** PRD §2 acceptance criteria MUST lead with an EARS-shaped trigger: 'WHEN <trigger>, the system SHALL <observable behavior>'; criteria without a trigger carry `Verifiable:` escape-hatch prose; `prd-critic` enforces PC-EARS (ADR-0066 D1).
+- **OUT-005:** Each PRD §2 criterion maps to exactly one slice via a traceability tag; the `slicer-critic` enforces SC-COVERAGE — no criterion may be untraced to a slice; amendments to criteria are append-only (ADR-0066 D2/D3).
+<!-- END GENERATED:rules:output-contracts -->
+
+
+
+<!-- BEGIN GENERATED:rules:pipeline -->
+### Pipeline rules
+Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0002 (`decisions/0002-autonomous-merge-policy.md`)
+- **PIP-001:** Reviewer's APPROVE verdict triggers auto-merge (`gh pr merge --squash`); BLOCK sends the PR back to the implementer; after N=3 rounds, escalate to human.
+
+#### Source: ADR-0003 (`decisions/0003-autonomous-pipeline-with-critics.md`)
+- **PIP-002:** The unit-of-delivery hierarchy is exactly three tiers: PRD (prd-labeled issue) → Slice (slice-labeled sub-issue) → PR (closes one slice).
+- **PIP-003:** The pipeline has five stages: grill-me → to-prd+prd-critic → slicer+slicer-critic → implementer+reviewer → qa-plan; every generation stage is paired with an adversarial critic.
+- **PIP-004:** The human enters the pipeline at exactly two points: `grill-me` (defines what to build) and `qa-plan` (acceptance test); everything in between is fully autonomous.
+- **PIP-005:** Human-facing stages use skills (orchestrator-owned procedures); autonomous stages use subagents (isolated-context + task-handed + result-returning).
+
+#### Source: ADR-0010 (`decisions/0010-implementer-subagent-auto-pipeline.md`)
+- **PIP-006:** A single `implementer` subagent handles all slice types (feat/fix/docs/refactor/test) uniformly — no specialized variants until data justifies splitting.
+- **PIP-007:** `/ship` auto-invokes the implementer on each posted slice, closing the residual human-trigger gap and making ADR-0003 D4's no-human-gates property enforceable end-to-end.
+- **PIP-008:** Orchestrator reads each slice's `Depends on` field, builds the DAG, and runs independent slices in parallel; sync points are at dependency boundaries.
+- **PIP-009:** On irrecoverable failure (round-3 BLOCK; ambiguous AC; INVALID_INPUT), the failed slice gets `needs-human`; in-flight parallel slices finish normally; slices depending on the failed slice stay blocked.
+- **PIP-010:** Implementer's authorized tools: Read, Edit, Write, Bash, Glob, Grep. Explicitly excluded: Agent (no recursive subagent invocation — reviewer is invoked by /ship orchestrator, not by the implementer).
+
+#### Source: ADR-0046 (`decisions/0046-codebase-critic-and-parsimony-reframe.md`)
+- **PIP-011:** The gate on adding a critic is a parsimony principle (minimize critics; each earns its place against a distinct concern no existing critic absorbs) — not a numeric count cap.
+- **PIP-012:** `codebase-critic` provides per-PRD macro review covering: (1) semantic doc currency, (2) architectural drift, (3) refactoring opportunities; BLOCK for PRD-introduced drift, RECOMMEND for improvements.
+- **PIP-013:** `codebase-critic` fires once per PRD at the last open slice, before that slice's reviewer pass, judging the cumulative PRD diff; reviewer remains the sole merge gate.
+<!-- END GENERATED:rules:pipeline -->
+
+
+
+<!-- BEGIN GENERATED:rules:regression -->
+### Regression rules
+Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0067 (`decisions/0067-regression-memory.md`)
+- **REG-001:** The `tests/` suite is wired into CI: `tools/ci-checks.sh` runs `pytest tests/` as a required check; a red test suite blocks the PR merge gate (ADR-0067 D1).
+- **REG-002:** For fix-type slices that address a code defect, the fixing PR MUST include a regression test that fails BEFORE the fix and passes AFTER; the test commit MUST precede the fix commit in branch history — this is R-PROVE / rule #13 regression rider (ADR-0067 D2/D3).
+- **REG-003:** Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; quarantined tests have a 30-day SLA to be fixed or deleted; golden-set critic evals live in `tests/evals/` and run on-demand via `tools/run_evals.py` (ADR-0067 D4/D5).
+<!-- END GENERATED:rules:regression -->
+
+
+
+<!-- BEGIN GENERATED:rules:verification -->
+### Verification rules
+Atomic rules for the `verification` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
+
+#### Source: ADR-0037 (`decisions/0037-production-verification-gate.md`)
+- **VER-001:** After all slices of a feature merge, a mandatory, blocking production-verification gate runs before the feature is 'done'; PASS → feature done; FAIL → gate BLOCKS; per-feature granularity (not per-slice) (ADR-0037 D1, source=CLAUDE.md #15).
+- **VER-002:** `qa-tester` in production-verify mode auto-routes by change type: browser UI (`dashboard/*`) → headless Playwright; hooks/settings → synthetic-payload fire + log assertion; skills/tools → command run + output assertion; docs/ADRs → static grep (ADR-0037 D2).
+- **VER-003:** Every PRD §2 must include a 'Production check:' line stating what to exercise and the expected result; `prd-critic` BLOCKs a PRD whose production-check line is missing or non-actionable (ADR-0037 D4).
+
+#### Source: ADR-0040 (`decisions/0040-qa-human-residual-model.md`)
+- **VER-004:** The machine attempts every PRD §2 criterion; a criterion it cannot faithfully verify returns PROVISIONAL and becomes a human residual posted as a `needs-human-check` issue — the residual is discovered empirically, not predicted at plan time (ADR-0040 D1).
+- **VER-005:** The human residual does NOT block PRD closure; the PRD auto-closes on machine PRODUCTION_VERIFY: PASS alone; a machine-confident FAIL still blocks per ADR-0037 D5 loop; the `/qa-review` skill clears residuals on the human's own cadence (ADR-0040 D2/D4).
+- **VER-006:** `qa-tester` browser route MUST drive real interaction — `page.click()`, `page.fill()`, `page.goto()` — and assert on what a human sees; `page.evaluate()` is a last-resort disambiguator only; eval-only proof → PROVISIONAL, not PASS (ADR-0040 D5).
+
+#### Source: ADR-0050 (`decisions/0050-headless-playwright-browser-driver.md`)
+- **VER-007:** Headless Playwright/Chrome (`headless=True`, `channel='chrome'`) is the qa-tester browser driver for ui-mode and the production-verify browser route; it replaces Claude_Preview MCP, eliminating the OS-visibility timeout by rendering offscreen (ADR-0050 D1).
+- **VER-008:** The qa-tester browser route is driven entirely via `Bash` (write a Python script to a tmp path via heredoc, execute it, read results); all `mcp__Claude_Preview__*` calls are dropped; no tracked files are written by the qa-tester (ADR-0050 D2).
+<!-- END GENERATED:rules:verification -->
+
+
+

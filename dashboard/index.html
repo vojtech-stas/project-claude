@@ -991,8 +991,27 @@
   .firing-badge-approve     { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
   .firing-badge-block       { background: #2a0d0d; color: var(--red); border: 1px solid var(--red); }
   .firing-badge-critic      { background: #1a1a0d; color: var(--amber); border: 1px solid var(--amber); }
+  .firing-badge-orchestrator{ background: #0d1a2a; color: var(--text); border: 1px solid var(--border); }
   .firing-event-label { color: var(--muted); font-size: 9px; margin-top: 3px; text-align: center; }
   .firing-event-ts    { color: var(--muted); font-size: 9px; text-align: center; }
+  /* Firing WHO verbose columns (slice #929) */
+  .firing-event-actor  { color: var(--cyan); font-size: 9px; margin-top: 2px; text-align: center; font-weight: 600; }
+  .firing-event-target { color: var(--muted); font-size: 9px; margin-top: 2px; text-align: center; }
+  .firing-event-outcome { font-size: 9px; margin-top: 2px; text-align: center; font-weight: 700; }
+  .firing-outcome-approve { color: var(--green); }
+  .firing-outcome-block   { color: var(--red); }
+  .firing-outcome-success { color: var(--green); }
+  .firing-outcome-dispatched { color: var(--muted); }
+  .firing-outcome-other   { color: var(--amber); }
+  /* Completeness badge (slice #929) */
+  .firing-completeness-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; padding: 3px 10px; border-radius: 10px;
+    margin-bottom: 8px; border: 1px solid var(--border);
+    background: #1c2128;
+  }
+  .firing-completeness-ok   { border-color: var(--green); color: var(--green); }
+  .firing-completeness-warn { border-color: var(--amber); color: var(--amber); }
 </style>
 </head>
 <body>
@@ -2934,19 +2953,35 @@ const _FIRING_VERDICT_CLASS = {
   'INVALID_INPUT': 'firing-badge-block',
 };
 
+function _firingOutcomeClass(outcome) {
+  const o = (outcome || '').toUpperCase();
+  if (o === 'APPROVE') return 'firing-outcome-approve';
+  if (o === 'BLOCK')   return 'firing-outcome-block';
+  if (o === 'SUCCESS' || o === 'BLOCKED') return o === 'SUCCESS' ? 'firing-outcome-success' : 'firing-outcome-block';
+  if (o === 'DISPATCHED') return 'firing-outcome-dispatched';
+  return 'firing-outcome-other';
+}
+
 function _renderFiringGroup(label, dispatches) {
   const rows = dispatches.map(function(d) {
     const agent   = escHtml(d.agent || '?');
+    const actor   = escHtml(d.actor || 'orchestrator');
     const verdict = d.verdict || '';
+    const outcome = escHtml(d.outcome || (verdict || 'dispatched'));
+    const toolTarget = escHtml((d.tool_target || '').slice(0, 30));
     const vClass  = _FIRING_VERDICT_CLASS[verdict.toUpperCase()] || 'firing-badge-critic';
     const vBadge  = verdict
       ? '<span class="firing-badge ' + vClass + '">' + escHtml(verdict) + '</span>'
       : '<span style="color:var(--muted);font-size:9px;">pending</span>';
     const startTs = d.start ? new Date(d.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
     const endTs   = d.end   ? new Date(d.end).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
-    const desc    = escHtml((d.description || '').slice(0, 60));
+    const desc    = escHtml((d.description || '').slice(0, 50));
+    const outcomeClass = _firingOutcomeClass(outcome);
     return '<div class="firing-event">' +
-      '<span class="firing-badge firing-badge-' + (agent.indexOf('implementer') >= 0 ? 'implementer' : 'critic') + '">' + agent + '</span>' +
+      '<span class="firing-badge firing-badge-' + (agent.indexOf('implementer') >= 0 ? 'implementer' : 'critic') + '" title="subagent: ' + agent + '">' + agent + '</span>' +
+      '<div class="firing-event-actor" title="WHO fired">&#9656; ' + actor + '</div>' +
+      '<div class="firing-event-target" title="tool/target">' + (toolTarget || '—') + '</div>' +
+      '<div class="firing-event-outcome ' + outcomeClass + '" title="outcome">' + outcome + '</div>' +
       '<div class="firing-event-label">' + desc + '</div>' +
       '<div class="firing-event-ts">' + startTs + ' &rarr; ' + endTs + '</div>' +
       '<div style="margin-top:3px;">' + vBadge + '</div>' +
@@ -2979,13 +3014,25 @@ async function fetchSessionFiring() {
     }
     const groups  = data.groups || {};
     const total   = data.dispatch_count || 0;
+    const complete = typeof data.completeness_count === 'number' ? data.completeness_count : null;
     const labels  = Object.keys(groups).sort();
     if (labels.length === 0) {
       const errMsg = data.error ? ' (' + data.error + ')' : '';
       el.innerHTML = '<span style="color:var(--muted);font-size:11px;">No dispatches found' + escHtml(errMsg) + '.</span>';
       return;
     }
-    let html = '<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">' +
+    // Completeness badge: rendered rows vs transcript firing-event count (deduped)
+    let completeBadge = '';
+    if (complete !== null) {
+      const match = (total === complete);
+      const badgeClass = match ? 'firing-completeness-ok' : 'firing-completeness-warn';
+      const icon = match ? '&#10003;' : '&#9888;';
+      completeBadge = '<div class="firing-completeness-badge ' + badgeClass + '">' +
+        icon + ' completeness: ' + total + ' rendered / ' + complete + ' transcript events (deduped)' +
+        '</div>';
+    }
+    let html = completeBadge +
+      '<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">' +
       total + ' dispatch' + (total !== 1 ? 'es' : '') + ' across ' + labels.length + ' PRD bucket' + (labels.length !== 1 ? 's' : '') + '</div>';
     html += labels.map(function(lbl) {
       return _renderFiringGroup(lbl, groups[lbl]);

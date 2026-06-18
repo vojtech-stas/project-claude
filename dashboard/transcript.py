@@ -632,6 +632,115 @@ def _derive_prd_label(description: str, agent_type: str) -> str:
     return "unattributed (this session)"
 
 
+def _build_actor_map(main_path: Path, meta_map: dict) -> dict:
+    """Build a tool_use_id → actor label map from the main transcript.
+
+    Scans main_path for assistant records whose content contains Agent/Task
+    tool_use items.  For each dispatch:
+      - If the assistant record has no agentId: actor = "orchestrator"
+      - If the assistant record has an agentId: look up that agentId stem in
+        meta_map values to find the parent agent_type; actor = that type.
+        Falls back to "orchestrator" when no mapping is found.
+
+    Returns a dict {tool_use_id: actor_label}.
+    Defensive: never raises; returns {} on error.
+    """
+    result: dict = {}
+    if not main_path or not main_path.exists():
+        return result
+
+    # Build reverse map: agent_file_stem -> agent_type (for parent-lookup)
+    # meta_map values have "subagent_file" = Path; stem is the agent-<hex> part
+    stem_to_type: dict = {}
+    for meta in meta_map.values():
+        sub_path = meta.get("subagent_file")
+        if sub_path:
+            stem_to_type[Path(sub_path).stem] = meta.get("agent_type", "")
+
+    records = _read_jsonl_records(main_path)
+    for record in records:
+        if record.get("type") != "assistant":
+            continue
+        agent_id = record.get("agentId", "")
+        msg = record.get("message", {})
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "tool_use":
+                continue
+            if item.get("name") not in ("Agent", "Task"):
+                continue
+            tid = item.get("id", "")
+            if not tid:
+                continue
+            if agent_id:
+                # This dispatch came from a subagent; find its type
+                # agentId can be "agent-<hex>" or just the hex stem
+                parent_type = (
+                    stem_to_type.get(agent_id, "")
+                    or stem_to_type.get(agent_id.replace("agent-", ""), "")
+                    or agent_id
+                )
+                result[tid] = parent_type or "orchestrator"
+            else:
+                result[tid] = "orchestrator"
+
+    return result
+
+
+def _derive_tool_target(description: str, agent_type: str) -> str:
+    """Derive the tool/target resource label for a firing row.
+
+    Extracts the first issue/PR reference (#N or PR #N) from description.
+    Falls back to a truncated description excerpt, then to agent_type.
+    """
+    if description:
+        # Look for PR #N pattern first
+        pr_m = _re.search(r"PR\s+#(\d+)", description, _re.IGNORECASE)
+        if pr_m:
+            return f"PR #{pr_m.group(1)}"
+        # Then plain issue #N
+        iss_m = _ISSUE_RE.search(description)
+        if iss_m:
+            return f"#{iss_m.group(1)}"
+        # Fall back to first 40 chars of description
+        return description[:40].strip()
+    return agent_type or "unknown"
+
+
+def _count_transcript_firing_events(path: Path) -> int:
+    """Count unique agent-dispatch events in the full transcript (deduped by tool_use_id).
+
+    Parses both the main transcript and subagent transcripts (via parse_transcript),
+    filters for event=="agent_start", dedupes by tool_use_id, and returns the count.
+
+    This is the completeness denominator: the total distinct firing events the
+    transcript recorded, regardless of whether subagent meta.json files exist.
+
+    Defensive: returns 0 on error.
+    """
+    try:
+        events = parse_transcript(path)
+    except Exception:
+        return 0
+    seen_ids: set = set()
+    for ev in events:
+        if ev.get("event") != "agent_start":
+            continue
+        tid = ev.get("tool_use_id", "")
+        if tid:
+            seen_ids.add(tid)
+        else:
+            # No id — use ts+subagent_type as a surrogate key to avoid infinite counting
+            seen_ids.add(f"{ev.get('ts','')}__{ev.get('subagent_type','')}")
+    return len(seen_ids)
+
+
 def build_firing_tree(path: Path) -> dict:
     """Build the per-PRD firing tree for the session at *path*.
 
@@ -640,6 +749,9 @@ def build_firing_tree(path: Path) -> dict:
     2. For each dispatch, parses the subagent JSONL to extract
        start/end/verdict.
     3. Groups dispatches by the PRD label derived from their description.
+    4. Enriches each dispatch with actor, tool_target, outcome (slice #929).
+    5. Computes completeness_count: unique agent_start events in full transcript
+       (deduped by tool_use_id) for AC #6 completeness assertion.
 
     Returns:
       {
@@ -647,17 +759,21 @@ def build_firing_tree(path: Path) -> dict:
           "<prd-label>": [
             {
               "agent":       str,   # agent type (implementer, reviewer, …)
+              "actor":       str,   # WHO fired: orchestrator / <agent-type>
               "description": str,   # raw description from meta.json
+              "tool_target": str,   # tool/target resource (PR #N / #N / excerpt)
+              "outcome":     str,   # APPROVE / BLOCK / SUCCESS / dispatched / …
               "start":       str,   # ISO timestamp
               "end":         str,   # ISO timestamp
-              "verdict":     str,   # APPROVE / BLOCK / SUCCESS / … or ""
+              "verdict":     str,   # raw APPROVE / BLOCK / SUCCESS / … or ""
               "tool_use_id": str,   # for cross-referencing
             },
             …
           ],
           …
         },
-        "dispatch_count": int,
+        "dispatch_count":      int,   # rendered rows (meta-map based, deduped)
+        "completeness_count":  int,   # transcript agent_start events (deduped by id)
         "source": str,   # transcript path
         "error": str | None,
       }
@@ -667,6 +783,7 @@ def build_firing_tree(path: Path) -> dict:
     empty_result: dict = {
         "groups": {},
         "dispatch_count": 0,
+        "completeness_count": 0,
         "source": str(path) if path else "",
         "error": None,
     }
@@ -679,10 +796,18 @@ def build_firing_tree(path: Path) -> dict:
     subagents_dir = path.parent / path.stem / "subagents"
 
     meta_map = _read_subagent_meta(subagents_dir)
+
+    # Completeness count: always computed from full transcript parse (deduped)
+    completeness_count = _count_transcript_firing_events(path)
+
     if not meta_map:
         empty_result["source"] = str(path)
+        empty_result["completeness_count"] = completeness_count
         # Not an error — session may have no subagent dispatches yet
         return empty_result
+
+    # Build actor map: tool_use_id -> actor label
+    actor_map = _build_actor_map(path, meta_map)
 
     # Also collect dispatches from the main transcript for ordering/timestamps
     # (the meta_map already has toolUseId, so we use that as the primary key)
@@ -694,15 +819,28 @@ def build_firing_tree(path: Path) -> dict:
         description  = meta["description"]
         sub_path     = meta["subagent_file"]
 
-        outcome = _parse_subagent_outcome(sub_path)
-        label   = _derive_prd_label(description, agent_type)
+        outcome_data = _parse_subagent_outcome(sub_path)
+        label        = _derive_prd_label(description, agent_type)
+
+        # Derive WHO fired this dispatch
+        actor = actor_map.get(tool_use_id, "orchestrator") or "orchestrator"
+
+        # Derive tool/target resource
+        tool_target = _derive_tool_target(description, agent_type)
+
+        # Derive outcome: use verdict if available, else "dispatched"
+        raw_verdict = outcome_data["verdict"]
+        outcome_str = raw_verdict if raw_verdict else "dispatched"
 
         dispatch = {
             "agent":       agent_type,
+            "actor":       actor,
             "description": description,
-            "start":       outcome["start"],
-            "end":         outcome["end"],
-            "verdict":     outcome["verdict"],
+            "tool_target": tool_target,
+            "outcome":     outcome_str,
+            "start":       outcome_data["start"],
+            "end":         outcome_data["end"],
+            "verdict":     raw_verdict,
             "tool_use_id": tool_use_id,
         }
 
@@ -718,6 +856,7 @@ def build_firing_tree(path: Path) -> dict:
     return {
         "groups": groups,
         "dispatch_count": dispatch_count,
+        "completeness_count": completeness_count,
         "source": str(path),
         "error": None,
     }

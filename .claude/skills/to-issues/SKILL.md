@@ -19,6 +19,14 @@ This skill turns a PRD into a set of GitHub Issues, one per vertical slice. Sinc
 
 5. **Publish one GitHub Issue per slice, in dependency order.** Walk the approved decomposition's `Depends on` graph topologically — post blockers first so subsequent issues can reference real issue numbers in their `Depends on:` field. Use `gh issue create --label slice --body-file <tempfile>` (heredoc bodies mangle multiline on PowerShell). Each posted issue body includes `Parent: #<PRD-issue-number>` so GitHub renders the back-link.
 
+   **Mandatory provenance trailer:** every slice issue body MUST end with the canonical `Slicer-provenance:` trailer line (no exceptions). This is a machine-checked signal that the slice was produced by the slicer pipeline, not hand-crafted via raw `gh`. The CI guard (`tools/check-slicer-provenance.py`, run by `tools/ci-checks.sh` CHECK 19) flags any open slice issue that lacks it. Canonical format:
+
+   ```
+   Slicer-provenance: slicer-critic-APPROVED decomposition of PRD #<N> (round <R>).
+   ```
+
+   Where `<N>` is the parent PRD issue number and `<R>` is the slicer-critic approval round (1, 2, …). This line must appear as the LAST line of the issue body (after all other sections), separated by a blank line.
+
 <issue-template>
 ## Parent
 
@@ -53,6 +61,8 @@ Or "None — can start immediately" if no blockers.
 - Branch: `feat/<this-issue-number>-<kebab-summary>`
 - Commit prefix: `feat(<scope>):` (or `fix:` / `refactor:` etc. — Conventional Commits)
 - PR body MUST include `Closes #<this-issue-number>`
+
+Slicer-provenance: slicer-critic-APPROVED decomposition of PRD #<N> (round <R>).
 </issue-template>
 
 6. **Report back.**

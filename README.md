@@ -165,7 +165,6 @@ flowchart TD
   subgraph SS["Side workflows"]
     glossary["/glossary"]
     promote_to_backlog["/promote-to-backlog"]
-    audit_meta["/audit-meta"]
     audit_subagents["/audit-subagents"]
     glossary_critic{{glossary-critic}}
     backlog_critic{{backlog-critic}}
@@ -211,8 +210,6 @@ flowchart TD
   glossary_pr --> reviewer
   user -.- audit_subagents
   audit_subagents -.per-PRD.- reviewer
-  user -.- audit_meta
-  audit_meta -.per-PRD.- reviewer
   orchestrator -.capture.- captured_issue
   user -.- promote_to_backlog
   captured_issue --> promote_to_backlog
@@ -226,7 +223,7 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class user human
-  class audit_meta,audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
+  class audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
@@ -337,7 +334,6 @@ Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionS
 
 User-invocable commands under `.claude/skills/`:
 
-- **[`/audit-meta`](.claude/skills/audit-meta/SKILL.md)** — Periodic mechanical audit of codebase structure + doc-currency. Subcommand architecture — `/audit-meta` (no-args = both), `/audit-meta --structure`, `/audit-meta --docs`. Sibling skill to /audit-subagents per ADR-0017. Mechanical/grep-only rubric; emits a single Markdown PASS/WARN/FAIL report. Advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect structural bloat or doc drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
 - **[`/audit-subagents`](.claude/skills/audit-subagents/SKILL.md)** — Periodic mechanical audit of subagent-prompt quality. Scans every file under `.claude/agents/*.md`, classifies each as critic or generator, applies the 11-check `scope`-tagged grep rubric, and emits a single Markdown PASS/FAIL report. No-args invocation; advisory output only (no auto-capture, no PR, no critic gate). Use when you suspect subagent drift, after merging a convention-changing ADR, or on the cadence backlog #47 will eventually define.
 - **[`/build`](.claude/skills/build/SKILL.md)** — Full-lifecycle orchestrator — one command from idea to merged + verified PR. Use when user says "/build", "build this", "implement this", "let's ship", or wants to drive a feature all the way through from idea to production-verified done. Chains dashboard-autostart → grill (conditional) → /ship → doc-regeneration → production-verify gate (mandatory, blocking per ADR-0037 D1). Thin conductor per ADR-0034 D1; sub-skills remain standalone.
 - **[`/glossary`](.claude/skills/glossary/SKILL.md)** — Glossary management skill with two subcommands — `/glossary add` for single-term interactive entry flow; `/glossary fold` for bulk-fold of skill-local vocabulary sections. Both flows gate through glossary-critic before opening a PR. Use `/glossary add` when the user wants to land a new vocabulary term; use `/glossary fold` to scan and promote skill-local vocabulary entries to CLAUDE.md. Per ADR-0038 D3 (consolidation of former /glossary-add + /glossary-fold skills).
@@ -390,7 +386,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies an 11-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer, skill-vs-agent placement), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the critic-parsimony principle per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 (skill ownership, not a critic). Invoke periodically or after merging a convention-changing ADR.
 
-Per [ADR-0017](decisions/0017-audit-meta-consolidation.md), the sibling **`/audit-meta`** skill ([`.claude/skills/audit-meta/SKILL.md`](.claude/skills/audit-meta/SKILL.md)) covers the adjacent meta-quality concerns: codebase **structure** (file-counts, file-sizes, depth, naming conventions) and **documentation currency** (dangling refs, supersession notes, concrete drift detectors). Subcommand architecture: `/audit-meta` (no-args = both), `/audit-meta --structure`, `/audit-meta --docs`. Same advisory-only contract.
+Per [ADR-0017](decisions/0017-audit-meta-consolidation.md) (PRD #919), the adjacent meta-quality concerns (codebase **structure**, file-counts, depth, naming conventions, and **documentation currency** — dangling refs, supersession notes) are now absorbed into the `codebase-critic` subagent's deterministic pre-check phase, which runs automatically on every PRD close via `/ship`.
 
 ## Shared vocabulary
 
@@ -404,7 +400,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 11 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 70 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 10 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 70 ADR(s).
 
 ## License
 

@@ -55,8 +55,12 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _HEALTH_REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# SKILL.md paths for parsing check rationale + mechanic text (slice #629).
-_AUDIT_META_SKILL = _HEALTH_REPO_ROOT / ".claude" / "skills" / "audit-meta" / "SKILL.md"
+# Declared-ID source paths for parsing check rationale + mechanic text (slice #629).
+# _AUDIT_META_SKILL was the former source for DOCS-*/STRUCT-* check IDs; after PRD #919
+# slice #920, the canonical declared-ID source for those checks moved to codebase-critic.md
+# (the ### STRUCT-N / ### DOCS-N headings in its "Deterministic pre-checks" section).
+# _AUDIT_SUBAGENTS_SKILL remains the source for AS-* check IDs until slice #921 folds it.
+_CODEBASE_CRITIC_MD = _HEALTH_REPO_ROOT / ".claude" / "agents" / "codebase-critic.md"
 _AUDIT_SUBAGENTS_SKILL = _HEALTH_REPO_ROOT / ".claude" / "skills" / "audit-subagents" / "SKILL.md"
 
 # Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
@@ -85,10 +89,16 @@ _HEALTH_TTL = 30               # seconds — balance freshness vs. latency
 # ---------------------------------------------------------------------------
 
 def _skill_md_for_check(check_id: str) -> Path:
-    """Return the SKILL.md path that defines the given check ID."""
+    """Return the source file that declares the given check ID.
+
+    AS-* checks are declared in audit-subagents/SKILL.md (until slice #921
+    folds them). DOCS-*/STRUCT-* checks were declared in audit-meta/SKILL.md;
+    after PRD #919 slice #920 retired that skill, their canonical declared-ID
+    source is codebase-critic.md (the Deterministic pre-checks section).
+    """
     if check_id.startswith("AS-") or check_id.startswith("as-"):
         return _AUDIT_SUBAGENTS_SKILL
-    return _AUDIT_META_SKILL
+    return _CODEBASE_CRITIC_MD
 
 
 def _parse_skill_rationale(check_id: str) -> tuple:
@@ -242,10 +252,16 @@ def check_docs5_n3_literal() -> dict:
 
 
 def check_docs6_glossary_md_refs() -> dict:
-    """DOCS-6: no GLOSSARY.md refs outside the 2-file allowlist + decisions/."""
+    """DOCS-6: no GLOSSARY.md refs outside the 2-file allowlist + decisions/.
+
+    codebase-critic.md is allowlisted because its absorbed DOCS-6 check heading
+    text ("### DOCS-6 — no `GLOSSARY.md` references...") contains "GLOSSARY.md"
+    as documentation, not as an active reference. audit-meta/SKILL.md was
+    formerly allowlisted for the same reason; it was deleted by PRD #919 slice #920.
+    """
     allowlist = {
-        ".claude/skills/audit-meta/SKILL.md",
         ".claude/skills/grill-me/SKILL.md",
+        ".claude/agents/codebase-critic.md",
     }
     offenders = []
     for md_file in _HEALTH_REPO_ROOT.rglob("*.md"):
@@ -364,8 +380,16 @@ def check_docs9_glossary_cap() -> dict:
 
 
 def check_docs10_backlog_surfacing() -> dict:
-    """DOCS-10: no backlog-label surfacing idiom in agents/skills (except allowlist)."""
-    allowlist = {"backlog-critic.md", "promote-to-backlog", "audit-meta/SKILL.md", "audit-subagents/SKILL.md"}
+    """DOCS-10: no backlog-label surfacing idiom in agents/skills (except allowlist).
+
+    codebase-critic.md is allowlisted because its absorbed DOCS-10 check heading
+    text ("### DOCS-10 — no `backlog`-labeled prose...") contains the pattern as
+    documentation of the check, not as an instruction to skip the backlog-critic
+    gate. audit-meta/SKILL.md was formerly allowlisted for the same reason; it
+    was deleted by PRD #919 slice #920.
+    """
+    allowlist = {"backlog-critic.md", "promote-to-backlog", "audit-subagents/SKILL.md",
+                 "codebase-critic.md"}
     pattern = re.compile(r'(`backlog`-labeled|--label backlog)')
     offenders = []
     for search_dir in [_HEALTH_REPO_ROOT / ".claude" / "agents", _HEALTH_REPO_ROOT / ".claude" / "skills"]:
@@ -4641,44 +4665,69 @@ CHECK_REGISTRY: dict[str, callable] = {
 
 
 def check_parity() -> dict:
-    """PARITY: registry IDs == audit-skill-declared IDs == CI-consumed IDs.
+    """PARITY: registry IDs == declared IDs == CI-consumed IDs.
 
     Implements ADR-0064 D3 standing parity alarm.
 
     Three ID sets are compared:
     1. Registry IDs: keys of CHECK_REGISTRY (the single-source implementation).
-    2. Skill-declared IDs: DOCS-* and AS-* IDs extracted from the ### <id> —
-       headings in audit-meta/SKILL.md and audit-subagents/SKILL.md.
+    2. Declared IDs: DOCS-*/STRUCT-* and AS-* IDs extracted from ### <id> —
+       headings in their canonical declared-ID sources:
+       - DOCS-*/STRUCT-*: codebase-critic.md "Deterministic pre-checks" section
+         (moved from audit-meta/SKILL.md by PRD #919 slice #920).
+       - AS-*: audit-subagents/SKILL.md (until slice #921 folds them into CI).
     3. CI-consumed IDs: IDs extracted from python3 dashboard/health.py invocations
        in tools/ci-checks.sh (lines matching --check <ID> or --list patterns).
 
     The check is honest about what it can and cannot measure today:
-    - Skill-declared = the ## headings that look like "### DOCS-N — " or
-      "### AS-*-N — " in the two SKILL.md files.  If the skill format changes,
-      the parse documents what it found rather than silently under-counting.
+    - Declared = the ### headings that look like "### DOCS-N — " or
+      "### AS-*-N — " or "### STRUCT-N — " in the source files above.
+      If the format changes, the parse documents what it found rather than
+      silently under-counting.
     - CI-consumed = `--check <ID>` arguments in ci-checks.sh.  Post-migration
       CHECK 4/5 use registry calls; the set grows as later slices add more.
     - Registry IDs are the authoritative set (per ADR-0064 D3).
 
-    PASS when CI-consumed ⊆ registry (every CI-consumed ID is in the registry).
-    WARN when skill-declared IDs exist that are NOT in the registry (gap to close
-    in later slices) but CI-consumed is covered.
-    FAIL on orphan CI-consumed IDs (CI calls a check the registry doesn't have).
+    Deferred-gap acknowledgement: some declared IDs are not individually
+    registered because they are either:
+    (a) STRUCT-* checks: run as a group via audit_meta() inside the
+        codebase-critic per-PRD pass (PRD #919 slice #920); individual
+        registration is deferred to a later slice.
+    (b) AS-* checks: the audit-subagents skill declares these but they will
+        be moved to CI as individual registry entries by slice #921.
+    These known-deferred IDs are excluded from skill_gaps to avoid spurious
+    WARN. The orphan-ci check (FAIL trigger) is unaffected — it catches any
+    CI invocation of a check the registry does not have, regardless of deferral.
 
-    PARITY: <registry_count> registered, <skill_count> skill-declared,
+    PASS when CI-consumed ⊆ registry AND no non-deferred skill_gaps.
+    WARN when non-deferred skill_gaps exist (gap to close in later slices).
+    FAIL on orphan CI-consumed IDs (CI calls a check the registry does not have).
+
+    PARITY: <registry_count> registered, <skill_count> declared,
             <ci_count> CI-consumed; orphan-ci=[] skill-gaps=[]
     """
+    # IDs declared in source files but legitimately not individually registered
+    # because they run grouped (STRUCT-*) or are deferred to slice #921 (AS-*).
+    _DEFERRED_GAPS: set = set()
+    # STRUCT-1..10: run via audit_meta() group call in codebase-critic per-PRD pass.
+    for i in range(1, 11):
+        _DEFERRED_GAPS.add(f"STRUCT-{i}")
+    # AS-*: deferred to slice #921 which will fold audit-subagents into CI.
+    _as_pat = re.compile(r"^AS-")
+
     # --- 1. Registry IDs ---
     registry_ids = set(CHECK_REGISTRY.keys())
 
-    # --- 2. Skill-declared IDs ---
-    # Parse ### <id> — headings from both SKILL.md files.
+    # --- 2. Declared IDs ---
+    # Parse ### <id> — headings from canonical declared-ID sources.
+    # DOCS-*/STRUCT-* declared in codebase-critic.md (post slice #920).
+    # AS-* declared in audit-subagents/SKILL.md (until slice #921).
     _skill_id_pat = re.compile(
-        r'^###\s+((?:DOCS|AS|STRUCT)-[A-Z0-9_-]+)\s+—',
+        r"^###\s+((?:DOCS|AS|STRUCT)-[A-Z0-9_-]+)\s+—",
         re.MULTILINE,
     )
-    skill_ids: set[str] = set()
-    for skill_path in [_AUDIT_META_SKILL, _AUDIT_SUBAGENTS_SKILL]:
+    skill_ids: set = set()
+    for skill_path in [_CODEBASE_CRITIC_MD, _AUDIT_SUBAGENTS_SKILL]:
         try:
             text = skill_path.read_text(encoding="utf-8", errors="replace")
             for m in _skill_id_pat.finditer(text):
@@ -4689,8 +4738,8 @@ def check_parity() -> dict:
     # --- 3. CI-consumed IDs ---
     # Scan tools/ci-checks.sh for: --check <ID> patterns.
     ci_checks_path = _HEALTH_REPO_ROOT / "tools" / "ci-checks.sh"
-    _ci_id_pat = re.compile(r'--check\s+([A-Z][A-Z0-9_-]+)', re.MULTILINE)
-    ci_ids: set[str] = set()
+    _ci_id_pat = re.compile(r"--check\s+([A-Z][A-Z0-9_-]+)", re.MULTILINE)
+    ci_ids: set = set()
     try:
         ci_text = ci_checks_path.read_text(encoding="utf-8", errors="replace")
         for m in _ci_id_pat.finditer(ci_text):
@@ -4700,28 +4749,38 @@ def check_parity() -> dict:
 
     # --- Compute diffs ---
     orphan_ci = sorted(ci_ids - registry_ids)   # CI calls non-existent registry check
-    skill_gaps = sorted(skill_ids - registry_ids)  # skill declares IDs not in registry
+    all_skill_gaps = skill_ids - registry_ids    # declared IDs not in registry
+    # Exclude known-deferred IDs (STRUCT-* group-registered, AS-* slice #921)
+    skill_gaps = sorted(
+        gid for gid in all_skill_gaps
+        if gid not in _DEFERRED_GAPS and not _as_pat.match(gid)
+    )
+    deferred = sorted(gid for gid in all_skill_gaps
+                      if gid in _DEFERRED_GAPS or _as_pat.match(gid))
 
     r_count = len(registry_ids)
     s_count = len(skill_ids)
     c_count = len(ci_ids)
 
     detail = (
-        f"{r_count} registered, {s_count} skill-declared, {c_count} CI-consumed; "
-        f"orphan-ci={orphan_ci}; skill-gaps={skill_gaps}"
+        f"{r_count} registered, {s_count} declared, {c_count} CI-consumed; "
+        f"orphan-ci={orphan_ci}; skill-gaps={skill_gaps}; deferred={deferred}"
     )
 
+    base = {
+        "id": "PARITY",
+        "registry_ids": sorted(registry_ids),
+        "skill_ids": sorted(skill_ids),
+        "ci_ids": sorted(ci_ids),
+        "orphan_ci": orphan_ci,
+        "skill_gaps": skill_gaps,
+        "deferred": deferred,
+    }
     if orphan_ci:
-        return {"id": "PARITY", "result": "FAIL", "detail": detail,
-                "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
-                "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
+        return {**base, "result": "FAIL", "detail": detail}
     if skill_gaps:
-        return {"id": "PARITY", "result": "WARN", "detail": detail,
-                "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
-                "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
-    return {"id": "PARITY", "result": "PASS", "detail": detail,
-            "registry_ids": sorted(registry_ids), "skill_ids": sorted(skill_ids),
-            "ci_ids": sorted(ci_ids), "orphan_ci": orphan_ci, "skill_gaps": skill_gaps}
+        return {**base, "result": "WARN", "detail": detail}
+    return {**base, "result": "PASS", "detail": detail}
 
 
 # Register PARITY into the registry after defining it (self-referential).

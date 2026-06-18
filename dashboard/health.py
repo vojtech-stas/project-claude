@@ -984,6 +984,77 @@ def _enrich_checks(checks: list) -> list:
     return checks
 
 
+# Human-readable group labels for each check ID (slice #931 / PRD #927 §2 #10).
+# Maps check ID → section group header shown in the Health tab.
+# Groups: "Docs in sync" | "Rules enforced" | "Hooks live" | "No drift" |
+#         "Verification integrity" | "Release gates" | "Session hygiene"
+_CHECK_GROUP_MAP: dict = {
+    # Docs in sync — audit-meta: ADR index, CLAUDE.md refs, glossary, citations
+    "DOCS-1": "Docs in sync",
+    "DOCS-2": "Docs in sync",
+    "DOCS-3": "Docs in sync",
+    "DOCS-4": "Docs in sync",
+    "DOCS-5": "Docs in sync",
+    "DOCS-6": "Docs in sync",
+    "DOCS-7": "Docs in sync",
+    "DOCS-8": "Docs in sync",
+    "DOCS-9": "Docs in sync",
+    "DOCS-10": "Docs in sync",
+    "DOCS-11": "Docs in sync",
+    # Rules enforced — rule-coverage, registry parity, critic performance
+    "RULE-COVERAGE": "Rules enforced",
+    "PARITY": "Rules enforced",
+    "CRITIC-HEALTH": "Rules enforced",
+    "SPEC-COVERAGE": "Rules enforced",
+    # Hooks live — hook integrity + liveness
+    "HOOK-INTEGRITY": "Hooks live",
+    "HOOK-LIVENESS": "Hooks live",
+    # No drift — isolation, capture-SLO, silent-drift, test health
+    "CAPTURE-SLO": "No drift",
+    "ISOLATION-GROUP": "No drift",
+    "SILENT-DRIFT": "No drift",
+    "STALE-BRANCHES": "No drift",
+    "TESTS-COLLECTED": "No drift",
+    "TEST-ORDERING": "No drift",
+    "QUARANTINE-SLA": "No drift",
+    "EVAL-REVIEWER": "No drift",
+    "EVAL-PRD-CRITIC": "No drift",
+    "EVAL-SLICER-CRITIC": "No drift",
+    # Verification integrity — proof-presence, merge-integrity, capture-shape
+    "BLIND-RATE": "Verification integrity",
+    "RESIDUAL-RATIO": "Verification integrity",
+    "PROOF-PRESENCE": "Verification integrity",
+    "PROOF-INTEGRITY": "Verification integrity",
+    "MERGE-INTEGRITY": "Verification integrity",
+    "CAPTURE-SHAPE": "Verification integrity",
+    "GREEN-MAIN": "Verification integrity",
+    # Release gates — promotion topology, lag, release-readiness
+    "BRANCH-TOPOLOGY": "Release gates",
+    "PROMOTION-LAG": "Release gates",
+    "RELEASE-READY": "Release gates",
+    "R-SENSITIVE-DETECTOR": "Release gates",
+    "META-TRIPWIRE": "Release gates",
+    # Session hygiene — log rotation, untracked files, required labels, dead routes
+    "UNTRACKED-SIZE": "Session hygiene",
+    "LOG-ROTATION": "Session hygiene",
+    "REQUIRED-LABELS": "Session hygiene",
+    "DEAD-ROUTES": "Session hygiene",
+    "SESSION-INJECTION": "Session hygiene",
+}
+
+
+def _enrich_group(checks: list) -> list:
+    """Add 'group' field to each check dict using _CHECK_GROUP_MAP (slice #931).
+
+    Mutates each dict in-place and returns the list for convenience.
+    Checks not in the map get group = "Other".
+    """
+    for c in checks:
+        check_id = c.get("id", "")
+        c["group"] = _CHECK_GROUP_MAP.get(check_id, "Other")
+    return checks
+
+
 def audit_subagents() -> dict:
     agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
     results = {}
@@ -4847,12 +4918,16 @@ def _build_health_data() -> dict:
 
     Called from the background thread; never from an HTTP handler.
     """
+    # _enrich_group adds the 'group' field used by the Health tab section headers
+    # (slice #931 / PRD #927 §2 #10) — presentation only, no check-logic change.
+    audit = audit_meta()
+    _enrich_group(audit["checks"])
     return {
-        "auditMeta": audit_meta(),
+        "auditMeta": audit,
         "auditSubagents": audit_subagents(),
         "cascadeFinder": cascade_finder_summary(),
         "substrateMeta": {
-            "checks": [
+            "checks": _enrich_group([
                 check_capture_slo(),
                 check_hook_integrity(),
                 check_hook_liveness(),
@@ -4867,10 +4942,10 @@ def _build_health_data() -> dict:
                 check_eval_reviewer(),
                 check_eval_prd_critic(),
                 check_eval_slicer_critic(),
-            ]
+            ])
         },
         "verificationIntegrity": {
-            "checks": [
+            "checks": _enrich_group([
                 check_blind_dispatch_rate(),
                 check_residual_ratio(),
                 check_proof_presence(),
@@ -4879,31 +4954,31 @@ def _build_health_data() -> dict:
                 check_capture_shape(),
                 check_green_main(),
                 check_silent_drift(),
-            ]
+            ])
         },
         "registryIntegrity": {
-            "checks": [
+            "checks": _enrich_group([
                 check_parity(),
-            ]
+            ])
         },
         "hygieneIntegrity": {
-            "checks": [
+            "checks": _enrich_group([
                 check_untracked_size(),
                 check_log_rotation(),
                 check_stale_branches(),
                 check_required_labels(),
                 check_dead_routes(),
                 check_session_injection(),
-            ]
+            ])
         },
         "promotionIntegrity": {
-            "checks": [
+            "checks": _enrich_group([
                 check_branch_topology(),
                 check_promotion_lag(),
                 check_release_ready(),
                 check_r_sensitive_detector(),
                 check_meta_tripwire(),
-            ]
+            ])
         },
     }
 

@@ -174,15 +174,25 @@ def build_prd_firing_payload(timelines: list[dict]) -> dict:
 
 
 def _gh_run(args: list[str], timeout: int = 30) -> tuple[int, str]:
-    """Run a gh CLI command; return (returncode, stdout)."""
+    """Run a gh CLI command; return (returncode, stdout).
+
+    encoding="utf-8" with errors="replace" prevents the Windows cp1252
+    UnicodeDecodeError: on Windows, text=True without an explicit encoding
+    uses the system default codec (cp1252), which cannot decode bytes outside
+    Latin-1 (e.g. emoji, Unicode arrows in PR bodies — byte 0x90).  When
+    that decode fails inside subprocess's background _readerthread, r.stdout
+    is set to None instead of a string, causing 'NoneType.strip()' errors
+    downstream (root cause captured in issue #934).
+    """
     try:
         r = subprocess.run(
             ["gh"] + args,
             capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
         )
-        return r.returncode, r.stdout
+        return r.returncode, r.stdout or ""
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
-        return 1, f""  # gh unavailable
+        return 1, ""  # gh unavailable
 
 
 def fetch_prd_firing(limit: int = 30) -> dict:
@@ -240,8 +250,11 @@ def fetch_prd_firing(limit: int = 30) -> dict:
             "pr", "view", str(pr_num),
             "--json", "number,title,createdAt,mergedAt,body,comments",
         ], timeout=20)
-        if rc2 != 0 or not out2.strip():
-            # Fall back to stub data (no comments)
+        if rc2 != 0 or out2 is None or not out2.strip():
+            # Fall back to stub data (no comments).
+            # out2 is None guard: belt-and-suspenders for any future path where
+            # _gh_run returns (0, None) — e.g. subprocess stdout decode failure
+            # that propagates as None despite the encoding fix (issue #934).
             timeline = parse_pr_firing_timeline(pr_stub)
         else:
             try:

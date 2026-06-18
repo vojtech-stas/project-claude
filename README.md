@@ -165,7 +165,6 @@ flowchart TD
   subgraph SS["Side workflows"]
     glossary["/glossary"]
     promote_to_backlog["/promote-to-backlog"]
-    audit_meta["/audit-meta"]
     audit_subagents["/audit-subagents"]
     glossary_critic{{glossary-critic}}
     backlog_critic{{backlog-critic}}
@@ -211,8 +210,6 @@ flowchart TD
   glossary_pr --> reviewer
   user -.- audit_subagents
   audit_subagents -.per-PRD.- reviewer
-  user -.- audit_meta
-  audit_meta -.per-PRD.- reviewer
   orchestrator -.capture.- captured_issue
   user -.- promote_to_backlog
   captured_issue --> promote_to_backlog
@@ -226,7 +223,7 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class user human
-  class audit_meta,audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
+  class audit_subagents,build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
@@ -389,7 +386,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 Per [ADR-0011](decisions/0011-subagent-quality-framework.md), subagent prompts drift silently between slices (the 2026-05-19 audit demonstrated: 5 subagent files unchanged for multiple PRDs still instructed `--label backlog` instead of `--label captured`, bypassing the autopilot). The **`/audit-subagents`** skill ([`.claude/skills/audit-subagents/SKILL.md`](.claude/skills/audit-subagents/SKILL.md)) is the mechanical drift-detector: no-args invocation globs `.claude/agents/*.md`, applies an 11-check `scope`-tagged grep rubric (frontmatter, tool boundaries, references, surfacing convention, mandatory-reading-order, default-BLOCK clause, adversarial mindset, CRITIC trailer, 5-section verdict, GENERATOR trailer, skill-vs-agent placement), and emits a single Markdown PASS/FAIL report. The skill is a GENERATOR per ADR-0005 D1c — advisory only, no auto-capture, no PR, no critic gate. Honors the critic-parsimony principle per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 (skill ownership, not a critic). Invoke periodically or after merging a convention-changing ADR.
 
-Per [ADR-0017](decisions/0017-audit-meta-consolidation.md), the sibling **`/audit-meta`** skill ([`.claude/skills/audit-meta/SKILL.md`](.claude/skills/audit-meta/SKILL.md)) covers the adjacent meta-quality concerns: codebase **structure** (file-counts, file-sizes, depth, naming conventions) and **documentation currency** (dangling refs, supersession notes, concrete drift detectors). Subcommand architecture: `/audit-meta` (no-args = both), `/audit-meta --structure`, `/audit-meta --docs`. Same advisory-only contract.
+Per [ADR-0017](decisions/0017-audit-meta-consolidation.md) (PRD #919), the adjacent meta-quality concerns (codebase **structure**, file-counts, depth, naming conventions, and **documentation currency** — dangling refs, supersession notes) are now absorbed into the `codebase-critic` subagent's deterministic pre-check phase, which runs automatically on every PRD close via `/ship`.
 
 ## Shared vocabulary
 

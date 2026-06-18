@@ -159,129 +159,45 @@ declared-ID source for the PARITY check.
 
 ### STRUCT-1 — `.claude/agents/` file count cap (≤ 12)
 
-**Registry:** `python dashboard/health.py --check STRUCT-1`
-
-**Rationale:** The 6-critic-cap from ADR-0008 D7 implies ~12 subagents at full saturation. Past that, the cognitive cost of maintaining a unified mental model of the agent fleet rises sharply. Three-band: ≤12 PASS; 13–15 WARN; >15 FAIL.
-
 ### STRUCT-2 — `.claude/skills/` directory count cap (≤ 16)
-
-**Registry:** `python dashboard/health.py --check STRUCT-2`
-
-**Rationale:** 16-skill cap. New skills past 16 should justify why an existing skill cannot absorb the concern. Three-band: ≤16 PASS; 17–19 WARN; >19 FAIL.
 
 ### STRUCT-3 — no markdown file > 500 LoC (split-candidate detector)
 
-**Registry:** `python dashboard/health.py --check STRUCT-3`
-
-**Rationale:** 500-LoC threshold is the "split me" smoke alarm. WARN-level; surfaces split candidates for the user to triage without forcing a split.
-
 ### STRUCT-4 — no directory depth > 4 (nesting-bloat detector)
-
-**Registry:** `python dashboard/health.py --check STRUCT-4`
-
-**Rationale:** Depth-4 cap reflects the project's natural tree. Nesting > 4 is a hard structural smell. FAIL-level.
 
 ### STRUCT-5 — `decisions/` ADR count cap (≤ 20)
 
-**Registry:** `python dashboard/health.py --check STRUCT-5`
-
-**Rationale:** Past 20, the README index becomes painful to scan. Informational cap — hitting it is a signal to review. Three-band: ≤20 PASS; 21–25 WARN; >25 FAIL.
-
 ### STRUCT-6 — `.claude/agents/*.md` filenames match kebab-case pattern
-
-**Registry:** `python dashboard/health.py --check STRUCT-6`
-
-**Rationale:** The `[a-z-]+(-critic)?\.md` shape is how the ADR-0011 D3 classifier distinguishes critics from generators. Naming is a hard contract — FAIL, not WARN.
 
 ### STRUCT-7 — each `.claude/skills/*/` directory contains exactly one `SKILL.md`
 
-**Registry:** `python dashboard/health.py --check STRUCT-7`
-
-**Rationale:** The one-SKILL.md-per-directory convention is the Claude Code skills runtime contract. FAIL on any extra `.md`.
-
 ### STRUCT-8 — `decisions/NNNN-*.md` filenames match `NNNN-<kebab-slug>.md` pattern
-
-**Registry:** `python dashboard/health.py --check STRUCT-8`
-
-**Rationale:** The `NNNN-<kebab-slug>.md` shape is how ADR cross-references resolve. FAIL if any ADR file uses a non-canonical name pattern.
 
 ### STRUCT-9 — root `README.md` exists and is non-empty
 
-**Registry:** `python dashboard/health.py --check STRUCT-9`
-
-**Rationale:** `README.md` is what GitHub renders on the repo landing page. A missing or empty README is a hard signal of repo abandonment or misconfiguration.
-
 ### STRUCT-10 — root `CLAUDE.md` exists and is non-empty
-
-**Registry:** `python dashboard/health.py --check STRUCT-10`
-
-**Rationale:** `CLAUDE.md` is what Claude Code auto-loads on every session. A missing or empty `CLAUDE.md` means agents operate without project rules.
 
 ### DOCS-1 — every `decisions/README.md` index entry resolves to an existing file
 
-**Registry:** `python dashboard/health.py --check DOCS-1`
-
-**Rationale:** The ADR index is the primary discovery surface for the project's decision history. Dangling rows mean readers chase 404s and lose trust.
-
 ### DOCS-2 — every `decisions/NNNN-*.md` on disk has a row in `decisions/README.md`
-
-**Registry:** `python dashboard/health.py --check DOCS-2`
-
-**Rationale:** If the index omits ADRs that DO exist, readers don't discover them. DOCS-1 + DOCS-2 together guarantee the index neither lies nor omits.
 
 ### DOCS-3 — every `.claude/agents/*.md` ref in CLAUDE.md Map resolves
 
-**Registry:** `python dashboard/health.py --check DOCS-3`
-
-**Rationale:** The CLAUDE.md Map is the agent/skill discovery surface. A dangling reference means an agent fails silently or falls back to default behavior.
-
 ### DOCS-4 — every `.claude/skills/*/SKILL.md` ref in CLAUDE.md Map resolves
-
-**Registry:** `python dashboard/health.py --check DOCS-4`
-
-**Rationale:** Same Map-forward rationale as DOCS-3, applied to the skill half of the Map.
 
 ### DOCS-5 — no bare `N=3` literal in `README.md` without adjacent ADR-0013 reference
 
-**Registry:** `python dashboard/health.py --check DOCS-5`
-
-**Rationale:** ADR-0013 refined the slicer's N-decompositions contract; DOCS-5 ensures the literal doesn't regress without a proper ADR-0013 citation. Scoped to README.md only.
-
 ### DOCS-6 — no `GLOSSARY.md` references outside the known-legitimate allowlist
-
-**Registry:** `python dashboard/health.py --check DOCS-6`
-
-**Rationale:** ADR-0012 deleted the standalone `GLOSSARY.md`. Any remaining reference is dead. Two files are allowlisted; decisions/* exempt as immutable historical record.
 
 ### DOCS-7 — every `[ADR-NNNN](decisions/NNNN-*.md)` citation in any tracked `.md` resolves
 
-**Registry:** `python dashboard/health.py --check DOCS-7`
-
-**Rationale:** ADR references propagate aggressively. A dangling citation means readers chase 404s and agents can't ground behavior in the ADR.
-
 ### DOCS-8 — `decisions/README.md` Status column carries "superseded by ADR-NNNN" annotations (WARN)
-
-**Registry:** `python dashboard/health.py --check DOCS-8`
-
-**Rationale:** ADR supersession is the project's primary mechanism for evolving decisions without losing history. WARN-level; README annotation is a discoverability convenience.
 
 ### DOCS-9 — CLAUDE.md glossary entry count ≤ 35 (WARN)
 
-**Registry:** `python dashboard/health.py --check DOCS-9`
-
-**Rationale:** Past ~35 entries, the context-window cost-benefit shifts unfavorably. WARN (not FAIL) — hitting the cap is a signal to act.
-
 ### DOCS-10 — no `` `backlog`-labeled `` prose or `--label backlog` literal in agent or skill files
 
-**Registry:** `python dashboard/health.py --check DOCS-10`
-
-**Rationale:** The captured-vs-backlog two-tier convention from ADR-0008 D8 + ADR-0009 D2 applies to every agent and skill. Skipping the `backlog-critic` gate is the exact #105/#107 regression.
-
 ### DOCS-11 — no dead citations of fully-superseded ADRs in `.claude/` runtime prompts
-
-**Registry:** `python dashboard/health.py --check DOCS-11`
-
-**Rationale:** Runtime prompts that cite a fully-superseded ADR without naming its superseder send agents toward retired decisions. Per ADR-0064 D2.
 
 ---
 

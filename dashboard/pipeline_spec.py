@@ -162,12 +162,6 @@ NODES = {
         "stage": "SS",
         "path": ".claude/skills/promote-to-backlog/SKILL.md",
     },
-    "audit-meta": {
-        "kind": "skill",
-        "label": "/audit-meta",
-        "stage": "SS",
-        "path": ".claude/skills/audit-meta/SKILL.md",
-    },
     "audit-subagents": {
         "kind": "skill",
         "label": "/audit-subagents",
@@ -783,32 +777,6 @@ EDGES = [
         "label": "per-PRD",
         "style": "dashed",
         "description": "/audit-subagents advisory findings fed to reviewer (per-PRD).",
-    },
-
-    # user → /audit-meta (runtime)
-    {
-        "id": "E-USER-AUDITMETA",
-        "from_node": "user",
-        "to_node": "audit-meta",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "user_invokes_audit_meta",
-        "label": "",
-        "style": "dashed",
-        "description": "User invokes /audit-meta structure + docs-currency check.",
-    },
-
-    # /audit-meta → reviewer (advisory per-PRD; runtime)
-    {
-        "id": "E-AUDITMETA-REVIEWER",
-        "from_node": "audit-meta",
-        "to_node": "reviewer",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "audit_meta_feeds_reviewer",
-        "label": "per-PRD",
-        "style": "dashed",
-        "description": "/audit-meta advisory findings fed to reviewer (per-PRD).",
     },
 
     # =========================================================================

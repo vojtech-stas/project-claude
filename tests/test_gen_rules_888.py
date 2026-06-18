@@ -2,6 +2,8 @@
 Regression tests for PRD #888 slice #889 — gen_rules.py walking skeleton.
 Updated in slice #938 (ADR-0073) for SCOPE_TARGET global/area split.
 Updated in slice #939 (PRD #937) for remaining-scopes migration + conservation check.
+Updated in slice #940 (PRD #937) for @import approach: GLOBAL scopes now render
+into .claude/rules/_global.md (aggregated) instead of inline CLAUDE.md regions.
 
 Verifies:
 1. gen_rules.py excludes rule_ids from ADRs with status "superseded".
@@ -9,11 +11,11 @@ Verifies:
 3. ADRs without frontmatter are skipped gracefully (no crash).
 4. generate() with a fixture ADR set produces the expected output.
 5. AREA scopes render into .claude/rules/<scope>.md with paths: frontmatter.
-6. GLOBAL scopes render into CLAUDE.md generated-region blocks.
+6. GLOBAL scopes render into .claude/rules/_global.md (aggregated @import target).
 7. --check mode detects stale/missing outputs.
 8. rule_id conservation: live count == RULE_IDS_BASELINE.
 9. All 4 area scopes have paths: frontmatter in committed files.
-10. All 8 global scopes have generated-region markers in CLAUDE.md.
+10. CLAUDE.md @imports _global.md; rule_ids are in _global.md, not inline.
 
 All fixture-based tests use a temp directory and monkeypatching.
 Tests are offline, deterministic, and network-free.
@@ -98,18 +100,24 @@ def _run_with_fixture(adrs: list, scope_target_override: dict | None = None):
     """
     Run gen_rules.generate() against a fixture ADR list.
 
-    Monkeypatches _load_adrs(), RULES_DIR, REPO_ROOT, and optionally
-    SCOPE_TARGET. For AREA scopes, returns file content; for GLOBAL scopes,
-    returns CLAUDE.md content.
+    Monkeypatches _load_adrs(), RULES_DIR, REPO_ROOT, GLOBAL_RULES_FILE,
+    and optionally SCOPE_TARGET. For AREA scopes, returns file content; for
+    GLOBAL scopes, returns _global.md content via the area_files dict.
 
     Returns (exit_code, area_files_dict, claude_md_content) where
-    area_files_dict maps scope → content from .claude/rules/<scope>.md.
+    area_files_dict maps stem → content from .claude/rules/<stem>.md
+    (including '_global' for the aggregated global-scope file).
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         rules_dir = Path(tmpdir) / ".claude" / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
         claude_md = Path(tmpdir) / "CLAUDE.md"
-        # Create an empty CLAUDE.md for global scopes to append to
-        claude_md.write_text("# CLAUDE.md placeholder\n", encoding="utf-8")
+        # CLAUDE.md must contain the @import line for --check to pass
+        claude_md.write_text(
+            "# CLAUDE.md placeholder\n\n@.claude/rules/_global.md\n",
+            encoding="utf-8",
+        )
+        global_rules_file = rules_dir / "_global.md"
 
         target_override = scope_target_override or gen_rules.SCOPE_TARGET
 
@@ -118,11 +126,12 @@ def _run_with_fixture(adrs: list, scope_target_override: dict | None = None):
             patch.object(gen_rules, "RULES_DIR", rules_dir),
             patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
             patch.object(gen_rules, "CLAUDE_MD", claude_md),
+            patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             patch.object(gen_rules, "SCOPE_TARGET", target_override),
         ):
             exit_code = gen_rules.generate(check_mode=False)
 
-        # Collect generated area files
+        # Collect all generated files (area files + _global.md)
         area_files: dict[str, str] = {}
         if rules_dir.exists():
             for f in rules_dir.glob("*.md"):
@@ -144,8 +153,13 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         rules_dir = Path(tmpdir) / ".claude" / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
         claude_md = Path(tmpdir) / "CLAUDE.md"
-        claude_md.write_text("# CLAUDE.md placeholder\n", encoding="utf-8")
+        claude_md.write_text(
+            "# CLAUDE.md placeholder\n\n@.claude/rules/_global.md\n",
+            encoding="utf-8",
+        )
+        global_rules_file = rules_dir / "_global.md"
 
         target_override = scope_target_override or gen_rules.SCOPE_TARGET
 
@@ -162,6 +176,7 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
             patch.object(gen_rules, "RULES_DIR", rules_dir),
             patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
             patch.object(gen_rules, "CLAUDE_MD", claude_md),
+            patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             patch.object(gen_rules, "SCOPE_TARGET", target_override),
         ):
             gen_rules.generate(check_mode=False)
@@ -172,6 +187,7 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
             patch.object(gen_rules, "RULES_DIR", rules_dir),
             patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
             patch.object(gen_rules, "CLAUDE_MD", claude_md),
+            patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             patch.object(gen_rules, "SCOPE_TARGET", target_override),
             patch.object(gen_rules, "RULE_IDS_BASELINE", fixture_baseline),
         ):
@@ -259,41 +275,67 @@ class TestGenRulesCurrentIncluded(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Tests: GLOBAL scope renders into CLAUDE.md
+# Tests: GLOBAL scope renders into .claude/rules/_global.md (slice #940)
 # ---------------------------------------------------------------------------
 
 class TestGenRulesGlobalScope(unittest.TestCase):
-    """GLOBAL scopes must render into CLAUDE.md generated-region blocks."""
+    """GLOBAL scopes must render into .claude/rules/_global.md (aggregated @import)."""
 
-    def test_global_scope_renders_to_claude_md(self):
-        """GLOBAL scope (capture) renders into CLAUDE.md, not .claude/rules/."""
+    def test_global_scope_renders_to_global_md(self):
+        """GLOBAL scope (capture) renders into _global.md, not a per-scope file."""
         adrs = [_ACTIVE_ADR_GLOBAL]
         exit_code, area_files, claude_content = _run_with_fixture(adrs)
         self.assertEqual(exit_code, 0)
-        # GLOBAL scope must NOT produce a rules file
+        # GLOBAL scope must NOT produce a per-scope rules file
         self.assertNotIn(
             "capture",
             area_files,
             "GLOBAL scope must NOT render to .claude/rules/capture.md",
         )
-        # GLOBAL scope must produce a CLAUDE.md region
+        # GLOBAL scope must produce _global.md with the rule_id
         self.assertIn(
-            "BEGIN GENERATED:rules:capture",
-            claude_content,
-            "GLOBAL scope must render into CLAUDE.md region markers",
+            "_global",
+            area_files,
+            "GLOBAL scope must render into .claude/rules/_global.md",
         )
         self.assertIn(
             "CAP-001",
-            claude_content,
-            "CAP-001 must appear in CLAUDE.md global region",
+            area_files["_global"],
+            "CAP-001 must appear in _global.md for global scope",
         )
 
-    def test_global_scope_region_has_end_marker(self):
-        """GLOBAL scope region in CLAUDE.md must have both BEGIN and END markers."""
+    def test_global_scope_not_inline_in_claude_md(self):
+        """GLOBAL scope rule_ids must NOT be inlined in CLAUDE.md (use @import)."""
         adrs = [_ACTIVE_ADR_GLOBAL]
         _, _, claude_content = _run_with_fixture(adrs)
-        self.assertIn("BEGIN GENERATED:rules:capture", claude_content)
-        self.assertIn("END GENERATED:rules:capture", claude_content)
+        # CLAUDE.md must have the @import line
+        self.assertIn(
+            "@.claude/rules/_global.md",
+            claude_content,
+            "CLAUDE.md must contain @import line for _global.md",
+        )
+        # CLAUDE.md must NOT have inline BEGIN GENERATED markers for global scopes
+        self.assertNotIn(
+            "BEGIN GENERATED:rules:capture",
+            claude_content,
+            "CLAUDE.md must NOT contain inline generated-region markers for global scopes",
+        )
+
+    def test_global_file_has_generated_header(self):
+        """_global.md must start with the DO-NOT-EDIT generated header."""
+        adrs = [_ACTIVE_ADR_GLOBAL]
+        _, area_files, _ = _run_with_fixture(adrs)
+        self.assertIn("_global", area_files)
+        self.assertIn(
+            "GENERATED by tools/gen_rules.py",
+            area_files["_global"],
+            "Generated header must be present in _global.md",
+        )
+        self.assertIn(
+            "DO NOT EDIT",
+            area_files["_global"],
+            "DO NOT EDIT warning must be present in _global.md",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -391,35 +433,86 @@ class TestGenRulesCheckMode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = Path(tmpdir) / ".claude" / "rules"
             claude_md = Path(tmpdir) / "CLAUDE.md"
-            claude_md.write_text("# placeholder\n", encoding="utf-8")
+            claude_md.write_text(
+                "# placeholder\n\n@.claude/rules/_global.md\n",
+                encoding="utf-8",
+            )
+            global_rules_file = rules_dir / "_global.md"
             # Do NOT create rules_dir — file is missing
             with (
                 patch.object(gen_rules, "_load_adrs", return_value=adrs),
                 patch.object(gen_rules, "RULES_DIR", rules_dir),
                 patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
                 patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             ):
                 exit_code = gen_rules.generate(check_mode=True)
         self.assertEqual(exit_code, 1, "check_mode must return 1 when area file is missing")
 
-    def test_check_mode_fails_on_missing_claude_md_region(self):
-        """--check mode returns non-zero when CLAUDE.md region markers are absent."""
+    def test_check_mode_fails_on_missing_global_md(self):
+        """--check mode returns non-zero when _global.md is absent."""
         adrs = [_ACTIVE_ADR_GLOBAL]
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = Path(tmpdir) / ".claude" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
             claude_md = Path(tmpdir) / "CLAUDE.md"
-            # CLAUDE.md exists but has no generated regions
-            claude_md.write_text("# No generated regions here\n", encoding="utf-8")
+            global_rules_file = rules_dir / "_global.md"
+            # CLAUDE.md has the @import line, but _global.md is absent
+            claude_md.write_text(
+                "# placeholder\n\n@.claude/rules/_global.md\n",
+                encoding="utf-8",
+            )
             with (
                 patch.object(gen_rules, "_load_adrs", return_value=adrs),
                 patch.object(gen_rules, "RULES_DIR", rules_dir),
                 patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
                 patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             ):
                 exit_code = gen_rules.generate(check_mode=True)
         self.assertEqual(
             exit_code, 1,
-            "check_mode must return 1 when CLAUDE.md global region is missing",
+            "check_mode must return 1 when _global.md is missing",
+        )
+
+    def test_check_mode_fails_on_missing_import_line(self):
+        """--check mode returns non-zero when CLAUDE.md lacks the @import line."""
+        adrs = [_ACTIVE_ADR_GLOBAL]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rules_dir = Path(tmpdir) / ".claude" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            claude_md = Path(tmpdir) / "CLAUDE.md"
+            global_rules_file = rules_dir / "_global.md"
+            # CLAUDE.md has no @import line
+            claude_md.write_text("# No @import here\n", encoding="utf-8")
+            # First generate _global.md so the file exists
+            with (
+                patch.object(gen_rules, "_load_adrs", return_value=adrs),
+                patch.object(gen_rules, "RULES_DIR", rules_dir),
+                patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
+                patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
+            ):
+                gen_rules.generate(check_mode=False)
+            # Now restore CLAUDE.md without @import, run check
+            claude_md.write_text("# No @import here\n", encoding="utf-8")
+            active = [a for a in adrs if not gen_rules._is_superseded(a)]
+            scopes_tmp: dict = {}
+            for a in active:
+                scopes_tmp.setdefault(a["scope"], []).append(a)
+            fixture_baseline = gen_rules._count_rule_ids(scopes_tmp)
+            with (
+                patch.object(gen_rules, "_load_adrs", return_value=adrs),
+                patch.object(gen_rules, "RULES_DIR", rules_dir),
+                patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
+                patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
+                patch.object(gen_rules, "RULE_IDS_BASELINE", fixture_baseline),
+            ):
+                exit_code = gen_rules.generate(check_mode=True)
+        self.assertEqual(
+            exit_code, 1,
+            "check_mode must return 1 when CLAUDE.md lacks the @import line",
         )
 
     def test_check_mode_passes_on_clean_area_tree(self):
@@ -499,20 +592,26 @@ class TestGenRulesRealFrontmatter(unittest.TestCase):
         )
         self.assertIn("HOK-001", content, "HOK-001 from ADR-0015 must be in hooks.md")
 
-    def test_pipeline_global_scope_in_claude_md(self):
-        """Real CLAUDE.md must contain the pipeline global-scope generated region."""
+    def test_global_md_exists_with_global_rules(self):
+        """Real .claude/rules/_global.md must exist and contain PIP-001 rule."""
+        global_md = _REPO_ROOT / ".claude" / "rules" / "_global.md"
+        self.assertTrue(global_md.exists(), ".claude/rules/_global.md must exist")
+        content = global_md.read_text(encoding="utf-8")
+        self.assertIn(
+            "PIP-001",
+            content,
+            "PIP-001 from pipeline global scope must appear in _global.md",
+        )
+
+    def test_claude_md_has_global_import_line(self):
+        """Real CLAUDE.md must contain the @import line for _global.md."""
         claude_md = _REPO_ROOT / "CLAUDE.md"
         self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
         content = claude_md.read_text(encoding="utf-8")
         self.assertIn(
-            "BEGIN GENERATED:rules:pipeline",
+            "@.claude/rules/_global.md",
             content,
-            "CLAUDE.md must contain the pipeline global-scope region marker",
-        )
-        self.assertIn(
-            "PIP-001",
-            content,
-            "PIP-001 from pipeline global scope must appear in CLAUDE.md",
+            "CLAUDE.md must @import .claude/rules/_global.md",
         )
 
 
@@ -549,8 +648,13 @@ class TestRuleIdConservationBaseline(unittest.TestCase):
         adrs = [_ACTIVE_ADR_AREA, _ACTIVE_ADR_GLOBAL]
         with tempfile.TemporaryDirectory() as tmpdir:
             rules_dir = Path(tmpdir) / ".claude" / "rules"
+            rules_dir.mkdir(parents=True, exist_ok=True)
             claude_md = Path(tmpdir) / "CLAUDE.md"
-            claude_md.write_text("# CLAUDE.md placeholder\n", encoding="utf-8")
+            claude_md.write_text(
+                "# CLAUDE.md placeholder\n\n@.claude/rules/_global.md\n",
+                encoding="utf-8",
+            )
+            global_rules_file = rules_dir / "_global.md"
 
             # First generate so files exist
             with (
@@ -558,6 +662,7 @@ class TestRuleIdConservationBaseline(unittest.TestCase):
                 patch.object(gen_rules, "RULES_DIR", rules_dir),
                 patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
                 patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             ):
                 gen_rules.generate(check_mode=False)
 
@@ -567,6 +672,7 @@ class TestRuleIdConservationBaseline(unittest.TestCase):
                 patch.object(gen_rules, "RULES_DIR", rules_dir),
                 patch.object(gen_rules, "REPO_ROOT", Path(tmpdir)),
                 patch.object(gen_rules, "CLAUDE_MD", claude_md),
+                patch.object(gen_rules, "GLOBAL_RULES_FILE", global_rules_file),
             ):
                 exit_code = gen_rules.generate(check_mode=True)
 
@@ -626,47 +732,37 @@ class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Integration tests: all global scopes in CLAUDE.md (slice #939)
+# Integration tests: all global scopes in _global.md (slice #940)
 # ---------------------------------------------------------------------------
 
-class TestAllGlobalScopesInClaudeMd(unittest.TestCase):
-    """All 8 GLOBAL scope generated-region markers must be present in CLAUDE.md."""
+class TestAllGlobalScopesInGlobalMd(unittest.TestCase):
+    """All 8 GLOBAL scope rule_ids must be present in .claude/rules/_global.md."""
 
     _GLOBAL_SCOPES = [
         "pipeline", "capture", "commits", "critics",
         "verification", "regression", "output-contracts", "glossary",
     ]
 
-    def _claude_md_content(self) -> str:
-        claude_md = _REPO_ROOT / "CLAUDE.md"
-        self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
-        return claude_md.read_text(encoding="utf-8")
+    def _global_md_content(self) -> str:
+        global_md = _REPO_ROOT / ".claude" / "rules" / "_global.md"
+        self.assertTrue(global_md.exists(), ".claude/rules/_global.md must exist")
+        return global_md.read_text(encoding="utf-8")
 
-    def test_all_global_scope_begin_markers_present(self):
-        """CLAUDE.md must contain BEGIN GENERATED:rules:<scope> for each global scope."""
-        content = self._claude_md_content()
+    def test_global_md_has_all_scope_sections(self):
+        """_global.md must contain a section header for each global scope."""
+        content = self._global_md_content()
         for scope in self._GLOBAL_SCOPES:
-            marker = f"BEGIN GENERATED:rules:{scope}"
+            # Each scope renders a "### <Scope> rules" heading
+            header = f"{scope.capitalize()} rules"
             self.assertIn(
-                marker,
+                header,
                 content,
-                f"CLAUDE.md must contain generated-region begin marker for scope '{scope}'",
+                f"_global.md must contain section for scope '{scope}'",
             )
 
-    def test_all_global_scope_end_markers_present(self):
-        """CLAUDE.md must contain END GENERATED:rules:<scope> for each global scope."""
-        content = self._claude_md_content()
-        for scope in self._GLOBAL_SCOPES:
-            marker = f"END GENERATED:rules:{scope}"
-            self.assertIn(
-                marker,
-                content,
-                f"CLAUDE.md must contain generated-region end marker for scope '{scope}'",
-            )
-
-    def test_global_scope_rule_ids_in_claude_md(self):
-        """At least one rule_id from each global scope must appear in CLAUDE.md."""
-        content = self._claude_md_content()
+    def test_global_scope_rule_ids_in_global_md(self):
+        """At least one rule_id from each global scope must appear in _global.md."""
+        content = self._global_md_content()
         scope_sample_rule_ids = {
             "pipeline":       "PIP-001",
             "capture":        "CAP-001",
@@ -681,8 +777,31 @@ class TestAllGlobalScopesInClaudeMd(unittest.TestCase):
             self.assertIn(
                 sample_id,
                 content,
-                f"Sample rule_id {sample_id} from global scope '{scope}' must appear in CLAUDE.md",
+                f"Sample rule_id {sample_id} from global scope '{scope}' must appear in _global.md",
             )
+
+    def test_global_rules_not_inlined_in_claude_md(self):
+        """CLAUDE.md must NOT contain inline generated-region markers or full rule bodies."""
+        claude_md_path = _REPO_ROOT / "CLAUDE.md"
+        self.assertTrue(claude_md_path.exists(), "CLAUDE.md must exist")
+        content = claude_md_path.read_text(encoding="utf-8")
+        # Generated-region markers must NOT be present (moved to @import)
+        self.assertNotIn(
+            "BEGIN GENERATED:rules:pipeline",
+            content,
+            "CLAUDE.md must NOT contain inline BEGIN GENERATED:rules:pipeline marker",
+        )
+        self.assertNotIn(
+            "END GENERATED:rules:pipeline",
+            content,
+            "CLAUDE.md must NOT contain inline END GENERATED:rules:pipeline marker",
+        )
+        # CLAUDE.md must have the @import line instead
+        self.assertIn(
+            "@.claude/rules/_global.md",
+            content,
+            "CLAUDE.md must @import _global.md",
+        )
 
 
 if __name__ == "__main__":

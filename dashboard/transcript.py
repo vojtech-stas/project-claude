@@ -549,15 +549,15 @@ def _gh_run_transcript(args: list[str], timeout: int = 15) -> tuple[int, str]:
 # Disk cache for gh issue/PR → parent-PRD lookups (perf fix, slice #959)
 # ---------------------------------------------------------------------------
 # The mapping is immutable once a slice/PR exists, so we cache permanently.
-# Location: .claude/logs/prd-correlation-cache.json (gitignored via logs/).
+# Location: .claude/cache/prd-correlation-cache.json (gitignored via cache/).
 # On lookup: check disk → in-process → only then gh; write-through on gh hit.
 # ---------------------------------------------------------------------------
 
 def _disk_cache_path() -> Path:
     """Return the path to the persistent PRD-correlation disk cache file.
 
-    Location: <repo-root>/.claude/logs/prd-correlation-cache.json
-    The .claude/logs/ directory is gitignored; the mapping is append-only
+    Location: <repo-root>/.claude/cache/prd-correlation-cache.json
+    The .claude/cache/ directory is gitignored; the mapping is append-only
     (immutable once a slice/PR is created, so we never invalidate).
 
     Falls back to a sibling of this file if the repo root cannot be found.
@@ -566,12 +566,12 @@ def _disk_cache_path() -> Path:
     here = Path(__file__).resolve()
     for parent in [here.parent, here.parent.parent, here.parent.parent.parent]:
         if (parent / ".git").exists():
-            logs_dir = parent / ".claude" / "logs"
+            cache_dir = parent / ".claude" / "cache"
             try:
-                logs_dir.mkdir(parents=True, exist_ok=True)
+                cache_dir.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
-            return logs_dir / "prd-correlation-cache.json"
+            return cache_dir / "prd-correlation-cache.json"
     # Fallback: next to this file
     return here.parent / "prd-correlation-cache.json"
 

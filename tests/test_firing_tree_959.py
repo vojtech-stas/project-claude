@@ -770,14 +770,14 @@ class TestDiskCachePath(unittest.TestCase):
         import transcript as tr
         self._tr = tr
 
-    def test_cache_path_is_in_logs(self):
-        """Disk cache path must include .claude/logs in its components."""
+    def test_cache_path_is_in_cache(self):
+        """Disk cache path must include .claude/cache in its components (R-FIXTURE fix)."""
         p = self._tr._disk_cache_path()
         parts = p.parts
         self.assertIn(".claude", parts,
                       "Disk cache path must be under .claude/")
-        self.assertIn("logs", parts,
-                      "Disk cache path must be under .claude/logs/")
+        self.assertIn("cache", parts,
+                      "Disk cache path must be under .claude/cache/ not .claude/logs/")
 
     def test_cache_path_is_json_file(self):
         """Disk cache path must end with .json."""

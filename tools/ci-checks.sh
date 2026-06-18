@@ -942,6 +942,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 19: Slicer-provenance guard (PRD #919 slice #922)
+#   Queries open `slice`-labeled GitHub issues and flags any that lack the
+#   `Slicer-provenance:` trailer written by `/to-issues` (rule #16 + linear
+#   flow convention).  Enforces the mandatory slicer step: slices MUST be
+#   created via /to-issues (slicer + slicer-critic), not hand-crafted via gh.
+#   Scope: `slice`-labeled issues only — trivial-lane (I3) PRs are never
+#   affected.  Soft-degrades if gh is missing or unauthenticated in CI.
+#   Calls the standalone script directly (NOT via --check <ID>) so PARITY
+#   is unaffected and no false registry-orphan is created.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 19: slicer-provenance guard ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/check-slicer-provenance.py" ]; then
+    echo "SKIP: CHECK 19 — python3 or tools/check-slicer-provenance.py not available (soft-degrade)"
+else
+    CHECK19_OUTPUT=$(python3 tools/check-slicer-provenance.py 2>&1)
+    CHECK19_EXIT=$?
+    if [ "$CHECK19_EXIT" -eq 0 ]; then
+        pass "CHECK 19 (slicer-provenance): $CHECK19_OUTPUT"
+    else
+        fail "CHECK 19 (slicer-provenance): $CHECK19_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

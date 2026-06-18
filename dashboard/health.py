@@ -968,6 +968,76 @@ def _attach_descriptions(checks: list) -> list:
     return checks
 
 
+# ---------------------------------------------------------------------------
+# data_state classifier (slice #967 / PRD #957 §2 #4)
+#
+# Every check result carries a data_state ∈ {"pass", "actionable", "no-data"}.
+# "no-data" is assigned ONLY when the check's detail carries an explicit
+# absent-source / day-one / no-events marker from _NO_DATA_MARKERS.
+# A PASS check → "pass".  A non-PASS check that doesn't match any marker →
+# "actionable" (honest default — never mask a genuine issue as no-data).
+# ---------------------------------------------------------------------------
+
+# Explicit absent-source / day-one / no-events substrings.
+# These must match ONLY on details that signal a missing feed/log, not on
+# real threshold-breach details (e.g. "Glossary has 36 entries" is actionable).
+# When in doubt, leave out of this list → stays "actionable" (safe default).
+_NO_DATA_MARKERS: tuple = (
+    "not found",           # log/file absent (hook-fires.jsonl, workflow-events.jsonl, etc.)
+    "log absent",          # explicit log-absent phrasing
+    "no eval run",         # EVAL checks: honest no-baseline bucket
+    "honest no-baseline",  # EVAL checks: no-baseline bucket (ADR-0067 D5)
+    "no run recorded",     # EVAL checks: no run in results.json
+    "no events in window", # CAPTURE-SLO: no events in rolling window
+    "no sessions found",   # CAPTURE-SLO: no sessions in events log
+    "no promotion events", # META-TRIPWIRE / R-SENSITIVE-DETECTOR day-one
+    "0 — no promotion",    # R-SENSITIVE-DETECTOR day-one phrasing
+    "no agent_start events",  # BLIND-RATE: pre-migration expected
+    "pre-migration — expected",  # BLIND-RATE: migration not yet applied
+    "never have fired",    # HOOK-LIVENESS: log may never have fired
+    "no closed PRDs",      # CRITIC-HEALTH / trail: no historical data
+    "no PRD-labeled issues",  # SPEC-COVERAGE: no PRDs yet
+    "no attempt beacons",  # HOOK-INTEGRITY: no beacons in rolling window
+    "day-one",             # any explicit day-one label in detail
+    "honest day-one",      # META-TRIPWIRE: honest day-one — no promotions yet
+    "capture not live",    # CAPTURE-SLO explicit absent phrase
+    "gh API unavailable",  # SPEC-COVERAGE / RESIDUAL-RATIO: network absent
+)
+
+
+def _classify_data_state(result: str, detail: str) -> str:
+    """Return data_state ∈ {'pass', 'actionable', 'no-data'} for a check result.
+
+    Rules (slice #967 / PRD #957 §2 #4):
+    - result == 'PASS' → 'pass' (no threshold breach)
+    - result != 'PASS' AND detail contains an _NO_DATA_MARKERS substring → 'no-data'
+    - result != 'PASS' otherwise → 'actionable' (genuine breach — never masked)
+
+    Honesty guard: when ambiguous → 'actionable' is the safe default.
+    """
+    if result == "PASS":
+        return "pass"
+    lower_detail = (detail or "").lower()
+    for marker in _NO_DATA_MARKERS:
+        if marker.lower() in lower_detail:
+            return "no-data"
+    return "actionable"
+
+
+def _attach_data_state(checks: list) -> list:
+    """Add data_state field to each check dict (slice #967 / PRD #957 §2 #4).
+
+    Mutates each dict in-place and returns the list for convenience.
+    Applied after all result/detail fields are set.
+    """
+    for c in checks:
+        if "data_state" not in c:
+            c["data_state"] = _classify_data_state(
+                c.get("result", ""), c.get("detail", "")
+            )
+    return checks
+
+
 # Human-readable group labels for each check ID (slice #931 / PRD #927 §2 #10).
 # Maps check ID → section group header shown in the Health tab.
 # Groups: "Docs in sync" | "Rules enforced" | "Hooks live" | "No drift" |
@@ -4906,9 +4976,12 @@ def _build_health_data() -> dict:
     # (slice #931 / PRD #927 §2 #10) — presentation only, no check-logic change.
     # _attach_descriptions adds the 'description' field to non-DOCS/AS groups
     # (slice #966 / PRD #957) — sourced from CHECK_REGISTRY function docstrings.
+    # _attach_data_state adds data_state ∈ {pass, actionable, no-data} to every
+    # check dict (slice #967 / PRD #957 §2 #4).
     audit = audit_meta()
     _enrich_group(audit["checks"])
-    substrate_checks = _attach_descriptions(_enrich_group([
+    _attach_data_state(audit["checks"])
+    substrate_checks = _attach_data_state(_attach_descriptions(_enrich_group([
         check_capture_slo(),
         check_hook_integrity(),
         check_hook_liveness(),
@@ -4923,8 +4996,8 @@ def _build_health_data() -> dict:
         check_eval_reviewer(),
         check_eval_prd_critic(),
         check_eval_slicer_critic(),
-    ]))
-    verification_checks = _attach_descriptions(_enrich_group([
+    ])))
+    verification_checks = _attach_data_state(_attach_descriptions(_enrich_group([
         check_blind_dispatch_rate(),
         check_residual_ratio(),
         check_proof_presence(),
@@ -4933,25 +5006,25 @@ def _build_health_data() -> dict:
         check_capture_shape(),
         check_green_main(),
         check_silent_drift(),
-    ]))
-    registry_checks = _attach_descriptions(_enrich_group([
+    ])))
+    registry_checks = _attach_data_state(_attach_descriptions(_enrich_group([
         check_parity(),
-    ]))
-    hygiene_checks = _attach_descriptions(_enrich_group([
+    ])))
+    hygiene_checks = _attach_data_state(_attach_descriptions(_enrich_group([
         check_untracked_size(),
         check_log_rotation(),
         check_stale_branches(),
         check_required_labels(),
         check_dead_routes(),
         check_session_injection(),
-    ]))
-    promotion_checks = _attach_descriptions(_enrich_group([
+    ])))
+    promotion_checks = _attach_data_state(_attach_descriptions(_enrich_group([
         check_branch_topology(),
         check_promotion_lag(),
         check_release_ready(),
         check_r_sensitive_detector(),
         check_meta_tripwire(),
-    ]))
+    ])))
     return {
         "auditMeta": audit,
         "auditSubagents": audit_subagents(),

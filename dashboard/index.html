@@ -236,10 +236,12 @@
     font-weight: 600;
     text-transform: uppercase;
   }
-  .badge-pass { background: var(--pass); color: #fff; }
-  .badge-fail { background: var(--fail); color: #fff; }
-  .badge-warn { background: var(--warn); color: #fff; }
-  .badge-na   { background: var(--border); color: var(--muted); }
+  .badge-pass    { background: var(--pass); color: #fff; }
+  .badge-fail    { background: var(--fail); color: #fff; }
+  .badge-warn    { background: var(--warn); color: #fff; }
+  .badge-na      { background: var(--border); color: var(--muted); }
+  /* no-data badge (slice #967 / PRD #957 §2 #4): grey, distinct from amber WARN */
+  .badge-nodata  { background: #3a3f47; color: #8b9096; border: 1px solid #4a5058; }
   button.refresh {
     background: none;
     border: 1px solid var(--border);
@@ -1459,7 +1461,17 @@ function switchTab(name, btn) {
   (TAB_ACTIVATION_HOOKS[name] || []).forEach(fn => fn());
 }
 
-function badgeHtml(result) {
+/**
+ * Return badge HTML for a check result.
+ * dataState (optional): if "no-data", renders a grey "no-data" badge instead of
+ * the amber WARN/FAIL badge — visually distinct, non-actionable (slice #967).
+ * PASS always renders green regardless of dataState.
+ */
+function badgeHtml(result, dataState) {
+  // no-data override: grey badge for absent-source / day-one conditions
+  if (dataState === 'no-data' && result !== 'PASS') {
+    return `<span class="badge badge-nodata">no-data</span>`;
+  }
   const cls = {PASS:'pass', FAIL:'fail', WARN:'warn', 'N/A':'na'}[result] || 'na';
   return `<span class="badge badge-${cls}">${result}</span>`;
 }
@@ -2351,7 +2363,7 @@ function renderSubstrateGrid(substrateMeta) {
       ? escHtml(c.detail.slice(0, 120)) + (c.detail.length > 120 ? '…' : '')
       : '';
     h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
   }
@@ -2431,7 +2443,7 @@ function renderVerificationIntegrity(vi) {
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
     h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
   }
@@ -2462,7 +2474,7 @@ function renderRegistryIntegrity(ri) {
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
     h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
   }
@@ -2494,7 +2506,7 @@ function renderHygieneIntegrity(hi) {
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
     h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
   }
@@ -2525,7 +2537,7 @@ function renderPromotionIntegrity(pi) {
       ? escHtml(det.slice(0, 140)) + (det.length > 140 ? '…' : '')
       : '';
     h.v += `<tr class="check-row-clickable" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    h.v += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     h.v += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     h.v += `</tr>`;
   }
@@ -2597,7 +2609,7 @@ function renderDocsGrid(auditMeta) {
       ? escHtml(c.detail.slice(0, 60)) + (c.detail.length > 60 ? '…' : '')
       : '';
     html += `<tr class="check-row-clickable" data-checkid="${escHtml(c.id)}" onclick="openSharedDetail('${escHtml(c.id)}', this)">`;
-    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+    html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
     html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
     html += `</tr>`;
   }
@@ -2633,7 +2645,7 @@ function renderAsGrid(auditSubagents) {
         ? escHtml(c.detail.slice(0, 50)) + (c.detail.length > 50 ? '…' : '')
         : '';
       html += `<tr class="check-row-clickable" data-checkkey="${escHtml(storeKey)}" onclick="openSharedDetail('${escHtml(storeKey)}', this)">`;
-      html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result)}</td>`;
+      html += `<td>${escHtml(c.id)}</td><td>${badgeHtml(c.result, c.data_state)}</td>`;
       html += `<td style="color:var(--muted);font-size:10px;">${detSnippet}</td>`;
       html += `</tr>`;
     }
@@ -2675,7 +2687,7 @@ function openSharedDetail(key, clickedRow) {
 
   html += `<div class="health-detail-section">`;
   html += `<div class="health-detail-label">Verdict</div>`;
-  html += `<div class="health-detail-value">${badgeHtml(c.result)}`;
+  html += `<div class="health-detail-value">${badgeHtml(c.result, c.data_state)}`;
   if (detail) html += ` <span style="color:var(--muted);font-size:10px;margin-left:6px;">${escHtml(detail)}</span>`;
   html += `</div>`;
   html += `</div>`;

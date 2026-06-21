@@ -258,7 +258,11 @@ Check the dashboard is serving merged code via `Bash`: `curl -s http://localhost
 
 **Step L4 — Assert the three required conditions:**
 - **(A) Renders** — the target element/view is visible. Assert via `find` or `read_page` content. `read_page` text is PRIMARY evidence.
-- **(B) Console check** — call `read_console_messages(onlyErrors: true)` scoped to the exercised surface. If count > 0: verdict is NOT PASS (FAIL if specific errors, PROVISIONAL if noise-ambiguous). Report the raw error list in PROOF.
+- **(B) Console check — genuine-error count (ADR-0074 D2):** call `read_console_messages(onlyErrors: true)` scoped to the exercised surface. Count GENUINE errors only — apply the noise filter before scoring:
+  - **Noise filter (exclude):** favicon 404 errors (URL ends in `/favicon.ico` and status is 404); errors from third-party origins not in the feature surface (e.g., analytics, CDN, ad-tech hosts whose origin is NOT the dashboard's `localhost:8765` or the declared feature URL).
+  - **Honesty guard:** when an error's origin is AMBIGUOUS (cannot confirm it is clearly third-party/noise), treat it as ACTIONABLE — count it, never silently discard it. Under-counting a real error is worse than over-counting a noise error.
+  - **Verdict rule:** `genuine_count = total_errors − noise_excluded`. Report `genuine_count` in PROOF and in `ASSERTIONS_CHECKED` as `console_errors=<genuine_count>`. If `genuine_count == 0` → assertion (B) = PASS. If `genuine_count ≥ 1` → assertion (B) = FAIL and `PRODUCTION_VERIFY` is NOT PASS. If the surface is too ambiguous to classify any error → assertion (B) = PROVISIONAL (ADR-0040 D1).
+  - **Always report:** even on PASS, emit the raw count + noise-excluded count in PROOF so the caller can audit the filter.
 - **(C) Declared behavior** — the specific outcome from the "Production check:" line, asserted via `read_page` / `find` as PRIMARY evidence.
 
 **Step L5 — Export GIF.** Call `gif_creator export download:true`. Capture the returned artifact path. This path is the `ARTIFACTS` trailer field (the rule-#20 browser proof artifact for the live path — a video, not a screenshot). Path MUST be ROOT-absolute (ADR-0061 D5); if `gif_creator export` returns a browser-download-relative path, prepend the root.
@@ -462,10 +466,10 @@ Emit the canonical GENERATOR trailer (ADR-0005 D1c) with the per-agent productio
 ```
 RESULT: SUCCESS | FAIL | INVALID_INPUT | CONFUSION
 REASON: <one sentence -- e.g., "browser gate PASS: renders + 0 console errors + graph visible" or "hook-fire FAIL: exit code 1, expected 0">
-ARTIFACTS: <ROOT-absolute proof path if captured (browser route screenshot path), else empty>
+ARTIFACTS: <LIVE path: ROOT-absolute GIF path from gif_creator export (video supersedes screenshot as the rule-#20 browser proof for live runs); HEADLESS path: ROOT-absolute screenshot path (.png); else empty>
 PRODUCTION_VERIFY: PASS | FAIL | PROVISIONAL
 ROUTE: browser | hook-fire | command-run | static-check | command-run+failing-canary
-PROOF: <route-specific: "inner_text: <text excerpt> [+ screenshot: <ROOT-absolute-path>]" (browser -- primary human-faithful evidence; inner_text always present; screenshot always available in headless mode; eval supplements only); "exit=0, log: <line>" (hook-fire happy-path); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static); "canary-failed=<excerpt>, exit=0, output: <excerpt>" (command-run+failing-canary)>
+PROOF: <route-specific: LIVE browser — "gif: <ROOT-absolute-gif-path>, console_errors: <genuine_count> (noise_excluded: <N>), read_page: <text excerpt>"; HEADLESS browser — "inner_text: <text excerpt> [+ screenshot: <ROOT-absolute-path>]" (inner_text always present; screenshot always available; eval supplements only); "exit=0, log: <line>" (hook-fire happy-path); "exit=0, output: <excerpt>" (command-run); "grep count=<N>" (static); "canary-failed=<excerpt>, exit=0, output: <excerpt>" (command-run+failing-canary)>
 ASSERTIONS_CHECKED: <route-specific field list -- see below>
 PROOF_SOURCE: <session_id>@<ts>
 ENV: <sha>@<started_at>
@@ -482,7 +486,8 @@ Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds
 **`ENV:` field (ADR-0061 D2):** populate with `<sha>@<started_at>` where `sha` is the merged HEAD sha (`git rev-parse HEAD`) and `started_at` is the ISO-8601 timestamp when the verification environment (dashboard server or command context) was started. For browser routes: the orchestrator validates this against `/api/meta` (sha must match, `stale` must be false). For other routes: populate with the sha and the time this verification invocation started. Per ADR-0061 D2.
 
 `ASSERTIONS_CHECKED` is route-specific:
-- **browser:** `renders=<PASS|FAIL|PROVISIONAL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state; that criterion is returned as a residual, not forced to PASS (ADR-0040 D5)
+- **browser (LIVE path):** `renders=<PASS|FAIL|PROVISIONAL>, console_errors=<PASS|FAIL|genuine_count>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — `console_errors` carries either PASS (genuine_count=0) or FAIL (genuine_count≥1) or the raw genuine count; PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state (ADR-0040 D5)
+- **browser (HEADLESS path):** `renders=<PASS|FAIL|PROVISIONAL>, console_clean=<PASS|FAIL>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state; that criterion is returned as a residual, not forced to PASS (ADR-0040 D5)
 - **hook-fire:** `exit_code=<PASS|FAIL>, log_line=<PASS|FAIL|N/A>`
 - **command-run:** `exit_code=<PASS|FAIL>, output_assertion=<PASS|FAIL|N/A>`
 - **static-check:** `assertion_1=<PASS|FAIL>[, assertion_2=<PASS|FAIL>, ...]`

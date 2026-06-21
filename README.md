@@ -358,7 +358,7 @@ Specialist agents under `.claude/agents/`:
 **Generators** (output-producing agents):
 
 - **[`implementer`](.claude/agents/implementer.md)** — Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
-- **[`qa-tester`](.claude/agents/qa-tester.md)** — Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (headless Playwright/Chrome click-recipe driver), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0050 D1-D5). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1, driver updated per ADR-0050 D2): headless Playwright/Chrome dogfood self-test then click recipes via Bash-written Python scripts, LLM-judges inner_text/screenshot results, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2, extended by ADR-0050): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
+- **[`qa-tester`](.claude/agents/qa-tester.md)** — Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (headless Playwright/Chrome click-recipe driver), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0050 D1-D5, ADR-0074 D1). The browser route is live-MCP-preferred-when-connected (drives Claude-in-Chrome MCP, records a GIF click-through, reads console errors) with headless Playwright as the fallback when no browser is connected (per ADR-0074 D1). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1, driver updated per ADR-0050 D2): headless Playwright/Chrome dogfood self-test then click recipes via Bash-written Python scripts, LLM-judges inner_text/screenshot results, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2, extended by ADR-0050 + ADR-0074): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
 - **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce ONE well-justified vertical-slice decomposition of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs a decomposition for the slicer-critic to review. Output is the decomposition with rationale, NOT GitHub issues — posting is downstream.
 
 ### Hooks
@@ -376,7 +376,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 71 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 72 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -396,7 +396,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 71 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 72 ADR(s).
 
 ## License
 

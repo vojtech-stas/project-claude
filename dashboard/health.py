@@ -52,6 +52,59 @@ import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# gh_cache — shared TTL+timeout wrapper for gh CLI calls (slice #995/PRD #993).
+# Import is lazy-safe: if gh_cache is missing (old install), fall back to raw
+# subprocess so health.py still works on any Python path.
+# ---------------------------------------------------------------------------
+try:
+    from gh_cache import gh_fetch as _gh_fetch_impl
+    _GH_CACHE_AVAILABLE = True
+except ImportError:
+    _gh_fetch_impl = None  # type: ignore[assignment]
+    _GH_CACHE_AVAILABLE = False
+
+
+def _health_gh_fetch(
+    args: list,
+    *,
+    ttl: float = 60.0,
+    timeout: float = 5.0,
+) -> tuple:
+    """Route a gh call through gh_cache (degrade-not-block).
+
+    Returns (returncode: int, stdout: str) matching the existing ``_sp.run``
+    pattern used inside each check's inner helper:
+      - rc=0, stdout=<output>  → gh succeeded (source live/cache/stale)
+      - rc=1, stdout=""        → gh timed out / unavailable (computing sentinel)
+
+    When gh_cache is unavailable (import failed), falls back to direct
+    subprocess.run with a hard ``timeout`` cap so the stall is still bounded.
+
+    Parameters
+    ----------
+    args    : gh sub-command args (the "gh" binary is prepended by gh_cache).
+    ttl     : cache TTL in seconds (how long a fresh result is reused).
+    timeout : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    """
+    if _GH_CACHE_AVAILABLE and _gh_fetch_impl is not None:
+        result = _gh_fetch_impl(args, ttl=ttl, timeout=timeout)
+        if result.source == "computing" or result.value is None:
+            return 1, ""
+        return 0, result.value
+    # Fallback: bounded subprocess (still better than unbounded)
+    try:
+        r = subprocess.run(
+            ["gh"] + list(args),
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        )
+        return r.returncode, r.stdout or ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception):
+        return 1, ""
+
+
+# ---------------------------------------------------------------------------
 # Repo root — health.py lives at <repo>/dashboard/health.py
 # ---------------------------------------------------------------------------
 _HEALTH_REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -131,16 +184,20 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
         return "unavailable", f"git rev-parse error: {exc}"
 
     # Step 2: Fetch recent merged PRs to develop and find the one matching HEAD.
+    # Routed through gh_cache (ttl=30s, timeout=5s) so a slow gh degrades to
+    # "unavailable" (which triggers the ci-checks.sh local fallback) rather than
+    # blocking the request path for up to 20s (PRD #993 cr.3, slice #996).
+    # ttl=30s caches only within a long-running dashboard server process; promote.sh invokes
+    # --check RELEASE-READY as a fresh subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
     try:
-        pr_r = _sp.run(
-            ["gh", "pr", "list", "--base", "develop", "--state", "merged",
+        _pr_rc, _pr_out = _health_gh_fetch(
+            ["pr", "list", "--base", "develop", "--state", "merged",
              "--limit", "20", "--json", "number,mergeCommit"],
-            capture_output=True, text=True, timeout=20,
-            cwd=str(repo_root), stdin=_sp.DEVNULL,
+            ttl=30.0, timeout=5.0,
         )
-        if pr_r.returncode != 0:
-            return "unavailable", f"gh pr list error (exit={pr_r.returncode})"
-        prs = _json.loads(pr_r.stdout or "[]")
+        if _pr_rc != 0 or not _pr_out.strip():
+            return "unavailable", "gh pr list error or timeout (cache miss)"
+        prs = _json.loads(_pr_out)
     except Exception as exc:
         return "unavailable", f"gh pr list exception: {exc}"
 
@@ -157,18 +214,17 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
             f"(checked {len(prs)} recent PRs)"
         )
 
-    # Step 3: Query check status for that PR.
+    # Step 3: Query check status for that PR (via gh_cache, same degrade policy).
     try:
-        checks_r = _sp.run(
-            ["gh", "pr", "checks", str(matching_pr), "--json", "name,state"],
-            capture_output=True, text=True, timeout=20,
-            cwd=str(repo_root), stdin=_sp.DEVNULL,
+        _chk_rc, _chk_out = _health_gh_fetch(
+            ["pr", "checks", str(matching_pr), "--json", "name,state"],
+            ttl=30.0, timeout=5.0,
         )
-        if checks_r.returncode != 0:
+        if _chk_rc != 0 or not _chk_out.strip():
             return "unavailable", (
-                f"gh pr checks {matching_pr} error (exit={checks_r.returncode})"
+                f"gh pr checks {matching_pr} timeout or error"
             )
-        checks = _json.loads(checks_r.stdout or "[]")
+        checks = _json.loads(_chk_out)
     except Exception as exc:
         return "unavailable", f"gh pr checks exception: {exc}"
 
@@ -2156,17 +2212,16 @@ def check_spec_coverage() -> dict:
     import subprocess as _sp
 
     def _gh_issue_list(label: str, limit: int = 100) -> list:
+        # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3/cr.4, slice #996.
         try:
-            r = _sp.run(
-                ["gh", "issue", "list", "--label", label,
+            rc, out = _health_gh_fetch(
+                ["issue", "list", "--label", label,
                  "--state", "all", "--limit", str(limit),
                  "--json", "number,title,body"],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+                ttl=60.0, timeout=5.0,
             )
-            if r.returncode == 0:
-                return _json.loads(r.stdout)
+            if rc == 0 and out.strip():
+                return _json.loads(out)
         except Exception:
             pass
         return None  # None signals API failure; [] would mean empty list
@@ -2605,32 +2660,29 @@ def check_residual_ratio() -> dict:
     import subprocess as _sp
 
     def _fetch_closed_prds(limit):
+        # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
         try:
-            r = _sp.run(
-                ["gh", "issue", "list", "--label", "prd",
+            rc, out = _health_gh_fetch(
+                ["issue", "list", "--label", "prd",
                  "--state", "closed", "--limit", str(limit),
                  "--json", "number"],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=20,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+                ttl=60.0, timeout=5.0,
             )
-            if r.returncode == 0:
-                return [item["number"] for item in _json.loads(r.stdout)]
+            if rc == 0 and out.strip():
+                return [item["number"] for item in _json.loads(out)]
         except Exception:
             pass
         return []
 
     def _fetch_comments(prd_num):
+        # Routed through gh_cache — each PRD comment fetch is individually cached.
         try:
-            r = _sp.run(
-                ["gh", "issue", "view", str(prd_num),
-                 "--json", "comments"],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=20,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+            rc, out = _health_gh_fetch(
+                ["issue", "view", str(prd_num), "--json", "comments"],
+                ttl=60.0, timeout=5.0,
             )
-            if r.returncode == 0:
-                data = _json.loads(r.stdout)
+            if rc == 0 and out.strip():
+                data = _json.loads(out)
                 return [c.get("body", "") for c in data.get("comments", [])]
         except Exception:
             pass
@@ -2882,17 +2934,16 @@ def check_capture_shape() -> dict:
     )
 
     def _fetch_issues(label: str) -> list[dict]:
+        # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
         try:
-            result = _sp.run(
-                ["gh", "issue", "list", "--label", label,
+            rc, out = _health_gh_fetch(
+                ["issue", "list", "--label", label,
                  "--state", "all", "--limit", "50",
                  "--json", "number,body,labels"],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=20,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
+                ttl=60.0, timeout=5.0,
             )
-            if result.returncode == 0:
-                return _json.loads(result.stdout)
+            if rc == 0 and out.strip():
+                return _json.loads(out)
         except Exception:
             pass
         return []
@@ -3088,16 +3139,12 @@ def check_silent_drift() -> dict:
     _GRANDFATHERED_BELOW = 799
 
     def _gh_json(args: list, timeout: int = 20) -> list | dict | None:
+        # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
         try:
-            r = _sp.run(
-                ["gh"] + args,
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=timeout,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
-            )
-            if r.returncode != 0:
+            rc, out = _health_gh_fetch(args, ttl=60.0, timeout=5.0)
+            if rc != 0 or not out.strip():
                 return None
-            return _json.loads(r.stdout)
+            return _json.loads(out)
         except Exception:
             return None
 
@@ -3360,16 +3407,12 @@ def check_test_ordering() -> dict:
     _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
 
     def _gh_json(args: list, timeout: int = 20):
+        # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
         try:
-            r = _sp.run(
-                ["gh"] + args,
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=timeout,
-                cwd=str(_HEALTH_REPO_ROOT), stdin=_sp.DEVNULL,
-            )
-            if r.returncode != 0:
+            rc, out = _health_gh_fetch(args, ttl=60.0, timeout=5.0)
+            if rc != 0 or not out.strip():
                 return None
-            return _json.loads(r.stdout)
+            return _json.loads(out)
         except Exception:
             return None
 
@@ -4141,17 +4184,16 @@ def check_required_labels() -> dict:
     Gracefully degrades when gh CLI is unavailable.
     """
     import json as _json
+    # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
     try:
-        result = subprocess.run(
-            ["gh", "label", "list", "--limit", "200", "--json", "name"],
-            capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=20,
-            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        rc, out = _health_gh_fetch(
+            ["label", "list", "--limit", "200", "--json", "name"],
+            ttl=60.0, timeout=5.0,
         )
-        if result.returncode != 0:
+        if rc != 0 or not out.strip():
             return {"id": "REQUIRED-LABELS", "result": "WARN",
-                    "detail": "gh label list failed (auth/network; degrade expected)"}
-        live_labels = {item["name"] for item in _json.loads(result.stdout)}
+                    "detail": "gh label list unavailable (timeout/auth; degrade expected)"}
+        live_labels = {item["name"] for item in _json.loads(out)}
     except Exception as exc:
         return {"id": "REQUIRED-LABELS", "result": "WARN",
                 "detail": f"gh unavailable: {exc}"}
@@ -4443,18 +4485,17 @@ def check_branch_topology() -> dict:
     except Exception:
         main_is_ancestor = False
 
-    # 5. Recent PRs base check via gh CLI
+    # 5. Recent PRs base check via gh CLI (via gh_cache — PRD #993 cr.3, slice #996)
     pr_base_ok = True
     pr_warn_detail = ""
     try:
-        pr_r = subprocess.run(
-            ["gh", "pr", "list", "--state", "merged", "--limit", "10",
+        _pr5_rc, _pr5_out = _health_gh_fetch(
+            ["pr", "list", "--state", "merged", "--limit", "10",
              "--json", "number,baseRefName"],
-            capture_output=True, text=True, timeout=20,
-            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+            ttl=60.0, timeout=5.0,
         )
-        if pr_r.returncode == 0:
-            prs = _json.loads(pr_r.stdout or "[]")
+        if _pr5_rc == 0 and _pr5_out.strip():
+            prs = _json.loads(_pr5_out)
             main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
             if main_based:
                 pr_base_ok = False
@@ -4462,16 +4503,15 @@ def check_branch_topology() -> dict:
     except Exception:
         pass  # gh unavailable — skip PR check, don't WARN for this
 
-    # 6. Branch-protection advisory
+    # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
     bp_note = ""
     try:
-        bp_r = subprocess.run(
-            ["gh", "api", "repos/{owner}/{repo}/branches/develop"],
-            capture_output=True, text=True, timeout=15,
-            cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
+        _bp_rc, _bp_out = _health_gh_fetch(
+            ["api", "repos/{owner}/{repo}/branches/develop"],
+            ttl=60.0, timeout=5.0,
         )
-        if bp_r.returncode == 0:
-            bp = _json.loads(bp_r.stdout or "{}")
+        if _bp_rc == 0 and _bp_out.strip():
+            bp = _json.loads(_bp_out)
             protected = bp.get("protected", False)
             bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
         else:
@@ -4820,21 +4860,22 @@ def check_release_ready() -> dict:
             nh_count = 0
             nh_detail = f"needs-human count override parse error (default 0)"
     else:
+        # Routed through gh_cache (ttl=30s, timeout=5s) — PRD #993 cr.3, slice #996.
+        # Short TTL so stale cached counts don't hold the gate on the wrong value.
         try:
-            nh_result = subprocess.run(
-                ["gh", "issue", "list", "--label", "needs-human",
+            _nh_rc, _nh_out = _health_gh_fetch(
+                ["issue", "list", "--label", "needs-human",
                  "--state", "open", "--json", "number"],
-                capture_output=True, text=True, timeout=20,
-                cwd=str(_HEALTH_REPO_ROOT),
+                ttl=30.0, timeout=5.0,
             )
-            if nh_result.returncode == 0:
-                issues = _json.loads(nh_result.stdout or "[]")
+            if _nh_rc == 0 and _nh_out.strip():
+                issues = _json.loads(_nh_out)
                 nh_count = len(issues)
                 nh_detail = f"needs-human open: {nh_count}"
             else:
-                # gh CLI error → cannot determine; treat as 0 to avoid false holds
+                # gh unavailable or timeout → treat as 0 to avoid false holds
                 nh_count = 0
-                nh_detail = f"gh issue list error (treat as 0): {nh_result.stderr[:80]}"
+                nh_detail = "gh issue list unavailable (timeout/cache miss; treat as 0)"
         except Exception as exc:
             nh_count = 0
             nh_detail = f"needs-human check error (treat as 0): {exc}"

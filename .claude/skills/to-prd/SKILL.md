@@ -7,7 +7,7 @@ description: Turn the current conversation context into a PRD and publish it to 
 
 Synthesizes the current conversation (typically a recently-settled `/grill-me` session) into a PRD using the **6-section template** defined below, optionally drafts a macro-ADR alongside, runs `prd-critic` (+ `adr-critic` in parallel under a shared round counter when an ADR is drafted) in a ≤3-round APPROVE/BLOCK loop, and publishes via `gh issue create` only on joint-APPROVE. Synthesis only — does NOT interview the user (that's `/grill-me`).
 
-Full role synthesis (joint-APPROVE gate rationale, shared-counter invariant, downstream consumers): this file. Pipeline context: pipeline-stages (see CLAUDE.md). Vocabulary: prd, adr, joint-approve-gate (see CLAUDE.md glossary).
+Full role synthesis (joint-APPROVE gate rationale, shared-counter invariant, downstream consumers): this file. Pipeline context: CLAUDE.md §3 (Hierarchy + workflow conventions). Vocabulary: prd, adr, joint-approve-gate (see CLAUDE.md glossary).
 
 ## Process
 

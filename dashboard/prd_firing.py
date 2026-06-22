@@ -32,6 +32,17 @@ import time
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
+# gh_cache — shared TTL+timeout wrapper for gh CLI calls (slice #996/PRD #993).
+# Routed through _gh_run so prd_firing's existing callers are unchanged.
+# ---------------------------------------------------------------------------
+try:
+    from gh_cache import gh_fetch as _gh_fetch_impl
+    _GH_CACHE_AVAILABLE = True
+except ImportError:
+    _gh_fetch_impl = None  # type: ignore[assignment]
+    _GH_CACHE_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
 # Internal cache — one shared result keyed by (limit,)
 # ---------------------------------------------------------------------------
 _cache: dict = {}          # {limit: {"data": dict, "ts": float}}
@@ -176,6 +187,11 @@ def build_prd_firing_payload(timelines: list[dict]) -> dict:
 def _gh_run(args: list[str], timeout: int = 30) -> tuple[int, str]:
     """Run a gh CLI command; return (returncode, stdout).
 
+    Routed through gh_cache (ttl=_CACHE_TTL, hard timeout=5s) when available so
+    a slow gh degrades rather than stalls (PRD #993 cr.5, slice #996).  The
+    existing _CACHE_TTL=60s is the TTL; the 5s hard timeout ensures no single
+    call blocks more than 5s on the request path.
+
     encoding="utf-8" with errors="replace" prevents the Windows cp1252
     UnicodeDecodeError: on Windows, text=True without an explicit encoding
     uses the system default codec (cp1252), which cannot decode bytes outside
@@ -184,14 +200,20 @@ def _gh_run(args: list[str], timeout: int = 30) -> tuple[int, str]:
     is set to None instead of a string, causing 'NoneType.strip()' errors
     downstream (root cause captured in issue #934).
     """
+    if _GH_CACHE_AVAILABLE and _gh_fetch_impl is not None:
+        result = _gh_fetch_impl(args, ttl=float(_CACHE_TTL), timeout=5.0)
+        if result.source == "computing" or result.value is None:
+            return 1, ""
+        return 0, result.value
+    # Fallback: bounded subprocess (still prevents infinite stall)
     try:
         r = subprocess.run(
             ["gh"] + args,
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=min(timeout, 5),
             encoding="utf-8", errors="replace",
         )
         return r.returncode, r.stdout or ""
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return 1, ""  # gh unavailable
 
 

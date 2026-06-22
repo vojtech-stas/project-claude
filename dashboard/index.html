@@ -2384,30 +2384,35 @@ function maybeGroupHeader(htmlRef, groupLabel, lastGroup, colSpan) {
 // Non-blocking Health fetch (slice #997 / PRD #993 cr.7):
 // AbortController + 30s client-side timeout; a slow /api/health (gh rate-limited)
 // only shows "computing…" in the health panel, never freezes other panels.
+// Fix #1005: /api/health and /api/promotion are fetched INDEPENDENTLY so a
+// slow/hung /api/promotion never blocks the health grids from rendering.
 var _healthController = null;
+var _promoController = null;
 
 async function loadHealth() {
-  try {
-    // Abort any previous in-flight fetch
-    if (_healthController) { try { _healthController.abort(); } catch(_) {} }
-    _healthController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var signal = _healthController ? _healthController.signal : undefined;
-    // 30s client-side abort; /api/health can be slow when gh is rate-limited
-    var abortTimer = _healthController ? setTimeout(function() {
-      try { _healthController.abort(); } catch(_) {}
-      var el = document.getElementById('purpose-groups-grid');
-      if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">health: computing… (slow gh — will retry)</span>';
-    }, 30000) : null;
+  // Abort any previous in-flight fetches
+  if (_healthController) { try { _healthController.abort(); } catch(_) {} }
+  if (_promoController)  { try { _promoController.abort();  } catch(_) {} }
+  _healthController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  _promoController  = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var healthSignal = _healthController ? _healthController.signal : undefined;
+  var promoSignal  = _promoController  ? _promoController.signal  : undefined;
 
-    _healthCheckStore = {};  // reset unified store on each load (slice #966)
-    const fetchOpts = signal ? {signal} : {};
-    const [healthResp, promoResp] = await Promise.all([
-      fetch('/api/health', fetchOpts),
-      fetch('/api/promotion', fetchOpts),
-    ]);
-    if (abortTimer) clearTimeout(abortTimer);
+  _healthCheckStore = {};  // reset unified store on each load (slice #966)
+
+  // --- /api/health: primary fetch — renders all health grids ---
+  // 30s client-side abort; shows "computing…" on timeout, never blocks.
+  var healthAbortTimer = _healthController ? setTimeout(function() {
+    try { _healthController.abort(); } catch(_) {}
+    var el = document.getElementById('purpose-groups-grid');
+    if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">health: computing… (slow gh — will retry)</span>';
+  }, 30000) : null;
+
+  try {
+    const healthFetchOpts = healthSignal ? {signal: healthSignal} : {};
+    const healthResp = await fetch('/api/health', healthFetchOpts);
+    if (healthAbortTimer) clearTimeout(healthAbortTimer);
     const data = await healthResp.json();
-    const promoData = await promoResp.json();
     renderPurposeGroups(data.purposeGroups, data.purposeGroupOrder);  // slice #968
     renderDocsGrid(data.auditMeta);
     renderAsGrid(data.auditSubagents);
@@ -2417,13 +2422,36 @@ async function loadHealth() {
     renderRegistryIntegrity(data.registryIntegrity);
     renderHygieneIntegrity(data.hygieneIntegrity);
     renderPromotionIntegrity(data.promotionIntegrity);
-    renderPromotionPanel(promoData);
     renderCascade(data.cascadeFinder);
   } catch(e) {
+    if (healthAbortTimer) clearTimeout(healthAbortTimer);
     const isAbort = e && e.name === 'AbortError';
     const errMsg = isAbort ? 'health: computing… (slow gh — will retry)' : `Error: ${e.message}`;
     const el = document.getElementById('docs-grid');
     if (el) el.innerHTML = `<span style="color:${isAbort ? 'var(--muted)' : 'var(--fail)'};">${errMsg}</span>`;
+  }
+
+  // --- /api/promotion: independent fetch — only affects promotion panel ---
+  // A slow or failed /api/promotion NEVER blocks or blanks the health grids above.
+  var promoAbortTimer = _promoController ? setTimeout(function() {
+    try { _promoController.abort(); } catch(_) {}
+    var el = document.getElementById('promotion-panel');
+    if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">promotion: computing… (slow — will retry)</span>';
+  }, 30000) : null;
+
+  try {
+    const promoFetchOpts = promoSignal ? {signal: promoSignal} : {};
+    const promoResp = await fetch('/api/promotion', promoFetchOpts);
+    if (promoAbortTimer) clearTimeout(promoAbortTimer);
+    const promoData = await promoResp.json();
+    renderPromotionPanel(promoData);
+  } catch(e) {
+    if (promoAbortTimer) clearTimeout(promoAbortTimer);
+    const el = document.getElementById('promotion-panel');
+    if (el) {
+      const isAbort = e && e.name === 'AbortError';
+      el.innerHTML = `<span style="color:var(--muted);font-size:11px;">${isAbort ? 'promotion: computing… (slow — will retry)' : 'promotion: ' + e.message}</span>`;
+    }
   }
 }
 

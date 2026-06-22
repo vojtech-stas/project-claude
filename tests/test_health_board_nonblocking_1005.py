@@ -101,39 +101,38 @@ class TestPromotionStateNonBlocking(unittest.TestCase):
             )
 
     def test_check_release_ready_not_called_inline(self):
-        """check_release_ready() must NOT be called directly inside
+        """check_release_ready() must NOT be called on the CALLING thread inside
         _build_promotion_state() — verifies the heavy gate is off the hot path.
 
-        Before fix: call_count > 0 → FAILS.
-        After fix:  call_count == 0 (background thread only) → PASSES.
+        Before fix: called on main thread → calling_thread_ids includes main thread id.
+        After fix:  called only in a daemon thread → calling_thread_ids excludes main
+                    thread id, so no inline call recorded.
         """
         import health as _health_mod
 
-        call_log = []
+        main_thread_id = threading.current_thread().ident
+        calling_thread_ids = []
 
         def _spy_release_ready():
-            call_log.append(time.monotonic())
+            calling_thread_ids.append(threading.current_thread().ident)
             return {"id": "RELEASE-READY", "result": "PASS", "verdict": "true", "detail": ""}
 
         with patch.object(_health_mod, "check_release_ready", side_effect=_spy_release_ready):
             import server
-            # Give any pre-existing background cache thread a moment to settle
-            # before we call _build_promotion_state().
-            # We measure calls ONLY during the synchronous execution window.
-            call_log_before = len(call_log)
-            t0 = time.monotonic()
             server._build_promotion_state()
-            t1 = time.monotonic()
 
-        # Count calls that happened synchronously during _build_promotion_state()
-        # (i.e. within the wall-clock window t0..t1 + small epsilon).
-        inline_calls = [ts for ts in call_log if t0 <= ts <= t1 + 0.05]
+        # Allow background thread a moment to fire (it may already have).
+        # We check WHICH thread called check_release_ready, not when.
+        time.sleep(0.2)
+
+        # The calling thread must NOT be the main thread.
+        main_thread_calls = [tid for tid in calling_thread_ids if tid == main_thread_id]
         self.assertEqual(
-            len(inline_calls), 0,
+            len(main_thread_calls), 0,
             msg=(
-                f"check_release_ready() was called {len(inline_calls)} time(s) "
-                f"inline during _build_promotion_state() — must be 0 after fix "
-                f"(should only run in a background refresh thread)."
+                f"check_release_ready() was called {len(main_thread_calls)} time(s) "
+                f"on the calling (main) thread inside _build_promotion_state(). "
+                f"After fix it must only run in a daemon background thread."
             ),
         )
 

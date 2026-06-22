@@ -187,6 +187,8 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
     # Routed through gh_cache (ttl=30s, timeout=5s) so a slow gh degrades to
     # "unavailable" (which triggers the ci-checks.sh local fallback) rather than
     # blocking the request path for up to 20s (PRD #993 cr.3, slice #996).
+    # ttl=30s caches only within a long-running dashboard server process; promote.sh invokes
+    # --check RELEASE-READY as a fresh subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
     try:
         _pr_rc, _pr_out = _health_gh_fetch(
             ["pr", "list", "--base", "develop", "--state", "merged",

@@ -69,22 +69,6 @@ def _slow_gh_fetch(args, *, ttl, timeout):
     return _make_computing_result()
 
 
-def _fast_gh_fetch(args, *, ttl, timeout):
-    """Simulates a fast gh call returning minimal valid JSON."""
-    args_str = " ".join(str(a) for a in args)
-    if "issue" in args_str and "list" in args_str:
-        return _make_live_result("[]")
-    if "pr" in args_str and "list" in args_str:
-        return _make_live_result("[]")
-    if "pr" in args_str and "checks" in args_str:
-        return _make_live_result("[]")
-    if "label" in args_str and "list" in args_str:
-        return _make_live_result("[]")
-    if "api" in args_str:
-        return _make_live_result("{}")
-    return _make_live_result("{}")
-
-
 # ===========================================================================
 # cr.3 — /api/health build path returns <10s under slow gh
 # ===========================================================================

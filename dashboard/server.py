@@ -284,8 +284,31 @@ def _build_status() -> dict:
                     fail_count += 1
         health_summary = {"pass": pass_count, "warn": warn_count, "fail": fail_count}
 
-    # --- open_work: counts from fetch_workitems() (30s cached) ---
-    wi = fetch_workitems()
+    # --- open_work: counts from fetch_workitems() (gh_cache-backed, 30s outer TTL) ---
+    # fetch_workitems() routes gh calls through gh_cache (slice #995).
+    # We run it in a background thread with a 1.5s budget so a cold-cache + slow gh
+    # degrades only this field (computing sentinel) without blocking the whole response.
+    # Normal path (warm outer cache): fetch_workitems() returns in <1ms; thread joins
+    # immediately.  Cold path with slow gh: thread times out → computing sentinel.
+    _wi_result: list = []  # mutable container for thread result
+
+    def _fetch_wi_bg():
+        try:
+            _wi_result.append(fetch_workitems())
+        except Exception:
+            pass
+
+    _WI_BUDGET = 1.5  # seconds; generous enough for cache hits, tight enough for budget
+    _wi_thread = threading.Thread(target=_fetch_wi_bg, daemon=True)
+    _wi_thread.start()
+    _wi_thread.join(timeout=_WI_BUDGET)
+
+    if _wi_result:
+        wi = _wi_result[0]
+    else:
+        # Timed out — return a degraded open_work sentinel
+        wi = {}
+
     # Count only OPEN items for prs/slices/captured/backlog
     open_prs = sum(1 for p in wi.get("prs", []) if p.get("state", "").upper() == "OPEN")
     open_slices = sum(
@@ -298,6 +321,9 @@ def _build_status() -> dict:
         "slices": open_slices,
         "captured": open_captured,
         "backlog": open_backlog,
+        # Honest freshness metadata (cr.8 — alongside existing fields, not replacing)
+        "fetched_at": wi.get("_fetched_at"),
+        "source": wi.get("_source") if wi else "computing",
     }
 
     return {

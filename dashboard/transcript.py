@@ -1321,23 +1321,34 @@ def build_firing_tree(path: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Mtime cache for /api/session-firing
+# Mtime+size parse-cache for /api/session-firing (slice #997 / PRD #993 cr.6)
 # ---------------------------------------------------------------------------
+# Keyed on (path, mtime, size) so that:
+#   - unchanged transcript (same path+mtime+size) → warm hit, returns in <1s
+#   - any content change (mtime or size differs) → cold recompute
+# Thread-safe: a lock guards the shared cache dict.
+# ---------------------------------------------------------------------------
+
+import threading as _threading  # imported here to avoid re-import at module level
 
 _firing_cache: dict = {
     "path":   None,   # Path | None
     "mtime":  None,   # float | None
+    "size":   None,   # int | None  — st_size added for (path, mtime, size) key
     "result": None,   # dict | None
 }
+_firing_cache_lock = _threading.Lock()
 
 
 def get_session_firing() -> dict:
     """Return the firing tree dict for /api/session-firing.
 
-    Caches by transcript file mtime — no full re-parse if unchanged.
+    Parse-cache keyed on (transcript_path, mtime, size) — slice #997 / PRD #993 cr.6.
+    A warm hit (unchanged transcript) returns the cached tree in <1s without
+    re-invoking build_firing_tree().  Cache invalidates when either mtime or
+    size changes (covers both timestamp-only and content-only updates).
+    Thread-safe via _firing_cache_lock.
     """
-    global _firing_cache
-
     path = resolve_transcript()
     if path is None:
         return {
@@ -1350,7 +1361,9 @@ def get_session_firing() -> dict:
         }
 
     try:
-        mtime = path.stat().st_mtime
+        st = path.stat()
+        mtime = st.st_mtime
+        size  = st.st_size
     except Exception as exc:
         return {
             "groups": {},
@@ -1361,13 +1374,23 @@ def get_session_firing() -> dict:
             "error": f"stat failed: {exc}",
         }
 
-    if _firing_cache["path"] == path and _firing_cache["mtime"] == mtime:
-        return _firing_cache["result"]  # type: ignore[return-value]
+    # Warm-cache check (under lock so concurrent requests share the same result)
+    with _firing_cache_lock:
+        if (
+            _firing_cache["path"]  == path
+            and _firing_cache["mtime"] == mtime
+            and _firing_cache["size"]  == size
+        ):
+            return _firing_cache["result"]  # type: ignore[return-value]
 
+    # Cold path — recompute outside the lock (long-running; avoids blocking readers)
     result = build_firing_tree(path)
-    _firing_cache["path"]   = path
-    _firing_cache["mtime"]  = mtime
-    _firing_cache["result"] = result
+
+    with _firing_cache_lock:
+        _firing_cache["path"]   = path
+        _firing_cache["mtime"]  = mtime
+        _firing_cache["size"]   = size
+        _firing_cache["result"] = result
     return result
 
 

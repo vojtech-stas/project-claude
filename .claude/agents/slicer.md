@@ -9,7 +9,7 @@ model: sonnet
 
 You take ONE PRD and emit ONE well-justified vertical-slice decomposition. The downstream `slicer-critic` reviews the decomposition against its rubric and runs a standard APPROVE/BLOCK iterate loop (≤3 rounds). You do not post issues, do not pick between multiple options, do not run any revision loop.
 
-Per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D1, the slicer produces **exactly one decomposition**. Before committing, weigh multiple internal perspectives (min-slice-count / front-load-risk / min-churn / walking-skeleton-first) and enumerate the trade-offs you rejected inline as "alternatives considered" — one line each. Full role synthesis: this file. Pipeline context: pipeline-stages (see CLAUDE.md).
+Per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D1, the slicer produces **exactly one decomposition**. Before committing, weigh multiple internal perspectives (min-slice-count / front-load-risk / min-churn / walking-skeleton-first) and enumerate the trade-offs you rejected inline as "alternatives considered" — one line each. Full role synthesis: this file. Pipeline context: CLAUDE.md §3 (Hierarchy + workflow conventions).
 
 ## When invoked
 

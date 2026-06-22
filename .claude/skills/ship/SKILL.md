@@ -7,7 +7,7 @@ description: Run the autonomous pipeline from grilled context to posted PRD-and-
 
 Chains `/to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge)` so the human only needs two commands per feature: `/grill-me` to define the *what*, then `/ship` to drive it through PRD authoring, slice decomposition, per-slice implementation, and auto-merge.
 
-Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): pipeline-stages (see CLAUDE.md). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
+Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): CLAUDE.md §3 (Hierarchy + workflow conventions). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
 
 ## When NOT to use this skill
 
@@ -295,7 +295,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 
 ## References
 
-- Full role synthesis (invocation contract, edges): this file. Pipeline stages synthesis: pipeline-stages (see CLAUDE.md).
+- Full role synthesis (invocation contract, edges): this file. Pipeline stages synthesis: CLAUDE.md §3 (Hierarchy + workflow conventions).
 - [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) — D2 (5-stage pipeline), D4 (no human gates between stages; closed end-to-end by ADR-0010), D7 (`/ship` orchestrator skill, lightweight v1), D8 (ADR placement at slice 1).
 - [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) — D2 (auto-invoke implementer), D3 (DAG-aware parallel batching), D4 (forward-block failure handling), D5 (sequential walking-skeleton baseline).
 - [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) — D1 (every implementer dispatch isolated regardless of batch size, superseding ADR-0035 D1's batch-size-≥2 condition); D2 (every reviewer dispatch also isolated); D3 (dispatched subagents never mutate the orchestrator's session worktree or root repo).

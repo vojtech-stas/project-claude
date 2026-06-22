@@ -17,7 +17,7 @@ You do NOT spawn other subagents. You do NOT create issues outside your own bran
 
 **Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process for verification, you MUST kill it and verify port closure before returning your trailer.
 
-Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: pipeline-stages. Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).
+Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: CLAUDE.md §3 (Hierarchy + workflow conventions). Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).
 
 ## When invoked
 

@@ -84,6 +84,13 @@ _health_computing: bool = False
 _health_lock = threading.Lock()
 _HEALTH_TTL = 30               # seconds — balance freshness vs. latency
 
+# Timeout for the ci-checks.sh subprocess call inside check_release_ready() condition (a).
+# ci-checks.sh now runs gh-dependent checks (CHECK 19 slicer-provenance, etc.) that push
+# the runtime to ~95s on develop. The former hard-coded 60s caused systematic false-fail of
+# condition (a) → gate held → promote.sh refused all promotions (#981).
+# Set to 300s: ~3× the observed runtime, sufficient headroom for transient gh-API latency.
+_RELEASE_READY_CICHECKS_TIMEOUT_S = 300
+
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
@@ -4475,7 +4482,8 @@ def check_release_ready() -> dict:
         try:
             ci_result = subprocess.run(
                 ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True,
+                timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             ci_pass = (ci_result.returncode == 0)

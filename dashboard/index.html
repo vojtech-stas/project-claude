@@ -1555,23 +1555,43 @@ let topoNetwork = null;
 // Map: nodeId → { name, type, path|null } — rebuilt on every renderTopologyGraph call.
 let topoNodeFileMap = {};
 
+// Non-blocking Architecture fetch (slice #997 / PRD #993 cr.7):
+// AbortController + client-side timeout so a slow /api/architecture
+// only shows "computing…" in this panel — never freezes other panels.
+var _archController = null;
 async function loadArchitecture() {
   if (archData) return;
   try {
+    // Abort any previous in-flight fetch before starting a new one
+    if (_archController) { try { _archController.abort(); } catch(_) {} }
+    _archController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var signal = _archController ? _archController.signal : undefined;
+    // 20s client-side abort (architecture endpoints are local, shouldn't stall)
+    var abortTimer = _archController ? setTimeout(function() {
+      try { _archController.abort(); } catch(_) {}
+      var el = document.getElementById('topology-loading');
+      if (el) el.innerHTML = '<span style="color:var(--muted);font-size:12px;">architecture: computing…</span>';
+    }, 20000) : null;
+
     // Fetch both the architecture data and the pipeline spec in parallel.
     // The pipeline spec (ADR-0039 D2) replaces the former hardcoded DISPATCH_MAP.
+    const fetchOpts = signal ? {signal} : {};
     const [archResp, pipeResp] = await Promise.all([
-      fetch('/api/architecture'),
-      fetch('/api/pipeline'),
+      fetch('/api/architecture', fetchOpts),
+      fetch('/api/pipeline', fetchOpts),
     ]);
+    if (abortTimer) clearTimeout(abortTimer);
     archData = await archResp.json();
     _pipelineSpec = await pipeResp.json();
     renderTopologyGraph(archData);
     renderHooksSection(archData);
     renderComponentGraph(archData);
   } catch(e) {
-    document.getElementById('topology-loading').innerHTML =
-      `<span style="color:var(--fail)">Error: ${e.message}</span>`;
+    const isAbort = e && e.name === 'AbortError';
+    const el = document.getElementById('topology-loading');
+    if (el) el.innerHTML = isAbort
+      ? '<span style="color:var(--muted);font-size:12px;">architecture: computing…</span>'
+      : `<span style="color:var(--fail)">Error: ${e.message}</span>`;
   }
 }
 
@@ -2361,13 +2381,31 @@ function maybeGroupHeader(htmlRef, groupLabel, lastGroup, colSpan) {
   return label;
 }
 
+// Non-blocking Health fetch (slice #997 / PRD #993 cr.7):
+// AbortController + 30s client-side timeout; a slow /api/health (gh rate-limited)
+// only shows "computing…" in the health panel, never freezes other panels.
+var _healthController = null;
+
 async function loadHealth() {
   try {
+    // Abort any previous in-flight fetch
+    if (_healthController) { try { _healthController.abort(); } catch(_) {} }
+    _healthController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var signal = _healthController ? _healthController.signal : undefined;
+    // 30s client-side abort; /api/health can be slow when gh is rate-limited
+    var abortTimer = _healthController ? setTimeout(function() {
+      try { _healthController.abort(); } catch(_) {}
+      var el = document.getElementById('purpose-groups-grid');
+      if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">health: computing… (slow gh — will retry)</span>';
+    }, 30000) : null;
+
     _healthCheckStore = {};  // reset unified store on each load (slice #966)
+    const fetchOpts = signal ? {signal} : {};
     const [healthResp, promoResp] = await Promise.all([
-      fetch('/api/health'),
-      fetch('/api/promotion'),
+      fetch('/api/health', fetchOpts),
+      fetch('/api/promotion', fetchOpts),
     ]);
+    if (abortTimer) clearTimeout(abortTimer);
     const data = await healthResp.json();
     const promoData = await promoResp.json();
     renderPurposeGroups(data.purposeGroups, data.purposeGroupOrder);  // slice #968
@@ -2382,9 +2420,26 @@ async function loadHealth() {
     renderPromotionPanel(promoData);
     renderCascade(data.cascadeFinder);
   } catch(e) {
-    document.getElementById('docs-grid').innerHTML = `<span style="color:var(--fail)">Error: ${e.message}</span>`;
+    const isAbort = e && e.name === 'AbortError';
+    const errMsg = isAbort ? 'health: computing… (slow gh — will retry)' : `Error: ${e.message}`;
+    const el = document.getElementById('docs-grid');
+    if (el) el.innerHTML = `<span style="color:${isAbort ? 'var(--muted)' : 'var(--fail)'};">${errMsg}</span>`;
   }
 }
+
+// Auto-refresh Health tab every 60s (gh_cache makes this non-blocking):
+// only fires when the Health tab is active and page is visible.
+var _healthRefreshTimer = null;
+function _startHealthAutoRefresh() {
+  if (_healthRefreshTimer) return;
+  _healthRefreshTimer = setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    const healthTab = document.getElementById('tab-health');
+    if (!healthTab || !healthTab.classList.contains('active')) return;
+    loadHealth();
+  }, 60000);
+}
+_startHealthAutoRefresh();
 
 /**
  * Render purpose-groups card (slice #968 / PRD #957 §2 #5 + §2 #6).
@@ -4802,21 +4857,61 @@ function renderFiring(data) {
   }
 }
 
+// Non-blocking Firing fetch (slice #997 / PRD #993 cr.7):
+// AbortController + 15s client-side timeout; a slow /api/prd-firing (gh)
+// only shows "computing…" in this panel, never freezes other panels.
+var _firingController = null;
+
 function fetchFiring() {
-  const limitEl = document.getElementById('firing-limit-input');
-  const limit = (limitEl && parseInt(limitEl.value, 10) > 0) ? parseInt(limitEl.value, 10) : 20;
-  const statusEl = document.getElementById('firing-status');
-  if (statusEl) statusEl.textContent = 'loading…';
-  fetch('/api/prd-firing?limit=' + limit)
-    .then(function(r) { return r.json(); })
-    .then(function(data) { renderFiring(data); })
-    .catch(function(e) {
+  try {
+    // Abort any previous in-flight fetch
+    if (_firingController) { try { _firingController.abort(); } catch(_) {} }
+    _firingController = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var signal = _firingController ? _firingController.signal : undefined;
+
+    const limitEl = document.getElementById('firing-limit-input');
+    const limit = (limitEl && parseInt(limitEl.value, 10) > 0) ? parseInt(limitEl.value, 10) : 20;
+    const statusEl = document.getElementById('firing-status');
+    if (statusEl) statusEl.textContent = 'loading…';
+
+    // 15s client-side abort (server-side gh_cache keeps /api/prd-firing fast)
+    var abortTimer = _firingController ? setTimeout(function() {
+      try { _firingController.abort(); } catch(_) {}
+      if (statusEl) statusEl.textContent = 'computing…';
       try {
         const el = document.getElementById('firing-content');
-        if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Failed to fetch /api/prd-firing: ' + escHtml(e.message) + '</span>';
-        if (statusEl) statusEl.textContent = 'error';
+        if (el && !el.innerHTML.includes('firing-pr-card')) {
+          el.innerHTML = '<span style="color:var(--muted);font-size:11px;">computing… (gh slow — cached data will appear when available)</span>';
+        }
       } catch(_) {}
-    });
+    }, 15000) : null;
+
+    fetch('/api/prd-firing?limit=' + limit, signal ? {signal: signal} : {})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (abortTimer) clearTimeout(abortTimer);
+        renderFiring(data);
+      })
+      .catch(function(e) {
+        if (abortTimer) clearTimeout(abortTimer);
+        const isAbort = e && e.name === 'AbortError';
+        try {
+          const el = document.getElementById('firing-content');
+          if (el && !el.innerHTML.includes('firing-pr-card')) {
+            el.innerHTML = isAbort
+              ? '<span style="color:var(--muted);font-size:11px;">computing… (gh slow)</span>'
+              : '<span style="color:var(--muted);font-size:11px;">Failed to fetch /api/prd-firing: ' + escHtml(e.message) + '</span>';
+          }
+          if (statusEl) statusEl.textContent = isAbort ? 'computing…' : 'error';
+        } catch(_) {}
+      });
+  } catch(e) {
+    // Outermost defensive catch
+    try {
+      const statusEl = document.getElementById('firing-status');
+      if (statusEl) statusEl.textContent = 'error';
+    } catch(_) {}
+  }
 }
 
 function reloadFiring() {
@@ -4828,6 +4923,13 @@ function startFiring() {
   if (_firingLoaded) return;
   _firingLoaded = true;
   fetchFiring();
+  // Auto-refresh Firing tab every 30s (gh_cache-backed, non-blocking)
+  setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    const firingTab = document.getElementById('tab-firing');
+    if (!firingTab || !firingTab.classList.contains('active')) return;
+    fetchFiring();
+  }, 30000);
 }
 
 // Register firing tab hook — fires once on tab activation

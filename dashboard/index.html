@@ -4575,13 +4575,19 @@ function _renderRollup(result, el) {
           '<span class="sb-chip sb-chip-warn">' + w + ' WARN</span> ' +
           '<span class="sb-chip sb-chip-fail">' + f + ' FAIL</span>';
 
-        // --- open work ---
+        // --- open work (with freshness annotation from gh_cache, slice #995) ---
         const ow = d.open_work || {};
-        const workText = [
-          'PRs ' + (ow.prs != null ? ow.prs : '?'),
-          'slices ' + (ow.slices != null ? ow.slices : '?'),
-          'captured ' + (ow.captured != null ? ow.captured : '?'),
-        ].join(' · ');
+        // Show "computing" label when gh data is unavailable/stale
+        const owSource = ow.source || null;  // "live"|"cache"|"stale"|"computing"|null
+        const owSuffix = (owSource === 'stale' || owSource === 'computing')
+          ? ' (' + owSource + ')' : '';
+        const workText = (owSource === 'computing' && ow.prs == null)
+          ? 'open-work: computing…'
+          : [
+              'PRs ' + (ow.prs != null ? ow.prs : '?'),
+              'slices ' + (ow.slices != null ? ow.slices : '?'),
+              'captured ' + (ow.captured != null ? ow.captured : '?'),
+            ].join(' · ') + owSuffix;
 
         bar.innerHTML =
           '<span class="sb-item">' + branchSha + '</span>' +
@@ -4601,16 +4607,42 @@ function _renderRollup(result, el) {
       }
     }
 
+    // Non-blocking status-header poll (slice #995):
+    // Uses AbortController with a client-side timeout so a slow /api/status
+    // ONLY updates the header strip (shows "computing") — never freezes the page.
+    // The server-side gh_cache timeout (5s) bounds the server response; the
+    // client-side abort (8s) is a belt-and-suspenders guard for network latency.
+    var _statusController = null;
     function pollStatus() {
       try {
-        fetch('/api/status')
+        // Abort any in-flight poll before starting a new one
+        if (_statusController) {
+          try { _statusController.abort(); } catch(e2) {}
+        }
+        _statusController = (typeof AbortController !== 'undefined')
+          ? new AbortController() : null;
+        var signal = _statusController ? _statusController.signal : undefined;
+        // Client-side abort after 8s (server should respond in <6s via gh_cache)
+        var abortTimer = _statusController
+          ? setTimeout(function() {
+              try { _statusController.abort(); } catch(e3) {}
+              try { bar.textContent = 'status: computing…'; } catch(e4) {}
+            }, 8000)
+          : null;
+
+        fetch('/api/status', signal ? {signal: signal} : {})
           .then(function(r) { return r.json(); })
           .then(function(d) {
+            if (abortTimer) clearTimeout(abortTimer);
             try { renderStatus(d); } catch(e) { /* swallow */ }
           })
-          .catch(function() {
-            // Fetch failed — show 'status unavailable' but never throw
-            try { bar.textContent = 'status unavailable'; } catch(e) {}
+          .catch(function(err) {
+            if (abortTimer) clearTimeout(abortTimer);
+            // AbortError = our own timeout abort; show computing not "unavailable"
+            const isAbort = err && err.name === 'AbortError';
+            try {
+              bar.textContent = isAbort ? 'status: computing…' : 'status unavailable';
+            } catch(e) {}
           });
       } catch(e) {
         // Defensive: even fetch() itself throwing must not surface

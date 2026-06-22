@@ -83,6 +83,19 @@ Always read these in order before forming a verdict:
 
 ---
 
+## Retired rules — NEVER BLOCK (confirm a rule is ACTIVE before blocking on it)
+
+**Before issuing a BLOCK on any rule, read that rule's CURRENT text in this file and confirm it is active. Never block on a rule from memory.** The list below enumerates known retired rules; blocking on any of them is a rubric-infidelity failure (issues #891, #942).
+
+| Rule | Status | Authority |
+|---|---|---|
+| **R-SENSITIVE** | Retired as a per-PR blocking rule | ADR-0070 D4 (slice #840) — promotion-time META-TRIPWIRE carries this signal |
+| **R-BOY-SCOUT** | Retired | ADR-0046 D5 — superseded by the three-layer drift model (I6) |
+
+**Scanning discipline:** If you are about to BLOCK on a rule and you are uncertain whether it is current, search this file for the rule name — look for `retired`, `advisory`, or `Do NOT BLOCK` in the rule body. If present, do NOT block; surface any relevant signal as a Recommendation only.
+
+---
+
 ## Hard-block criteria (BLOCK if ANY are violated)
 
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts unverified code on `main` — high friction to revert (requires a follow-up PR, breaks bisect, may break dependents). A false-negative BLOCK creates a recoverable revision cycle the implementer can address — low friction. Conservative-default is the asymmetric correct choice. Per ADR-0009 D3.

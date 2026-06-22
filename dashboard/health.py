@@ -234,6 +234,44 @@ def _read_file(path: Path) -> str:
         return ""
 
 
+def _tracked_files(root: Path, pathspec: str) -> "list[Path] | None":
+    """Return a list of Path objects for files tracked by git under root/pathspec.
+
+    Runs ``git -C <root> ls-files <pathspec>`` and converts each output line to an
+    absolute Path.
+
+    Return values:
+    - list (possibly empty) — git is available and the repo is valid; the list
+      contains exactly the tracked files matching pathspec (empty list = no tracked
+      files match, NOT a git failure).
+    - None — git is unavailable, the directory is not a git repo, or the command
+      failed; callers should fall back to the legacy fs-glob path.
+
+    This is the enumeration primitive for issue #926: all filesystem-reading health
+    checks that enumerate candidates via Path.glob / rglob must use this helper so
+    untracked / stale on-disk files are ignored.  File *contents* are still read from
+    disk (the working-tree content of a tracked file matches the commit for CI
+    purposes); only the ENUMERATION is gated on the committed tree.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", pathspec],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            # git failed (e.g. not a git repo) — signal fallback with None
+            return None
+        paths = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line:
+                paths.append(root / line)
+        return paths
+    except Exception:
+        # git not installed or subprocess error — signal fallback with None
+        return None
+
+
 def _grep_count(pattern: str, text: str, flags=re.MULTILINE) -> int:
     return len(re.findall(pattern, text, flags))
 
@@ -265,12 +303,16 @@ def check_docs1_adr_index_forward() -> dict:
 def check_docs2_adr_index_reverse() -> dict:
     """DOCS-2: every decisions/NNNN-*.md is in decisions/README.md."""
     readme = _HEALTH_REPO_ROOT / "decisions" / "README.md"
-    decisions_dir = _HEALTH_REPO_ROOT / "decisions"
     if not readme.exists():
         return {"id": "DOCS-2", "result": "FAIL", "detail": "decisions/README.md missing"}
     text = _read_file(readme)
+    # Enumerate only git-tracked ADR files (issue #926: skip untracked on-disk files).
+    tracked = _tracked_files(_HEALTH_REPO_ROOT, "decisions/[0-9]*.md")
+    if tracked is None:
+        # Fallback: git unavailable; use filesystem glob.
+        tracked = sorted((_HEALTH_REPO_ROOT / "decisions").glob("[0-9]*.md"))
     missing = []
-    for f in sorted(decisions_dir.glob("[0-9]*.md")):
+    for f in sorted(tracked):
         if f.name not in text:
             missing.append(f.name)
     if missing:
@@ -342,7 +384,12 @@ def check_docs6_glossary_md_refs() -> dict:
         ".claude/agents/codebase-critic.md",
     }
     offenders = []
-    for md_file in _HEALTH_REPO_ROOT.rglob("*.md"):
+    # Enumerate only git-tracked md files (issue #926: skip untracked on-disk files).
+    tracked_md = _tracked_files(_HEALTH_REPO_ROOT, "*.md")
+    if tracked_md is None:
+        # Fallback: git unavailable — use filesystem rglob.
+        tracked_md = list(_HEALTH_REPO_ROOT.rglob("*.md"))
+    for md_file in tracked_md:
         rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
         # Skip .git, worktrees, tool-results, decisions/, .claude/logs/
         if any(skip in rel for skip in [".git/", "worktrees/", "tool-results/", "decisions/", ".claude/logs/"]):
@@ -365,7 +412,12 @@ def check_docs7_adr_citations() -> dict:
         r'decisions/00\d{2}-(old-name|fictional|fictional-adr|new-adr|new-decision)\.md'
     )
     offenders = []
-    for md_file in _HEALTH_REPO_ROOT.rglob("*.md"):
+    # Enumerate only git-tracked md files (issue #926: skip untracked on-disk files).
+    tracked_md = _tracked_files(_HEALTH_REPO_ROOT, "*.md")
+    if tracked_md is None:
+        # Fallback: git unavailable — use filesystem rglob.
+        tracked_md = list(_HEALTH_REPO_ROOT.rglob("*.md"))
+    for md_file in tracked_md:
         rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
         if ".git/" in rel or "worktrees/" in rel or ".claude/logs/" in rel:
             continue
@@ -390,8 +442,12 @@ def check_docs8_supersession_notes() -> dict:
         return {"id": "DOCS-8", "result": "WARN", "detail": "decisions/README.md missing"}
     readme_lines = _read_file(readme).splitlines()
     missing_annotations = []
-    decisions_dir = _HEALTH_REPO_ROOT / "decisions"
-    for adr_file in sorted(decisions_dir.glob("[0-9]*.md")):
+    # Enumerate only git-tracked ADR files (issue #926: skip untracked on-disk files).
+    adr_files = _tracked_files(_HEALTH_REPO_ROOT, "decisions/[0-9]*.md")
+    if adr_files is None:
+        # Fallback: git unavailable; use filesystem glob.
+        adr_files = sorted((_HEALTH_REPO_ROOT / "decisions").glob("[0-9]*.md"))
+    for adr_file in sorted(adr_files):
         try:
             adr_text = _read_file(adr_file)
             for match in re.finditer(r'^- \*\*Supersedes:\*\*\s*(.+)$', adr_text, re.MULTILINE):
@@ -471,10 +527,15 @@ def check_docs10_backlog_surfacing() -> dict:
                  "codebase-critic.md"}
     pattern = re.compile(r'(`backlog`-labeled|--label backlog)')
     offenders = []
-    for search_dir in [_HEALTH_REPO_ROOT / ".claude" / "agents", _HEALTH_REPO_ROOT / ".claude" / "skills"]:
-        if not search_dir.exists():
-            continue
-        for md_file in search_dir.rglob("*.md"):
+    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked decoys).
+    for pathspec in [".claude/agents/*.md", ".claude/skills/**/*.md"]:
+        tracked = _tracked_files(_HEALTH_REPO_ROOT, pathspec)
+        if tracked is None:
+            # Fallback: git unavailable — use filesystem rglob for the corresponding dir.
+            parts = pathspec.split("/")
+            base = _HEALTH_REPO_ROOT / parts[0] / parts[1]
+            tracked = list(base.rglob("*.md")) if base.is_dir() else []
+        for md_file in tracked:
             rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
             if any(skip in rel for skip in allowlist):
                 continue
@@ -564,15 +625,17 @@ def check_docs11_dead_citations() -> dict:
         }
 
     offenders = []
-    search_roots = [
-        _HEALTH_REPO_ROOT / ".claude" / "agents",
-        _HEALTH_REPO_ROOT / ".claude" / "skills",
-    ]
     settings_file = _HEALTH_REPO_ROOT / ".claude" / "settings.json"
+    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked decoys).
     files_to_scan: list = []
-    for root in search_roots:
-        if root.exists():
-            files_to_scan.extend(sorted(root.rglob("*.md")))
+    for pathspec in [".claude/agents/*.md", ".claude/skills/**/*.md"]:
+        tracked = _tracked_files(_HEALTH_REPO_ROOT, pathspec)
+        if tracked is None:
+            # Fallback: git unavailable — use filesystem rglob.
+            parts = pathspec.split("/")
+            base = _HEALTH_REPO_ROOT / parts[0] / parts[1]
+            tracked = sorted(base.rglob("*.md")) if base.is_dir() else []
+        files_to_scan.extend(sorted(tracked))
     if settings_file.exists():
         files_to_scan.append(settings_file)
 
@@ -1470,7 +1533,12 @@ def audit_subagents() -> dict:
     results = {}
     if not agents_dir.exists():
         return results
-    for agent_md in sorted(agents_dir.glob("*.md")):
+    # Enumerate only git-tracked agent files (issue #926: skip untracked decoys).
+    tracked = _tracked_files(_HEALTH_REPO_ROOT, ".claude/agents/*.md")
+    if tracked is None:
+        # Fallback: git unavailable — use filesystem glob.
+        tracked = sorted(agents_dir.glob("*.md"))
+    for agent_md in sorted(tracked):
         stem = agent_md.stem
         is_crit = _is_critic(stem, agent_md)
         checks = [
@@ -3688,7 +3756,11 @@ def check_frontmatter_coverage() -> dict:
             "covered": 0, "total": 0, "missing": [],
         }
 
-    agent_files = sorted(agents_dir.glob("*.md"))
+    # Enumerate only git-tracked agent files (issue #926: skip untracked decoys).
+    agent_files = _tracked_files(_HEALTH_REPO_ROOT, ".claude/agents/*.md")
+    if agent_files is None:
+        # Fallback: git unavailable — use filesystem glob.
+        agent_files = sorted(agents_dir.glob("*.md"))
     if not agent_files:
         return {
             "id": "FRONTMATTER-COVERAGE",
@@ -3699,7 +3771,7 @@ def check_frontmatter_coverage() -> dict:
 
     missing = []
     _model_re = re.compile(r'^model\s*:', re.MULTILINE)
-    for agent_path in agent_files:
+    for agent_path in sorted(agent_files):
         try:
             text = agent_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
@@ -5296,12 +5368,21 @@ def check_parity() -> dict:
         re.MULTILINE,
     )
     skill_ids: set = set()
-    try:
-        text = _CODEBASE_CRITIC_MD.read_text(encoding="utf-8", errors="replace")
-        for m in _skill_id_pat.finditer(text):
-            skill_ids.add(m.group(1))
-    except Exception:
-        pass
+    # Only read codebase-critic.md if it is git-tracked (issue #926: avoid reading
+    # untracked/stale on-disk decoys that would produce spurious skill_gaps).
+    # _tracked_files returns None on git-failure (fallback: read it anyway),
+    # [] when git works but the file is untracked (skip it),
+    # [path] when git works and the file is tracked (read it).
+    _cbc_rel = str(_CODEBASE_CRITIC_MD.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
+    _tracked_cbc = _tracked_files(_HEALTH_REPO_ROOT, _cbc_rel)
+    _read_cbc = (_tracked_cbc is None) or (len(_tracked_cbc) > 0)
+    if _read_cbc:
+        try:
+            text = _CODEBASE_CRITIC_MD.read_text(encoding="utf-8", errors="replace")
+            for m in _skill_id_pat.finditer(text):
+                skill_ids.add(m.group(1))
+        except Exception:
+            pass
 
     # --- 3. CI-consumed IDs ---
     # Scan tools/ci-checks.sh for: --check <ID> patterns.

@@ -92,6 +92,108 @@ _HEALTH_TTL = 30               # seconds — balance freshness vs. latency
 _RELEASE_READY_CICHECKS_TIMEOUT_S = 300
 
 
+def _fetch_github_ci_conclusion(repo_root) -> tuple:
+    """Query GitHub for the `ci` check conclusion on develop's HEAD commit.
+
+    Strategy (issue #986):
+      1. Fetch the latest merged PRs targeting develop (gh pr list --base develop
+         --state merged --limit N --json number,mergeCommit).
+      2. Find the PR whose mergeCommit.oid matches `git rev-parse origin/develop`.
+      3. Run `gh pr checks <n> --json name,state` and look for name="ci".
+      4. Map state: SUCCESS/PASS → "pass"; FAILURE/ERROR/CANCELLED → "fail";
+         anything else (PENDING/IN_PROGRESS) → "pending".
+
+    Returns (status, detail) where status is one of:
+      "pass"        — GitHub ci check succeeded
+      "fail"        — GitHub ci check failed
+      "pending"     — GitHub ci check is still running
+      "unavailable" — gh CLI unavailable, rate-limited, or no matching PR found
+
+    This function is intentionally injectable/monkeypatchable at module level so
+    tests can substitute a mock without subprocess patching.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    repo_root = Path(repo_root)
+
+    # Step 1: Get develop HEAD SHA.
+    try:
+        sha_r = _sp.run(
+            ["git", "rev-parse", "origin/develop"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(repo_root),
+        )
+        if sha_r.returncode != 0:
+            return "unavailable", "git rev-parse origin/develop failed"
+        develop_sha = sha_r.stdout.strip()
+    except Exception as exc:
+        return "unavailable", f"git rev-parse error: {exc}"
+
+    # Step 2: Fetch recent merged PRs to develop and find the one matching HEAD.
+    try:
+        pr_r = _sp.run(
+            ["gh", "pr", "list", "--base", "develop", "--state", "merged",
+             "--limit", "20", "--json", "number,mergeCommit"],
+            capture_output=True, text=True, timeout=20,
+            cwd=str(repo_root), stdin=_sp.DEVNULL,
+        )
+        if pr_r.returncode != 0:
+            return "unavailable", f"gh pr list error (exit={pr_r.returncode})"
+        prs = _json.loads(pr_r.stdout or "[]")
+    except Exception as exc:
+        return "unavailable", f"gh pr list exception: {exc}"
+
+    matching_pr = None
+    for pr in prs:
+        mc = pr.get("mergeCommit") or {}
+        if mc.get("oid", "") == develop_sha:
+            matching_pr = pr.get("number")
+            break
+
+    if matching_pr is None:
+        return "unavailable", (
+            f"no merged PR to develop matched HEAD {develop_sha[:8]} "
+            f"(checked {len(prs)} recent PRs)"
+        )
+
+    # Step 3: Query check status for that PR.
+    try:
+        checks_r = _sp.run(
+            ["gh", "pr", "checks", str(matching_pr), "--json", "name,state"],
+            capture_output=True, text=True, timeout=20,
+            cwd=str(repo_root), stdin=_sp.DEVNULL,
+        )
+        if checks_r.returncode != 0:
+            return "unavailable", (
+                f"gh pr checks {matching_pr} error (exit={checks_r.returncode})"
+            )
+        checks = _json.loads(checks_r.stdout or "[]")
+    except Exception as exc:
+        return "unavailable", f"gh pr checks exception: {exc}"
+
+    # Step 4: Find the `ci` check and map its state.
+    ci_entry = next(
+        (c for c in checks if (c.get("name") or "").lower() == "ci"),
+        None,
+    )
+    if ci_entry is None:
+        return "unavailable", (
+            f"no 'ci' check found for PR #{matching_pr} "
+            f"(checks present: {[c.get('name') for c in checks]})"
+        )
+
+    state = (ci_entry.get("state") or "").upper()
+    if state in ("SUCCESS", "PASS"):
+        return "pass", f"GitHub ci=pass (PR #{matching_pr})"
+    if state in ("FAILURE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"):
+        return "fail", f"GitHub ci={state.lower()} (PR #{matching_pr})"
+    if state in ("PENDING", "IN_PROGRESS", "QUEUED", "WAITING"):
+        return "pending", f"GitHub ci={state.lower()} (PR #{matching_pr})"
+    # Unknown state — treat as unavailable to avoid false-green.
+    return "unavailable", f"GitHub ci state unknown: {state!r} (PR #{matching_pr})"
+
+
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
@@ -4433,7 +4535,8 @@ def check_release_ready() -> dict:
     """RELEASE-READY: deterministic six-condition promotion gate (ADR-0070 D2).
 
     Evaluates develop HEAD against six conditions (ADR-0070 D2):
-      (a) CI green on develop HEAD — via tools/ci-checks.sh exit code
+      (a) CI green on develop HEAD — via real GitHub ci conclusion (#986);
+          falls back to local tools/ci-checks.sh when gh is unavailable
       (b) full test suite passes (ADR-0067 D1) — via pytest exit code
       (c) latest production-verify PASS — wired to PROOF-INTEGRITY check (slice #839)
       (d) green-develop streak intact — no failing checkpoint since last promotion
@@ -4472,25 +4575,53 @@ def check_release_ready() -> dict:
         }
 
     # -----------------------------------------------------------------------
-    # (a) CI green on develop HEAD — run tools/ci-checks.sh
+    # (a) CI green on develop HEAD — prefer real GitHub ci conclusion (#986)
+    #
+    # Strategy: query GitHub for the `ci` check conclusion on develop's HEAD
+    # via _fetch_github_ci_conclusion().  This ensures condition (a) reflects
+    # the ACTUAL GitHub-Actions state, not a local ci-checks.sh run that may
+    # diverge (e.g. local pytest installed but GitHub CI has no pytest).
+    #
+    # Fallback: if gh is unavailable or no matching PR found, run local
+    # ci-checks.sh — but label the detail "(local fallback — no GitHub ci
+    # run found)" so the source is unambiguous in the dashboard/CLI output.
     # -----------------------------------------------------------------------
     ci_override = os.environ.get("_RELEASE_READY_CI_RESULT", "").strip().upper()
     if ci_override:
         ci_pass = (ci_override == "PASS")
         ci_detail = f"CI result (injected): {ci_override}"
     else:
-        try:
-            ci_result = subprocess.run(
-                ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
-                capture_output=True, text=True,
-                timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
-                cwd=str(_HEALTH_REPO_ROOT),
-            )
-            ci_pass = (ci_result.returncode == 0)
-            ci_detail = f"ci-checks.sh exit={ci_result.returncode}"
-        except Exception as exc:
+        gh_status, gh_detail = _fetch_github_ci_conclusion(_HEALTH_REPO_ROOT)
+        if gh_status == "pass":
+            ci_pass = True
+            ci_detail = gh_detail  # e.g. "GitHub ci=pass (PR #983)"
+        elif gh_status == "fail":
             ci_pass = False
-            ci_detail = f"ci-checks.sh error: {exc}"
+            ci_detail = gh_detail  # e.g. "GitHub ci=failure (PR #983)"
+        elif gh_status == "pending":
+            # CI is still running — treat as not yet green (gate held).
+            ci_pass = False
+            ci_detail = f"{gh_detail} (local fallback — GitHub ci still pending)"
+        else:
+            # "unavailable" — fall back to local ci-checks.sh run.
+            try:
+                ci_result = subprocess.run(
+                    ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
+                    capture_output=True, text=True,
+                    timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
+                    cwd=str(_HEALTH_REPO_ROOT),
+                )
+                ci_pass = (ci_result.returncode == 0)
+                ci_detail = (
+                    f"ci-checks.sh exit={ci_result.returncode} "
+                    f"(local fallback — no GitHub ci run found: {gh_detail})"
+                )
+            except Exception as exc:
+                ci_pass = False
+                ci_detail = (
+                    f"ci-checks.sh error: {exc} "
+                    f"(local fallback — no GitHub ci run found: {gh_detail})"
+                )
 
     if not ci_pass:
         return {
@@ -4683,10 +4814,12 @@ def check_release_ready() -> dict:
         "result": "PASS",
         "verdict": "true",
         "detail": (
-            "gate open: (a) CI green, (b) tests pass, (c) proof-integrity ok, "
+            f"gate open: (a) CI green [{ci_detail}], (b) tests pass, "
+            "(c) proof-integrity ok, "
             f"(d) streak intact, (e) zero needs-human, (f) guardrail-tripwire {mt_result_val.lower()}"
         ),
         "first_failing_condition": "",
+        "condition_a": ci_detail,
         "condition_f": condition_f_note,
     }
 

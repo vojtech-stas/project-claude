@@ -196,6 +196,14 @@ If you find yourself wanting any of the above, that is a signal that your input 
 - **Adversarial mindset** (full rationale in entity note): treat every bash row / recipe step as untrusted input from the writer's LLM-extract step (per ADR-0020 D2). Paranoid about plan-shape violations and ambiguous comparisons; NOT paranoid about command semantics (those are the writer's concern). Pre-empt `INVALID_INPUT` and default-conservative FAILs to give the writer clean failure surfaces.
 - **Sequential, not parallel** — both modes walk inputs in plan order; parallelism would break per-criterion attribution.
 - **Bootstrap-mode** per ADR-0020 D3 / ADR-0025 D1 / ADR-0050 D1: enforcement binds forward from invocation time; use whichever ADR set was loaded at session start.
+- **Long-running commands MUST run SYNCHRONOUSLY — NEVER `run_in_background` (issue #951).** A qa-tester that launches a long build, training run, or smoke via `run_in_background` and then returns creates an orphan process: the agent's lifetime ends, the orchestrator's `worktree-guard.sh prune` runs during housekeeping, and the worktree (and the process rooted in it) is silently destroyed. Always pass a large `timeout` to `Bash` instead. If a command genuinely cannot complete within a reasonable subagent window, the slice needs to be decomposed — do NOT use `run_in_background` as a workaround.
+- **`.gate-running` marker contract (issue #951 — belt-and-suspenders when synchronous is not possible).** If and only if a long command truly cannot run synchronously (exceptional cases only, justified in CONCERNS), create a sentinel file `.gate-running` at the worktree root **before** starting the command and remove it **after** it completes (or errors). `tools/worktree-guard.sh prune` skips any worktree that has `.gate-running` present, preventing silent process kills. Remove the marker on exit even on failure (use a `trap` or explicit cleanup). Never leave a stale `.gate-running` behind — a stale marker permanently immunizes the worktree from prune reclamation. Example:
+  ```bash
+  # worktree root = git rev-parse --show-toplevel
+  touch "$(git rev-parse --show-toplevel)/.gate-running"
+  # ... long command ...
+  rm -f "$(git rev-parse --show-toplevel)/.gate-running"
+  ```
 
 ## Production-verify mode (per ADR-0037 D2, extended by ADR-0050)
 

@@ -354,6 +354,22 @@ PY
               continue
             fi
 
+            # GATE-RUNNING MARKER CHECK (issue #951): skip worktrees with an
+            # in-flight gate sentinel BEFORE any removal-eligibility check.
+            # A qa-tester or long-running task creates .gate-running at the
+            # worktree root on start and removes it on finish. Presence means a
+            # live process may be rooted there — removing the worktree would
+            # silently kill it. This guard fires regardless of landed/no-PR
+            # status so it catches even landed worktrees still running a gate.
+            if [ -f "$WORKTREE_PATH/.gate-running" ]; then
+              echo "prune: skipped: gate-running marker present in '$WORKTREE_PATH'" >&2
+              WORKTREE_PATH=""
+              WORKTREE_BRANCH=""
+              WORKTREE_LOCKED=""
+              WORKTREE_LOCK_REASON=""
+              continue
+            fi
+
             # Determine removal eligibility via two paths:
             # PATH A: landed (merged PR + no open PR).
             # PATH B: no-PR reclamation — clean + 0-ahead + aged (ADR-0058 D3).

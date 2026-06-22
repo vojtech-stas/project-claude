@@ -61,6 +61,39 @@ case "$MODE" in
       exit 0
     fi
 
+    # MAIN HARD-ALIGN (#950): local main must always equal origin/main because
+    # main is never developed locally — it carries no local-unique commits.
+    # When branch-restore targets main, hard-align unconditionally (fetch +
+    # reset --hard origin/main) regardless of whether local main is ahead,
+    # behind, or diverged. This makes the root worktree robust to the
+    # fix-on-PR-branch dispatch pattern that can fast-forward local main onto
+    # an un-merged feature commit (ADR-0041: origin/main is source of truth;
+    # ADR-0058 D3 refinement: main-specific hard-align).
+    # NOTE: origin/main here refers to the protected branch on the remote —
+    # distinct from origin/develop (the integration branch per ADR-0070 D1).
+    if [ "$EXPECTED" = "main" ]; then
+      git fetch origin main 2>/dev/null || {
+        echo "ERROR: branch-restore: git fetch origin main failed" >&2
+        exit 1
+      }
+      LOCAL_MAIN=$(git rev-parse main 2>/dev/null) || true
+      REMOTE_MAIN=$(git rev-parse origin/main 2>/dev/null) || {
+        echo "ERROR: branch-restore: cannot resolve origin/main after fetch" >&2
+        exit 1
+      }
+      if [ "$LOCAL_MAIN" = "$REMOTE_MAIN" ]; then
+        # Already aligned — no-op.
+        exit 0
+      fi
+      # Hard-align: main is never ahead of origin/main by design.
+      git checkout main 2>/dev/null || true
+      git reset --hard origin/main 2>/dev/null || {
+        echo "ERROR: branch-restore: git reset --hard origin/main failed" >&2
+        exit 1
+      }
+      exit 0
+    fi
+
     git fetch origin develop 2>/dev/null || true
 
     CURRENT=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0

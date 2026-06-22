@@ -9,7 +9,19 @@ import os
 import types
 import importlib
 
-import pytest
+try:
+    import pytest
+except ImportError:  # CI runs stdlib unittest without pytest installed (CHECK 12 / #985)
+    pytest = None
+
+
+def _skip_if_no_pytest(fn):
+    """No-op pass-through when pytest is available; skip decorator otherwise."""
+    import unittest
+    if pytest is None:
+        return unittest.skip("pytest not installed — parametrized variant skipped in no-pytest CI")(fn)
+    return fn
+
 
 # ---------------------------------------------------------------------------
 # Module import helper
@@ -62,12 +74,15 @@ EXCLUDED_IDS = ["BRANCH-TOPOLOGY", "FRONTMATTER-COVERAGE", "META-TRIPWIRE", "REL
 
 
 class TestExcludedChecksNotInMap:
-    @pytest.mark.parametrize("check_id", EXCLUDED_IDS)
-    def test_check_excluded_from_purpose_group_map(self, check_id):
-        h = _import_health()
-        assert check_id not in h.PURPOSE_GROUP_MAP, (
-            f"{check_id} should NOT be in PURPOSE_GROUP_MAP (registered-but-UI-invisible)"
-        )
+    # pytest parametrize — only applied when pytest is present; otherwise the sibling
+    # test_all_four_excluded covers the same assertions under stdlib unittest.
+    if pytest is not None:
+        @pytest.mark.parametrize("check_id", EXCLUDED_IDS)
+        def test_check_excluded_from_purpose_group_map(self, check_id):
+            h = _import_health()
+            assert check_id not in h.PURPOSE_GROUP_MAP, (
+                f"{check_id} should NOT be in PURPOSE_GROUP_MAP (registered-but-UI-invisible)"
+            )
 
     def test_all_four_excluded(self):
         h = _import_health()

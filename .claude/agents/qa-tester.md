@@ -207,6 +207,47 @@ If you find yourself wanting any of the above, that is a signal that your input 
 
 ## Production-verify mode (per ADR-0037 D2, extended by ADR-0050)
 
+### Shift-left verification obligations
+
+Three explicit rules, derived from real failure post-mortems (issues #947/#948/#949),
+extend the base route-table contract. These rules override the "route determines all"
+default when the slice falls into one of the three categories below. Each is an
+**additional gate** on top of the existing route-table proof.
+
+**Rule SL-1 — Verify the SHIPPED artifact, not a proxy (#947).**
+When a slice's value is a produced artifact (model, ensemble, build output, dataset),
+production-verify MUST exercise or inspect the FINAL canonical artifact that actually
+ships — not a selection-time metric, cross-validation mean, or intermediate proxy.
+Re-run (or load) the shipped output and assert its real quality on a real holdout;
+apply any declared guard floor to the SHIPPED artifact's metric, not the selection
+mean. _Root cause:_ PR-115 guard floor was applied to the repeated-split selection
+mean (MAE 15295 looked fine) but NOT re-applied to the canonical-refit shipped metric
+(stack MAPE 98.8%, R² −19.6) — caught only at the end-of-PRD manual production train.
+A guard floor that does not bind on the SHIPPED artifact provides no safety.
+
+**Rule SL-2 — Live-probe registered external endpoints (#948).**
+When a slice registers or modifies a live external data-source URL or endpoint, the
+production-verify step MUST perform ONE real HTTP request against each newly-registered
+endpoint and assert `HTTP 200` (or the expected status) plus a plausible response
+shape (e.g., metadata + 1 feature). Offline fixture tests that never touch the network
+are NOT sufficient as the sole evidence for a live-endpoint slice. A `404`, `401`, or
+`499` on the real endpoint is a FAIL even if all offline tests are green.
+_Root cause:_ 2 of 6 geo-layer FeatureServer URLs (#121 green/water) were unusable
+(HTTP 404 / 499 token-required) — invisible to offline fixture tests; caught only at
+the PRD-level closing live fetch after all 5 slices had merged.
+
+**Rule SL-3 — Real-run-smoke installer and external-CLI slices (#949).**
+For slices that shell out to an external CLI (schtasks, gh, az, etc.) or install a
+scheduled task / service via a generated command, production-verify MUST perform a
+REAL idempotent smoke execution against a throwaway target (e.g. register a `*_SMOKE`
+task with `/F`, assert it exists with the intended settings, then delete it). A
+`-DryRun` or print-only invocation that outputs a command string is NOT acceptable as
+the sole verification evidence — invalid flags, wrong argument syntax, and quoting bugs
+are invisible to a dry-run and only surface on real execution.
+_Root cause:_ `tools/install-*.ps1` used `schtasks /Change … /WakeToRun
+/StartWhenAvailable` (invalid flags); `-DryRun` passed (printed the command), but real
+registration errored — the slice's tests, reviewer, and codebase-critic never caught it.
+
 ### Trigger and input
 
 Trigger: prompt contains the literal `production-verify mode` token. Input (all three required):

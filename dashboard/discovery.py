@@ -21,6 +21,13 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _DISCOVERY_REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# git-aware enumeration helper (issue #999 — same fix class as #926 for health.py)
+# Lazily imported to keep the module usable even if _gitfiles is somehow missing.
+try:
+    from _gitfiles import tracked_files as _tracked_files
+except ImportError:
+    _tracked_files = None  # type: ignore[assignment]
+
 # Known critics (explicit allow-list).  Kept in sync with server.py's
 # KNOWN_CRITICS literal (CHECK 7 regexes server.py SOURCE — the literal stays
 # in server.py; this module reads the same set for classification).
@@ -82,7 +89,18 @@ def discover_skills() -> list:
     skills = []
     if not skills_dir.exists():
         return skills
-    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+    # Enumerate via git ls-files so untracked/stale dirs are invisible (#999).
+    # Graceful fallback to fs-glob when git is unavailable (non-git context).
+    tracked = (
+        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/skills/*/SKILL.md")
+        if _tracked_files is not None
+        else None
+    )
+    if tracked is not None:
+        skill_mds = sorted(tracked)
+    else:
+        skill_mds = sorted(skills_dir.glob("*/SKILL.md"))
+    for skill_md in skill_mds:
         fm = _parse_frontmatter(skill_md)
         skills.append({
             "name": fm.get("name", skill_md.parent.name),
@@ -97,7 +115,18 @@ def discover_agents() -> list:
     agents = []
     if not agents_dir.exists():
         return agents
-    for agent_md in sorted(agents_dir.glob("*.md")):
+    # Enumerate via git ls-files so untracked/stale files are invisible (#999).
+    # Graceful fallback to fs-glob when git is unavailable (non-git context).
+    tracked = (
+        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/agents/*.md")
+        if _tracked_files is not None
+        else None
+    )
+    if tracked is not None:
+        agent_mds = sorted(tracked)
+    else:
+        agent_mds = sorted(agents_dir.glob("*.md"))
+    for agent_md in agent_mds:
         fm = _parse_frontmatter(agent_md)
         stem = agent_md.stem
         description = fm.get("description", "")
@@ -359,7 +388,18 @@ def discover_adrs() -> list:
     adrs = []
     if not decisions_dir.exists():
         return adrs
-    for adr_file in sorted(decisions_dir.glob("[0-9]*.md")):
+    # Enumerate via git ls-files so untracked/stale files are invisible (#999).
+    # Graceful fallback to fs-glob when git is unavailable (non-git context).
+    tracked = (
+        _tracked_files(_DISCOVERY_REPO_ROOT, "decisions/[0-9]*.md")
+        if _tracked_files is not None
+        else None
+    )
+    if tracked is not None:
+        adr_files = sorted(tracked)
+    else:
+        adr_files = sorted(decisions_dir.glob("[0-9]*.md"))
+    for adr_file in adr_files:
         title = ""
         try:
             for line in adr_file.read_text(encoding="utf-8", errors="replace").splitlines():

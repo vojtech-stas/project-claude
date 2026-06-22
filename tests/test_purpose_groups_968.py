@@ -15,14 +15,6 @@ except ImportError:  # CI runs stdlib unittest without pytest installed (CHECK 1
     pytest = None
 
 
-def _skip_if_no_pytest(fn):
-    """No-op pass-through when pytest is available; skip decorator otherwise."""
-    import unittest
-    if pytest is None:
-        return unittest.skip("pytest not installed — parametrized variant skipped in no-pytest CI")(fn)
-    return fn
-
-
 # ---------------------------------------------------------------------------
 # Module import helper
 # ---------------------------------------------------------------------------

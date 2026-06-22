@@ -34,19 +34,62 @@ class TestWorktreeGuardDevelop(unittest.TestCase):
     def setUp(self):
         self.content = _read(GUARD_SH)
 
-    def test_no_origin_main_refs(self):
-        """worktree-guard.sh must contain zero 'origin/main' references."""
-        hits = [
-            ln for ln in self.content.splitlines()
-            if "origin/main" in ln
-        ]
+    def test_no_origin_main_refs_outside_hard_align_block(self):
+        """worktree-guard.sh must not reference 'origin/main' EXCEPT inside the
+        main hard-align block (the intentional #950 fix for the protected main branch)
+        or in comment lines.
+
+        The #841 migration moved integration-branch semantics to origin/develop.
+        The #950 fix intentionally adds origin/main references inside the
+        'EXPECTED = main' hard-align block only — those are allowed.
+        All other non-comment origin/main refs are forbidden (integration branch is develop).
+        """
+        lines = self.content.splitlines()
+        violations = []
+        # Track nesting depth inside the EXPECTED=main hard-align block.
+        # We enter when we see the 'if [ "$EXPECTED" = "main" ]' line and
+        # track depth via if/fi pairs to find the matching fi.
+        in_hard_align_block = False
+        hard_align_depth = 0
+
+        for ln in lines:
+            stripped = ln.strip()
+
+            # Detect entry into the main hard-align block.
+            if not in_hard_align_block and '[ "$EXPECTED" = "main" ]' in stripped:
+                in_hard_align_block = True
+                hard_align_depth = 1
+                continue  # the if-line itself is part of the block, skip
+
+            if in_hard_align_block:
+                # Track nested if/fi.
+                if stripped.startswith("if ") or stripped == "if":
+                    hard_align_depth += 1
+                elif stripped == "fi":
+                    hard_align_depth -= 1
+                    if hard_align_depth <= 0:
+                        # This fi closes our block — exit block mode.
+                        in_hard_align_block = False
+                        hard_align_depth = 0
+                # All lines inside the block (including fi) are allowed.
+                continue
+
+            # Outside the hard-align block: allow comment lines.
+            if stripped.startswith("#"):
+                continue
+
+            # Any non-comment reference to origin/main outside the block is a violation.
+            if "origin/main" in ln:
+                violations.append(ln)
+
         self.assertEqual(
             [],
-            hits,
+            violations,
             msg=(
-                "worktree-guard.sh still contains 'origin/main' reference(s) "
-                "(should be origin/develop after slice #841 migration):\n"
-                + "\n".join(f"  {h}" for h in hits)
+                "worktree-guard.sh contains 'origin/main' reference(s) outside the "
+                "intentional main hard-align block (#950 fix). "
+                "Integration-branch semantics use origin/develop (slice #841):\n"
+                + "\n".join(f"  {v}" for v in violations)
             ),
         )
 

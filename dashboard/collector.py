@@ -377,20 +377,26 @@ def _discover_develop_pr_slice_links(
     slice_numbers: set[int],
     limit: int = 200,
 ) -> dict[int, int]:
-    """Find slice→PR mapping for develop-base merged PRs.
+    """Find slice→PR mapping for develop-base (or promoted-to-main) merged PRs.
 
     GitHub only populates closingIssuesReferences (and triggers ClosedEvent
     on the issue) when a PR is merged into the *default* branch.  PRs merged
     to 'develop' leave both fields empty, breaking trail correlation.
 
-    Strategy: fetch recent merged PRs (gh pr list --state merged, no base
-    filter so we catch both main and develop), parse 'Closes #N' from each
-    body, and return a mapping {slice_number: pr_number} for slices that
-    appear in our sub-issue set.
+    Strategy (two-pass, fix #1020):
+      Pass 1: scan --base develop merged PRs (the original path).
+      Pass 2: if any slices remain uncovered AND the develop scan returned data,
+              scan --base main merged PRs as fallback.  This covers the promoted-
+              to-main scenario: once develop is squash-merged to main, `gh pr list
+              --base develop` no longer shows the original feature PRs (they are
+              already on main), but `--base main` promotion PR body often does NOT
+              include the original Closes #N.  A broader no-base-filter scan is
+              used as the final fallback to catch all cases.
+      Each pass: parse 'Closes #N' from each body.
 
     Args:
         slice_numbers: set of issue numbers that are known slices of this PRD.
-        limit: max PRs to scan (default 200; capped to avoid slow calls).
+        limit: max PRs to scan per pass (default 200; capped to avoid slow calls).
 
     Returns:
         {slice_issue_number: pr_number} for any match found.
@@ -398,41 +404,65 @@ def _discover_develop_pr_slice_links(
     if not slice_numbers:
         return {}
 
-    stdout, err = _run_gh([
-        "pr", "list",
-        "--base", "develop",
-        "--state", "merged",
-        "--limit", str(min(limit, 200)),
-        "--json", "number,body,closingIssuesReferences,mergedAt",
-    ], timeout=30)
+    _pr_list_fields = "number,body,closingIssuesReferences,mergedAt"
+    _cap = str(min(limit, 200))
 
-    if stdout is None:
-        return {}
+    def _scan_pr_list(extra_args: list[str]) -> list[dict]:
+        """Run gh pr list with extra_args; return parsed list or []."""
+        stdout, _err = _run_gh(
+            ["pr", "list", "--state", "merged", "--limit", _cap,
+             "--json", _pr_list_fields] + extra_args,
+            timeout=30,
+        )
+        if stdout is None:
+            return []
+        try:
+            return json.loads(stdout)
+        except Exception:
+            return []
 
-    try:
-        prs = json.loads(stdout)
-    except Exception:
-        return {}
+    def _extract_mapping(prs: list[dict], remaining: set[int]) -> dict[int, int]:
+        """Parse Closes #N from each PR body; return {slice_num: pr_num}."""
+        found: dict[int, int] = {}
+        for pr in prs:
+            pr_num = pr.get("number")
+            if not pr_num:
+                continue
+            # Prefer closingIssuesReferences (populated for main-base merges)
+            cir = pr.get("closingIssuesReferences") or []
+            if cir:
+                for ref in cir:
+                    ref_num = ref.get("number")
+                    if ref_num and ref_num in remaining and ref_num not in found:
+                        found[ref_num] = pr_num
+                continue
+            # Fallback: parse Closes #N from PR body
+            body = pr.get("body") or ""
+            for issue_num in _parse_closes_from_body(body):
+                if issue_num in remaining and issue_num not in found:
+                    found[issue_num] = pr_num
+        return found
 
     mapping: dict[int, int] = {}
-    for pr in prs:
-        pr_num = pr.get("number")
-        if not pr_num:
-            continue
-        # Skip if closingIssuesReferences already has data (shouldn't for develop,
-        # but be defensive)
-        cir = pr.get("closingIssuesReferences") or []
-        if cir:
-            for ref in cir:
-                ref_num = ref.get("number")
-                if ref_num and ref_num in slice_numbers and ref_num not in mapping:
-                    mapping[ref_num] = pr_num
-            continue
-        # Parse Closes #N from body
-        body = pr.get("body") or ""
-        for issue_num in _parse_closes_from_body(body):
-            if issue_num in slice_numbers and issue_num not in mapping:
-                mapping[issue_num] = pr_num
+
+    # Pass 1: develop-base scan (original path)
+    develop_prs = _scan_pr_list(["--base", "develop"])
+    if develop_prs:
+        mapping.update(_extract_mapping(develop_prs, slice_numbers - set(mapping)))
+
+    # Pass 2: main-base fallback (covers promoted-to-main scenario, fix #1020)
+    uncovered = slice_numbers - set(mapping)
+    if uncovered:
+        main_prs = _scan_pr_list(["--base", "main"])
+        if main_prs:
+            mapping.update(_extract_mapping(main_prs, uncovered))
+
+    # Pass 3: no-base-filter scan (final fallback; catches any remaining edge cases)
+    uncovered = slice_numbers - set(mapping)
+    if uncovered:
+        all_prs = _scan_pr_list([])
+        if all_prs:
+            mapping.update(_extract_mapping(all_prs, uncovered))
 
     return mapping
 

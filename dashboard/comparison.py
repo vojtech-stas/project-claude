@@ -535,22 +535,50 @@ def _detect_slice_no_pr(trail: dict) -> list[dict]:
 
     Honors NO_PR_EXPECTED annotation: if a slice's title contains
     '[NO_PR_EXPECTED]', it is expected to close without a PR.
+
+    Fix #1020 — develop-aware fallback: before emitting a slice_no_pr
+    violation, check whether ANY PR in the trail's prs dict lists this
+    slice in its closing_issues (populated by _build_pr_trail's body-parse
+    fallback).  This covers the case where the collector's
+    _discover_develop_pr_slice_links populated the prs dict but did NOT
+    back-fill closing_pr_number on the slice (e.g. race / partial trail).
     """
+    # Build a reverse index: slice_number → pr_number from prs closing_issues
+    slice_covered_by_pr: dict[int, int] = {}
+    for pr_key, pr in (trail.get("prs") or {}).items():
+        pr_num = pr.get("number")
+        if not pr_num:
+            try:
+                pr_num = int(pr_key)
+            except (ValueError, TypeError):
+                continue
+        for issue_num in (pr.get("closing_issues") or []):
+            if issue_num not in slice_covered_by_pr:
+                slice_covered_by_pr[issue_num] = pr_num
+
     violations = []
     for sl in trail.get("slices", []):
         # Check NO_PR_EXPECTED annotation in slice title or labels
         title = sl.get("title", "")
         if "NO_PR_EXPECTED" in title.upper():
             continue
-        if sl.get("closed_at") and not sl.get("closing_pr_number"):
-            violations.append({
-                "type": "slice_no_pr",
-                "slice_number": sl["number"],
-                "detail": (
-                    f"Slice #{sl['number']} closed at {sl.get('closed_at', '?')} "
-                    f"but no closing PR found via closingIssuesReferences"
-                ),
-            })
+        if not sl.get("closed_at"):
+            continue  # not closed; no violation possible
+        # Primary check: closing_pr_number set by collector
+        if sl.get("closing_pr_number"):
+            continue
+        # Secondary check: any PR in the trail lists this slice in closing_issues
+        # (develop-aware fallback — fix #1020)
+        if sl["number"] in slice_covered_by_pr:
+            continue
+        violations.append({
+            "type": "slice_no_pr",
+            "slice_number": sl["number"],
+            "detail": (
+                f"Slice #{sl['number']} closed at {sl.get('closed_at', '?')} "
+                f"but no closing PR found via closingIssuesReferences"
+            ),
+        })
     return violations
 
 

@@ -198,8 +198,11 @@ def _build_trail_with_mocks(develop_scan_returns_empty=False):
     """Build a trail via collect_trail with gh layer mocked.
 
     Args:
-        develop_scan_returns_empty: if True, simulate _discover_develop_pr_slice_links
-          returning {} (promoted-to-main scenario: --base develop scan finds nothing).
+        develop_scan_returns_empty: if True, simulate the promoted-to-main
+          scenario: '--base develop' scan returns [] (PRs no longer appear on
+          develop branch list after squash-merge to main), but '--base main' or
+          no-base scan DOES return the PRs (the fix's fallback path).
+          When False (default): develop scan returns the full PR list directly.
     """
     _inject_dashboard()
     import collector
@@ -215,7 +218,18 @@ def _build_trail_with_mocks(develop_scan_returns_empty=False):
     def fake_run_gh(args, timeout=30):
         if "pr" in args and "list" in args:
             if develop_scan_returns_empty:
-                return json.dumps([]), ""  # simulate promoted-to-main: empty
+                # Promoted-to-main scenario:
+                # --base develop → empty (PRs already on main)
+                # --base main or no-base-filter → returns PRs (fallback path)
+                if "--base" in args:
+                    base_idx = args.index("--base")
+                    base_val = args[base_idx + 1] if base_idx + 1 < len(args) else ""
+                    if base_val == "develop":
+                        return json.dumps([]), ""
+                    # main-base or other base → return PRs (fix's fallback)
+                    return json.dumps(_DEVELOP_PRS_LIST), ""
+                # No --base flag → no-base-filter scan (final fallback)
+                return json.dumps(_DEVELOP_PRS_LIST), ""
             return json.dumps(_DEVELOP_PRS_LIST), ""
         return None, "transient"
 
@@ -252,29 +266,42 @@ class TestSliceNoPrDevelopAware(unittest.TestCase):
         from comparison import get_spec_for_compare
         return get_spec_for_compare()
 
-    def test_slice_no_pr_fires_when_promoted_to_main_no_fix(self):
-        """BEFORE fix: slice_no_pr violations fire when develop scan is empty.
+    def test_detect_slice_no_pr_prs_fallback(self):
+        """_detect_slice_no_pr must use prs closing_issues as fallback (fix #1020).
 
-        This test MUST FAIL after the fix (commit #2).
-        It documents the pre-fix failure mode: slice_no_pr fires → run_pass False.
+        Construct a minimal trail where closing_pr_number is None (not populated
+        by collector) but a PR in trail.prs lists the slice in closing_issues.
+        The detector must NOT emit a violation in this case.
+
+        This tests the fix's secondary fallback in _detect_slice_no_pr directly.
         """
         _inject_dashboard()
-        from comparison import compare, _detect_slice_no_pr
+        from comparison import _detect_slice_no_pr
 
-        # Build a trail where _discover_develop_pr_slice_links returned empty
-        # (simulating promoted-to-main scenario)
-        trail = _build_trail_with_mocks(develop_scan_returns_empty=True)
+        trail = {
+            "slices": [
+                {
+                    "number": 995,
+                    "title": "feat: slice 1",
+                    "closed_at": "2026-06-05T15:00:00Z",
+                    "closing_pr_number": None,  # not set by collector
+                }
+            ],
+            "prs": {
+                "998": {
+                    "number": 998,
+                    "closing_issues": [995],  # body-parsed fallback populated this
+                    "merged_at": "2026-06-05T14:30:00Z",
+                }
+            },
+        }
 
-        # With the fix, the detector should NOT fire — so this assertion
-        # would FAIL after commit #2 (which is the intended state).
         violations = _detect_slice_no_pr(trail)
         has_slice_no_pr = any(v["type"] == "slice_no_pr" for v in violations)
-        self.assertTrue(
+        self.assertFalse(
             has_slice_no_pr,
-            "BEFORE fix: slice_no_pr must fire when develop scan empty + "
-            "slices have closedAt but no closing_pr_number. "
-            "If this assertion passes, the pre-fix failure mode is confirmed. "
-            "AFTER fix this test WILL FAIL (expected: no slice_no_pr violations)."
+            "AFTER fix: slice_no_pr must NOT fire when prs closing_issues covers "
+            f"the slice. violations={violations}"
         )
 
     def test_compare_no_slice_no_pr_with_develop_scan(self):

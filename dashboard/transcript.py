@@ -621,6 +621,14 @@ def _write_disk_cache(data: dict) -> None:
 # or the sentinel _GH_UNAVAILABLE (str) when gh failed.
 _GH_UNAVAILABLE = "__gh_unavailable__"
 
+# Sentinel returned by _resolve_slice_to_prd when the issue IS a prd-labeled
+# issue itself (not a slice of another PRD).  Distinct from None, which means
+# "not a prd-labeled issue AND no parent PRD found in body".
+# This lets resolve_dispatch_to_prd distinguish the two cases:
+#   _IS_PRD  → the issue is a genuine PRD → return N
+#   None     → the issue is NOT a PRD and has no resolvable parent → return None
+_IS_PRD = "__is_prd__"
+
 _prd_cache: dict[int, "int | str | None"] = {}
 # Timestamp of last successful gh call (used to expire cache on long runs)
 _prd_cache_ts: float = 0.0
@@ -649,16 +657,23 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     """Resolve a slice issue number to its parent PRD.
 
     Returns:
-      int   — the parent PRD number
-      None  — issue is itself a PRD (or unresolvable without gh)
+      int          — the parent PRD number (issue is a slice with a known parent)
+      _IS_PRD      — issue IS a prd-labeled issue itself (no parent PRD)
+      None         — issue is NOT prd-labeled AND no parent PRD found in body
+                     (not a PRD, unresolvable — caller should return None/non-PRD)
       _GH_UNAVAILABLE — gh call failed; caller should fall back
+
+    Fix (issue #1018): previously returned None for BOTH 'is a PRD' and
+    'not a PRD, no parent found' cases, causing resolve_dispatch_to_prd to
+    treat the second case as a phantom PRD node.  Now returns _IS_PRD for the
+    'is a PRD' case so the caller can distinguish them.
 
     Strategy:
       1. Fetch issue N with --json number,labels,body.
-      2. If labeled 'prd': return None (already a PRD).
+      2. If labeled 'prd': return _IS_PRD (is a genuine PRD itself).
       3. Parse body for "slice of PRD #N" canonical pattern.
       4. If found: return that PRD number.
-      5. Otherwise: return None (unresolved but not a crash).
+      5. Otherwise: return None (not a PRD, no parent found).
     """
     rc, stdout = _gh_run_transcript([
         "issue", "view", str(slice_n),
@@ -676,8 +691,9 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     label_names = {lbl.get("name", "") for lbl in labels}
 
     if "prd" in label_names:
-        # Issue IS a PRD — no parent to resolve
-        return None
+        # Issue IS a genuine PRD — signal this explicitly so the caller
+        # can return N (not None) without conflating with 'no parent found'.
+        return _IS_PRD
 
     # Try to parse parent PRD from body
     body = data.get("body", "")
@@ -685,7 +701,9 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     if parent is not None:
         return parent
 
-    # Could not determine parent — return None (honest unknown)
+    # Not a prd-labeled issue AND no parent PRD pattern found in body.
+    # Return None to signal 'non-PRD, unresolvable' — caller must NOT treat
+    # this as a PRD node (fix for issue #1018 phantom PRD bug).
     return None
 
 
@@ -720,6 +738,9 @@ def _resolve_pr_to_prd(pr_n: int) -> "int | str | None":
         result = _resolve_slice_to_prd(slice_candidate)
         if result is _GH_UNAVAILABLE:
             return _GH_UNAVAILABLE
+        if result is _IS_PRD:
+            # PR closes a prd-labeled issue directly — that IS the PRD
+            return slice_candidate
         if isinstance(result, int):
             return result
 
@@ -731,16 +752,20 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
 
     This is the primary correlation helper for slice #958 (PRD #956 §2 #1).
     Perf fix (slice #959 / captured #962): checks disk cache before gh.
+    Bug fix (issue #1018): only prd-labeled issues become PRD firing nodes;
+    non-prd-labeled issues with no resolvable parent return None (non-PRD).
 
     Given a number N extracted from a dispatch description:
       - If N is a PRD issue:      return N.
       - If N is a slice issue:    return its parent PRD.
       - If N looks like a PR:     resolve PR → Closes-slice → PRD.
       - If gh is unavailable:     return None (caller uses fallback label).
+      - If N is not prd-labeled and has no parent: return None (non-PRD;
+        caller routes to maintenance/non-PRD bucket, not phantom PRD node).
 
     Lookup order: disk cache → in-process cache → gh (write-through on hit).
 
-    Returns int (parent PRD) or None (gh unavailable / unresolvable).
+    Returns int (parent PRD) or None (gh unavailable / unresolvable / non-PRD).
     """
     _prd_cache_reset_if_stale()
 
@@ -756,9 +781,8 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
     disk_key = str(n)
     if disk_key in disk_data:
         val = disk_data[disk_key]
-        # val is an int (parent PRD) or None (was a PRD itself, stored as N)
-        # Disk cache uses int values; None means "was a PRD" (val=n when PRD)
-        # Actually: disk stores the resolved parent, or None for "gh failed"
+        # Disk stores: int (resolved parent PRD or self for a PRD issue),
+        # or None (gh was unavailable at write time — retry gh now).
         if val is None:
             # Could not resolve (gh was unavailable at write time) — retry gh
             pass  # fall through to gh
@@ -781,14 +805,24 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
         _write_disk_cache(disk_data)
         return pr_result  # type: ignore[return-value]
 
-    if result is None:
-        # Issue is a PRD itself — return N
+    if result is _IS_PRD:
+        # Issue IS a genuine prd-labeled issue — return N (it IS the PRD).
         _prd_cache[n] = n
         disk_data[disk_key] = n
         _write_disk_cache(disk_data)
         return n
 
-    # result is the parent PRD int
+    if result is None:
+        # Issue is NOT prd-labeled AND has no resolvable parent PRD body.
+        # Fix #1018: do NOT treat this as a phantom 'PRD #N' node.
+        # Return None so the UI routes it to the maintenance/non-PRD bucket.
+        # Cache in-process only (same as gh-unavailable): the label set on a
+        # non-prd issue can change (e.g. promotion to prd), so we don't persist
+        # None to disk — the next session will re-verify via gh.
+        _prd_cache[n] = None  # type: ignore[assignment]
+        return None
+
+    # result is the parent PRD int (slice with a known parent)
     _prd_cache[n] = result
     disk_data[disk_key] = result
     _write_disk_cache(disk_data)

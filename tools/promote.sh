@@ -27,47 +27,27 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 EVENTS_LOG="$REPO_ROOT/.claude/logs/workflow-events.jsonl"
 
 # --- 0. RELEASE-READY pre-flight guard (slice #838 / ADR-0070 D2) ---
-# Refuse to promote unless the six-condition gate reports verdict=true.
-# The gate exits 0 regardless (WARN = held is not a script error); we parse
-# the verdict field from the JSON output.
+# Refuse to promote unless health.py --check RELEASE-READY emits a line
+# matching `^PASS: RELEASE-READY`.  The CLI exits 0 for both PASS and WARN
+# (ADR-0064 D3 — only FAIL exits non-zero), so we MUST grep the output text,
+# not the exit code.  Fix for #1036: the old code parsed a JSON `verdict`
+# field that the CLI never emits; the real contract is the PASS:/WARN: prefix.
+#
+# Injection: set PROMOTE_HEALTH_CMD to override the health.py invocation
+# (used by tests to stub output without spawning the real CLI).
 echo "INFO: checking RELEASE-READY gate..."
-RELEASE_READY_OUT="$(python3 "$REPO_ROOT/dashboard/health.py" --check RELEASE-READY 2>&1)" || true
-# Extract verdict from JSON output (last line starting with '{')
-VERDICT="$(echo "$RELEASE_READY_OUT" | python3 -c "
-import sys, json
-for line in reversed(sys.stdin.read().splitlines()):
-    line = line.strip()
-    if line.startswith('{'):
-        try:
-            d = json.loads(line)
-            print(d.get('verdict', ''))
-            sys.exit(0)
-        except Exception:
-            pass
-print('')
-" 2>/dev/null || echo "")"
+_DEFAULT_HEALTH_CMD="python3 $REPO_ROOT/dashboard/health.py --check RELEASE-READY"
+_HEALTH_CMD="${PROMOTE_HEALTH_CMD:-$_DEFAULT_HEALTH_CMD}"
+RELEASE_READY_OUT="$(eval "$_HEALTH_CMD" 2>&1)" || true
 
-if [ "$VERDICT" != "true" ]; then
-  # Extract detail for a helpful error message
-  DETAIL="$(echo "$RELEASE_READY_OUT" | python3 -c "
-import sys, json
-for line in reversed(sys.stdin.read().splitlines()):
-    line = line.strip()
-    if line.startswith('{'):
-        try:
-            d = json.loads(line)
-            print(d.get('detail', 'gate not ready'))
-            sys.exit(0)
-        except Exception:
-            pass
-print('gate not ready (could not parse RELEASE-READY output)')
-" 2>/dev/null || echo "gate not ready")"
-  echo "ERROR: RELEASE-READY gate is not open — promotion refused" >&2
-  echo "ERROR: $DETAIL" >&2
+if printf '%s\n' "$RELEASE_READY_OUT" | grep -qE '^PASS: RELEASE-READY'; then
+  echo "INFO: RELEASE-READY gate open — proceeding"
+else
+  echo "ERROR: RELEASE-READY gate not open — promotion refused" >&2
+  echo "ERROR: $RELEASE_READY_OUT" >&2
   echo "INFO: Resolve all failing conditions before promoting develop → main." >&2
   exit 1
 fi
-echo "INFO: RELEASE-READY gate: $VERDICT — proceeding with promotion"
 
 # --- 0b. Human-ack sentinel gate (slice #881, fixes #880 bypass) ---
 # Require a human-created sentinel file .claude/PROMOTE_OK in the repo root.
@@ -106,7 +86,12 @@ else
 
   # --- 3. Fast-forward push ---
   echo "INFO: fast-forwarding main to develop HEAD $DEVELOP_SHA"
-  git push origin "refs/remotes/origin/develop:refs/heads/main" --force-with-lease="refs/heads/main:$MAIN_SHA"
+  # _PROMOTE_SH_SKIP_PUSH=1 bypasses the real push (test isolation only).
+  if [ "${_PROMOTE_SH_SKIP_PUSH:-}" = "1" ]; then
+    echo "INFO: _PROMOTE_SH_SKIP_PUSH=1 — skipping real push (test mode)"
+  else
+    git push origin "refs/remotes/origin/develop:refs/heads/main" --force-with-lease="refs/heads/main:$MAIN_SHA"
+  fi
   echo "INFO: push complete"
 fi
 

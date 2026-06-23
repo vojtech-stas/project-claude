@@ -37,21 +37,49 @@ REPO_ROOT = Path(__file__).parent.parent
 PROMOTE_SH = REPO_ROOT / "tools" / "promote.sh"
 
 
+def _to_bash_path(win_path: str) -> str:
+    """Convert a Windows path to a bash-compatible path on Windows Git Bash.
+
+    On POSIX systems this is a no-op.  On Windows, replaces backslashes and
+    drive letter so bash can invoke the script.
+    """
+    import platform
+    if platform.system() != "Windows":
+        return win_path
+    # Try cygpath first (available in Git Bash / MSYS2)
+    try:
+        result = subprocess.run(
+            ["cygpath", "-u", win_path],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    # Fallback: manual conversion C:\foo\bar → /c/foo/bar
+    import re
+    p = win_path.replace("\\", "/")
+    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
+    return p
+
+
 def _make_stub_health(tmpdir: str, output_line: str) -> str:
     """Create a stub script that prints `output_line` and exits 0.
 
-    Returns the path to the stub script.
+    Returns the POSIX path to the stub script (bash-compatible).
     The stub emulates the real `health.py --check RELEASE-READY` CLI output
     format: one line starting with PASS:, WARN:, or FAIL:.
     """
     stub_path = os.path.join(tmpdir, "stub_health.sh")
+    # Escape any double-quotes in the output line for safety
+    safe_line = output_line.replace('"', '\\"')
     with open(stub_path, "w", newline="\n") as f:
         f.write("#!/bin/bash\n")
-        f.write(f'printf "%s\\n" "{output_line}"\n')
+        f.write(f'printf "%s\\n" "{safe_line}"\n')
         f.write("exit 0\n")
     current_mode = os.stat(stub_path).st_mode
     os.chmod(stub_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return stub_path
+    return _to_bash_path(stub_path)
 
 
 def _run_promote(stub_output: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
@@ -65,10 +93,12 @@ def _run_promote(stub_output: str, extra_env: dict | None = None) -> subprocess.
         raise FileNotFoundError(f"promote.sh not found at {PROMOTE_SH}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        stub_path = _make_stub_health(tmpdir, stub_output)
+        stub_posix_path = _make_stub_health(tmpdir, stub_output)
         env = os.environ.copy()
-        # Point promote.sh at our stub instead of real health.py
-        env["PROMOTE_HEALTH_CMD"] = f"bash {stub_path}"
+        # Point promote.sh at our stub instead of real health.py.
+        # Use POSIX path so bash can find the script on Windows Git Bash.
+        env["PROMOTE_HEALTH_CMD"] = f"bash {stub_posix_path}"
+        env["MSYS_NO_PATHCONV"] = "1"
         # Skip actual git push (test isolation — no real push to main)
         env["_PROMOTE_SH_SKIP_PUSH"] = "1"
         if extra_env:

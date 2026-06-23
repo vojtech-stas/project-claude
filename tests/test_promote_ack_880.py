@@ -14,6 +14,8 @@ Test design:
 """
 
 import os
+import platform
+import re
 import stat
 import subprocess
 import sys
@@ -23,6 +25,28 @@ import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PROMOTE_SH = os.path.join(REPO_ROOT, "tools", "promote.sh")
+
+
+def _to_bash_path(win_path: str) -> str:
+    """Convert a Windows path to a bash-compatible POSIX path for Git Bash.
+
+    On non-Windows systems this is a no-op.
+    """
+    if platform.system() != "Windows":
+        return win_path
+    try:
+        result = subprocess.run(
+            ["cygpath", "-u", win_path],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    # Fallback: C:\foo\bar → /c/foo/bar
+    p = win_path.replace("\\", "/")
+    p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
+    return p
 
 
 def _git(*args, cwd=None, check=True):
@@ -144,18 +168,24 @@ class TestPromoteAckGate(unittest.TestCase):
         # Sentinel path inside the work repo
         self.sentinel = os.path.join(self.work, ".claude", "PROMOTE_OK")
 
-        # Stub dashboard/health.py RELEASE-READY check so promote.sh
-        # passes the pre-flight gate in both test scenarios.
-        health_dir = os.path.join(self.work, "dashboard")
-        os.makedirs(health_dir, exist_ok=True)
-        health_stub = os.path.join(health_dir, "health.py")
-        with open(health_stub, "w") as f:
+        # Stub PROMOTE_HEALTH_CMD so promote.sh passes the RELEASE-READY gate
+        # in both test scenarios.  Updated by slice #1036: the real CLI emits
+        # `PASS: RELEASE-READY — <detail>` (not JSON), so the stub now matches
+        # the real format.  The old JSON stub caused promote.sh to refuse even
+        # when the gate was open — the test-reality gap that hid bug #1036.
+        health_stub_sh = os.path.join(self.tmp, "health_stub.sh")
+        with open(health_stub_sh, "w", newline="\n") as f:
             f.write(textwrap.dedent("""\
-                import sys, json
-                # Stub: always report RELEASE-READY as true
-                print(json.dumps({'verdict': 'true', 'detail': 'stub'}))
-                sys.exit(0)
+                #!/bin/bash
+                # Stub: emit real PASS: RELEASE-READY format (slice #1036 fix)
+                echo "PASS: RELEASE-READY - gate open: stub for test_promote_ack_880"
+                exit 0
             """))
+        os.chmod(health_stub_sh,
+                 stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        # Use POSIX path so bash can find the script on Windows Git Bash.
+        self.patched_env["PROMOTE_HEALTH_CMD"] = f"bash {_to_bash_path(health_stub_sh)}"
+        self.patched_env["MSYS_NO_PATHCONV"] = "1"
 
     def tearDown(self):
         import shutil

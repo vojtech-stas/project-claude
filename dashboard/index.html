@@ -2423,6 +2423,22 @@ async function loadHealth() {
     renderHygieneIntegrity(data.hygieneIntegrity);
     renderPromotionIntegrity(data.promotionIntegrity);
     renderCascade(data.cascadeFinder);
+    // Fast retry while cold: if the response is empty/refreshing (no checks
+    // in any group), schedule a short re-fetch instead of waiting 60s.
+    // Guard: only retry while the Health tab is visible; stop once data arrives.
+    var _isCold = data.refreshing ||
+      (!data.purposeGroups && !data.auditMeta && !data.substrateMeta &&
+       !data.verificationIntegrity && !data.registryIntegrity &&
+       !data.hygieneIntegrity && !data.promotionIntegrity);
+    if (!_isCold && data.substrateMeta && Array.isArray(data.substrateMeta.checks)) {
+      _isCold = data.substrateMeta.checks.length === 0;
+    }
+    if (_isCold) {
+      var _htab = document.getElementById('tab-health');
+      if (_htab && _htab.classList.contains('active') && document.visibilityState !== 'hidden') {
+        setTimeout(loadHealth, 4000);
+      }
+    }
   } catch(e) {
     if (healthAbortTimer) clearTimeout(healthAbortTimer);
     const isAbort = e && e.name === 'AbortError';
@@ -2479,7 +2495,7 @@ function renderPurposeGroups(purposeGroups, purposeGroupOrder) {
   const grid = document.getElementById('purpose-groups-grid');
   if (!grid) return;
   if (!purposeGroups || !purposeGroupOrder) {
-    grid.innerHTML = '<span style="color:var(--muted)">No purpose-group data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   let html = '';
@@ -2519,7 +2535,7 @@ function renderPurposeGroups(purposeGroups, purposeGroupOrder) {
     }
     html += `</table></div>`;
   }
-  grid.innerHTML = html || '<span style="color:var(--muted)">No data</span>';
+  grid.innerHTML = html || '<span style="color:var(--muted)">computing…</span>';
 }
 
 /**
@@ -2548,7 +2564,7 @@ function openSubSignal(subId) {
 function renderSubstrateGrid(substrateMeta) {
   const grid = document.getElementById('substrate-grid');
   if (!substrateMeta || !substrateMeta.checks) {
-    grid.innerHTML = '<span style="color:var(--muted)">No data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const checks = substrateMeta.checks;
@@ -2583,7 +2599,7 @@ function renderCriticHealth(substrateMeta) {
   const grid = document.getElementById('critic-health-grid');
   if (!grid) return;
   if (!substrateMeta || !substrateMeta.checks) {
-    grid.innerHTML = '<span style="color:var(--muted)">No data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const chk = substrateMeta.checks.find(c => c.id === 'CRITIC-HEALTH');
@@ -2632,7 +2648,7 @@ function renderVerificationIntegrity(vi) {
   const grid = document.getElementById('verification-integrity-grid');
   if (!grid) return;
   if (!vi || !vi.checks || !vi.checks.length) {
-    grid.innerHTML = '<span style="color:var(--muted)">No verification-integrity data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
@@ -2663,7 +2679,7 @@ function renderRegistryIntegrity(ri) {
   const grid = document.getElementById('registry-integrity-grid');
   if (!grid) return;
   if (!ri || !ri.checks || !ri.checks.length) {
-    grid.innerHTML = '<span style="color:var(--muted)">No registry-integrity data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
@@ -2695,7 +2711,7 @@ function renderHygieneIntegrity(hi) {
   const grid = document.getElementById('hygiene-integrity-grid');
   if (!grid) return;
   if (!hi || !hi.checks || !hi.checks.length) {
-    grid.innerHTML = '<span style="color:var(--muted)">No hygiene-integrity data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
@@ -2726,7 +2742,7 @@ function renderPromotionIntegrity(pi) {
   const grid = document.getElementById('promotion-integrity-grid');
   if (!grid) return;
   if (!pi || !pi.checks || !pi.checks.length) {
-    grid.innerHTML = '<span style="color:var(--muted)">No promotion-integrity data</span>';
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>';
     return;
   }
   const h = { v: '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' };
@@ -2803,7 +2819,7 @@ function renderPromotionPanel(d) {
  */
 function renderDocsGrid(auditMeta) {
   const grid = document.getElementById('docs-grid');
-  if (!auditMeta || !auditMeta.checks) { grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return; }
+  if (!auditMeta || !auditMeta.checks) { grid.innerHTML = '<span style="color:var(--muted)">computing…</span>'; return; }
   let html = '<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>';
   for (const c of auditMeta.checks) {
     _healthCheckStore[c.id] = c;
@@ -2826,7 +2842,7 @@ function renderDocsGrid(auditMeta) {
 function renderAsGrid(auditSubagents) {
   const grid = document.getElementById('as-grid');
   if (!auditSubagents || Object.keys(auditSubagents).length === 0) {
-    grid.innerHTML = '<span style="color:var(--muted)">No data</span>'; return;
+    grid.innerHTML = '<span style="color:var(--muted)">computing…</span>'; return;
   }
   let html = '';
   for (const [stem, info] of Object.entries(auditSubagents)) {
@@ -2853,7 +2869,7 @@ function renderAsGrid(auditSubagents) {
     }
     html += `</table></details>`;
   }
-  grid.innerHTML = html || '<span style="color:var(--muted)">No data</span>';
+  grid.innerHTML = html || '<span style="color:var(--muted)">computing…</span>';
 }
 
 /**

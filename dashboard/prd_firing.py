@@ -101,6 +101,73 @@ def _parse_comment_critic_event(comment: dict) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# PRD resolution cache — avoids repeated gh calls for the same issue number
+# ---------------------------------------------------------------------------
+_prd_resolve_cache: dict[int, int | None] = {}  # {issue_num: prd_num | None}
+_prd_resolve_lock = threading.Lock()
+
+
+def resolve_prd_for_issue(issue_num: int) -> int | None:
+    """Resolve an issue number to its parent PRD number, or None if not a slice.
+
+    Two-tier-aware: GitHub's `closingIssuesReferences` is empty for develop-base
+    PRs, so the trail's closes_issues list may contain slice numbers or arbitrary
+    issue numbers (captured, backlog, etc.).  This function:
+      1. Checks if issue_num has the 'slice' label (fast gh issue view call).
+      2. If yes, fetches its parent PRD via GraphQL subIssue parent link.
+      3. Returns the parent PRD issue number (int), or None if no parent or
+         the issue is not a slice.
+
+    Results are cached in-process (_prd_resolve_cache) to minimise gh round-trips.
+    Returns None on any gh error (treated as unresolvable — caller renders
+    the PR as non-PRD / maintenance).
+    """
+    with _prd_resolve_lock:
+        if issue_num in _prd_resolve_cache:
+            return _prd_resolve_cache[issue_num]
+
+    result: int | None = None
+    try:
+        rc, stdout = _gh_run([
+            "issue", "view", str(issue_num),
+            "--json", "labels,number",
+        ])
+        if rc != 0 or not stdout.strip():
+            with _prd_resolve_lock:
+                _prd_resolve_cache[issue_num] = None
+            return None
+
+        data = json.loads(stdout)
+        labels = [lbl.get("name", "") for lbl in (data.get("labels") or [])]
+
+        if "slice" not in labels:
+            # Not a slice (could be captured/backlog/prd directly) — no parent PRD
+            with _prd_resolve_lock:
+                _prd_resolve_cache[issue_num] = None
+            return None
+
+        # It's a slice — find its parent PRD via gh issue view parent field
+        # GitHub returns a `parent` object when the issue is a sub-issue.
+        rc2, out2 = _gh_run([
+            "issue", "view", str(issue_num),
+            "--json", "parent",
+        ])
+        if rc2 == 0 and out2.strip():
+            d2 = json.loads(out2)
+            parent = d2.get("parent") or {}
+            parent_num = parent.get("number") if isinstance(parent, dict) else None
+            if parent_num:
+                result = int(parent_num)
+
+    except Exception:
+        result = None
+
+    with _prd_resolve_lock:
+        _prd_resolve_cache[issue_num] = result
+    return result
+
+
 def parse_pr_firing_timeline(pr: dict) -> dict:
     """Derive the agent-firing event timeline for a single PR.
 
@@ -117,6 +184,8 @@ def parse_pr_firing_timeline(pr: dict) -> dict:
       pr_number     : int
       pr_title      : str
       closes_issues : list[int]   — from 'Closes #N' in body
+      prd_number    : int | None  — parent PRD if closes_issues contains a slice;
+                                    None for non-PRD closes (captured/backlog/etc.)
       events        : list[dict]  — ordered by ts; each has {agent, ts} plus
                                     optional {verdict, round} for critic events.
     """
@@ -129,6 +198,14 @@ def parse_pr_firing_timeline(pr: dict) -> dict:
 
     closes_issues = _parse_closes(body)
     events: list[dict] = []
+
+    # Resolve parent PRD: try each closed issue; use first one that maps to a PRD.
+    prd_number: int | None = None
+    for closed_num in closes_issues:
+        parent = resolve_prd_for_issue(closed_num)
+        if parent is not None:
+            prd_number = parent
+            break
 
     # Implementer event = PR opened (implementer fired when PR was created)
     if created:
@@ -157,6 +234,7 @@ def parse_pr_firing_timeline(pr: dict) -> dict:
         "pr_number":     pr_number,
         "pr_title":      pr_title,
         "closes_issues": closes_issues,
+        "prd_number":    prd_number,
         "events":        events,
     }
 

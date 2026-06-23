@@ -295,10 +295,13 @@ class TestResolveDispatchToPrd(unittest.TestCase):
 
         self.assertEqual(r1, r2)
         # Second call must not trigger gh (cache hit) — only first call hits gh.
-        # First call makes 3 gh calls: issue view + repo view (slug) +
-        # api sub-issue parent (fix #1022). Second call is a cache hit (0 calls).
-        self.assertEqual(call_count[0], 3,
-                         f"Expected 3 gh calls (issue view + repo view + api parent), "
+        # Fix #1027 (body-first reorder): first call now makes 1 gh call —
+        # issue view only; body "Walking-skeleton slice of PRD #956" resolves via
+        # _parent_prd_from_issue_body without the repo-view + api-parent calls.
+        # (Before #1027 fix: 3 calls — issue view + repo view + api sub-issue parent.)
+        # Second call is an in-process cache hit (0 additional calls).
+        self.assertEqual(call_count[0], 1,
+                         f"Expected 1 gh call (issue view only; body-first fix #1027), "
                          f"got {call_count[0]}")
 
 

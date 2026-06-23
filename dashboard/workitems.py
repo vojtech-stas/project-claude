@@ -27,7 +27,7 @@ _WORKITEMS_REPO_ROOT = Path(__file__).resolve().parent.parent
 # In-process cache: {"data": {...}, "ts": float}
 # NOTE: gh_cache provides its own per-command TTL cache; this outer cache
 # avoids redundant gh_fetch calls when fetch_workitems() is called multiple
-# times within the same request burst (e.g. /api/status + /api/workitems).
+# times within the same request burst (e.g. repeated /api/status calls).
 _workitems_cache: dict = {}
 _WORKITEMS_TTL = 30  # seconds — outer TTL (gh_cache inner TTL is 15s for status)
 

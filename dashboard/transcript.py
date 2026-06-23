@@ -507,9 +507,11 @@ _ISSUE_RE   = _re.compile(r"#(\d+)")
 #   "slice 2 of PRD #737."
 #   "Parent: PRD #123"
 #   "## Parent\n\nPRD #713 — desc"            (older slice template)
+#   "Part of PRD #993 ..."                    (real slice template — fix #1022)
 _PARENT_PRD_BODY_RE = _re.compile(
     r"(?:"
     r"(?:(?:slice\s+\d+\s+of|walking-skeleton\s+slice\s+of)\s+PRD)"
+    r"|(?:part\s+of\s+PRD)"
     r"|(?:parent\s*:?\s*PRD)"
     r"|(?:##\s*[Pp]arent\s*\n+\s*PRD)"
     r")\s+#(\d+)",
@@ -653,6 +655,68 @@ def _parent_prd_from_issue_body(body: str) -> int | None:
     return None
 
 
+# Module-level cached repo slug (owner/name) for sub-issue parent API calls.
+_transcript_repo_slug: str | None = None
+
+
+def _get_repo_slug_for_transcript() -> str | None:
+    """Return the GitHub repo slug (owner/name) for sub-issue API calls.
+
+    Derived via: gh repo view --json nameWithOwner.
+    Result is module-level cached after the first successful call.
+    Returns None when gh is unavailable (callers must handle gracefully).
+    """
+    global _transcript_repo_slug
+    if _transcript_repo_slug is not None:
+        return _transcript_repo_slug
+    rc, stdout = _gh_run_transcript(
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"],
+        timeout=10,
+    )
+    if rc == 0:
+        slug = stdout.strip()
+        if "/" in slug:
+            _transcript_repo_slug = slug
+            return _transcript_repo_slug
+    return None
+
+
+def _fetch_sub_issue_parent(n: int) -> "int | None | str":
+    """Query the native GitHub sub-issue parent endpoint for issue N.
+
+    Uses: gh api repos/{owner}/{repo}/issues/{n}/parent --jq .number
+
+    Returns:
+      int           — parent issue number (authoritative sub-issue link exists)
+      None          — issue has no sub-issue parent (404 or 'null' response)
+      _GH_UNAVAILABLE — gh transport failure or repo slug unavailable
+
+    Fix for issue #1022: this is the authoritative resolution path — queried
+    BEFORE the body-parse fallback in _resolve_slice_to_prd.
+    """
+    slug = _get_repo_slug_for_transcript()
+    if slug is None:
+        return _GH_UNAVAILABLE
+    rc, stdout = _gh_run_transcript(
+        ["api", f"repos/{slug}/issues/{n}/parent", "--jq", ".number"],
+        timeout=15,
+    )
+    if rc != 0:
+        # Non-zero exit: either transport failure or 404 (no parent).
+        # gh api returns rc=1 on HTTP 404 — treat as "no parent" (None).
+        # We can't distinguish transport failure from 404 here, so we treat
+        # both as None (fall through to body parse).  A true transport failure
+        # will also fail the subsequent issue-view call and return _GH_UNAVAILABLE.
+        return None
+    text = stdout.strip()
+    if not text or text == "null":
+        return None
+    try:
+        return int(text)
+    except (ValueError, TypeError):
+        return None
+
+
 def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     """Resolve a slice issue number to its parent PRD.
 
@@ -668,12 +732,18 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     treat the second case as a phantom PRD node.  Now returns _IS_PRD for the
     'is a PRD' case so the caller can distinguish them.
 
+    Fix (issue #1022): added two resolution improvements:
+      - After prd-label check, query native sub-issue parent endpoint FIRST
+        (authoritative GitHub parent link); fall through to body parse on None.
+      - _PARENT_PRD_BODY_RE now also matches "Part of PRD #N" wording.
+
     Strategy:
       1. Fetch issue N with --json number,labels,body.
       2. If labeled 'prd': return _IS_PRD (is a genuine PRD itself).
-      3. Parse body for "slice of PRD #N" canonical pattern.
-      4. If found: return that PRD number.
-      5. Otherwise: return None (not a PRD, no parent found).
+      3. Query native sub-issue parent endpoint; if found, return parent int.
+      4. Parse body for parent PRD patterns (incl. 'Part of PRD #N').
+      5. If found: return that PRD number.
+      6. Otherwise: return None (not a PRD, no parent found).
     """
     rc, stdout = _gh_run_transcript([
         "issue", "view", str(slice_n),
@@ -695,7 +765,15 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
         # can return N (not None) without conflating with 'no parent found'.
         return _IS_PRD
 
-    # Try to parse parent PRD from body
+    # Fix #1022 — query the authoritative native sub-issue parent link FIRST.
+    # A real GitHub sub-issue link is always correct; body parsing is a fallback.
+    sub_parent = _fetch_sub_issue_parent(slice_n)
+    if isinstance(sub_parent, int):
+        return sub_parent
+    # sub_parent is None (no link) or _GH_UNAVAILABLE (transport failure) —
+    # fall through to body parse in both cases.
+
+    # Try to parse parent PRD from body (handles 'Part of PRD #N' + legacy forms).
     body = data.get("body", "")
     parent = _parent_prd_from_issue_body(body)
     if parent is not None:

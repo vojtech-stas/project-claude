@@ -20,11 +20,23 @@ Injection mechanism:
   _PROMOTE_SH_SKIP_PUSH — if set to "1", promote.sh skips the actual git push
       (stub for push isolation in tests).
 
+Isolation note (fix for #1038):
+  _run_promote now uses a temporary git repo rather than the real REPO_ROOT as
+  cwd.  Previously, running promote.sh with cwd=REPO_ROOT caused promote.sh to
+  resolve SENTINEL=$REPO_ROOT/.claude/PROMOTE_OK (the real repo sentinel); the
+  "proceed" path deletes that sentinel, wiping any operator-created ack.
+  With a temp repo, promote.sh's git-common-dir points at the temp .git →
+  SENTINEL is inside the temp dir → real repo is never touched.
+  A sentinel is created in the temp repo so gate-parse tests (which exercise
+  PASS/WARN parsing logic, not sentinel logic) can reach the gate check.
+
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_promote_gate_parse_1036.py -v
 """
 
 import os
+import platform
+import re
 import stat
 import subprocess
 import sys
@@ -43,7 +55,6 @@ def _to_bash_path(win_path: str) -> str:
     On POSIX systems this is a no-op.  On Windows, replaces backslashes and
     drive letter so bash can invoke the script.
     """
-    import platform
     if platform.system() != "Windows":
         return win_path
     # Try cygpath first (available in Git Bash / MSYS2)
@@ -57,10 +68,64 @@ def _to_bash_path(win_path: str) -> str:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     # Fallback: manual conversion C:\foo\bar → /c/foo/bar
-    import re
     p = win_path.replace("\\", "/")
     p = re.sub(r"^([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", p)
     return p
+
+
+def _git(*args, cwd=None, check=True):
+    """Run git with args."""
+    return subprocess.run(
+        ["git"] + list(args),
+        cwd=cwd,
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _make_isolated_repo(parent_tmp: str) -> str:
+    """Create a minimal self-contained git repo in parent_tmp.
+
+    Returns the path to the working repo.  This repo has a local bare origin
+    and both main + develop branches so promote.sh can resolve them.
+
+    The .git of this repo is NOT a worktree link — git-common-dir == .git →
+    LOGROOT == this repo.  SENTINEL = this_repo/.claude/PROMOTE_OK.
+    No real repo files are touched.
+    """
+    bare = os.path.join(parent_tmp, "bare.git")
+    os.makedirs(bare)
+    _git("init", "--bare", "-b", "main", bare)
+
+    work = os.path.join(parent_tmp, "work")
+    _git("clone", bare, work)
+    _git("-C", work, "config", "user.email", "test@example.com")
+    _git("-C", work, "config", "user.name", "Test")
+
+    current = subprocess.run(
+        ["git", "-C", work, "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if current != "main":
+        _git("-C", work, "checkout", "-b", "main")
+
+    readme = os.path.join(work, "README.md")
+    with open(readme, "w") as f:
+        f.write("hello")
+    _git("-C", work, "add", "README.md")
+    _git("-C", work, "commit", "-m", "init")
+    _git("-C", work, "push", "-u", "origin", "HEAD:main")
+
+    _git("-C", work, "checkout", "-b", "develop")
+    changes = os.path.join(work, "CHANGES.md")
+    with open(changes, "w") as f:
+        f.write("dev change")
+    _git("-C", work, "add", "CHANGES.md")
+    _git("-C", work, "commit", "-m", "dev commit")
+    _git("-C", work, "push", "-u", "origin", "develop")
+
+    return work
 
 
 def _make_stub_health(tmpdir: str, output_line: str) -> str:
@@ -85,14 +150,28 @@ def _make_stub_health(tmpdir: str, output_line: str) -> str:
 def _run_promote(stub_output: str, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     """Run promote.sh with a stubbed health command and push skipped.
 
+    Uses a temporary isolated git repo as cwd so promote.sh never resolves
+    its SENTINEL or EVENTS_LOG to the real repo (fix for #1038 isolation bug).
+    A sentinel is pre-created in the temp repo so tests that exercise gate-
+    parse logic (not sentinel logic) can reach the gate check.
+
     Returns the CompletedProcess with stdout+stderr captured.
-    Promote.sh must support PROMOTE_HEALTH_CMD (injection) and
-    _PROMOTE_SH_SKIP_PUSH=1 (skip actual push).
     """
     if not PROMOTE_SH.exists():
         raise FileNotFoundError(f"promote.sh not found at {PROMOTE_SH}")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="promote_1036_") as tmpdir:
+        # Build isolated repo so promote.sh's git-common-dir stays in tmpdir
+        work = _make_isolated_repo(tmpdir)
+
+        # Create sentinel in the temp repo's canonical root
+        # (LOGROOT = work, since work/.git is not a worktree link)
+        sentinel_dir = os.path.join(work, ".claude")
+        os.makedirs(sentinel_dir, exist_ok=True)
+        sentinel = os.path.join(sentinel_dir, "PROMOTE_OK")
+        with open(sentinel, "w") as f:
+            f.write("")
+
         stub_posix_path = _make_stub_health(tmpdir, stub_output)
         env = os.environ.copy()
         # Point promote.sh at our stub instead of real health.py.
@@ -108,7 +187,7 @@ def _run_promote(stub_output: str, extra_env: dict | None = None) -> subprocess.
             capture_output=True,
             text=True,
             env=env,
-            cwd=str(REPO_ROOT),
+            cwd=work,
             timeout=30,
         )
 

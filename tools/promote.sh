@@ -23,10 +23,40 @@
 
 set -euo pipefail
 
+# REPO_ROOT: the worktree path (used only for locating dashboard/health.py,
+# which is a tracked code file that lives in the worktree).
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-EVENTS_LOG="$REPO_ROOT/.claude/logs/workflow-events.jsonl"
 
-# --- 0. RELEASE-READY pre-flight guard (slice #838 / ADR-0070 D2) ---
+# LOGROOT: the canonical root (git-common-dir parent).  When promote.sh runs
+# from a worktree, REPO_ROOT is the worktree path but LOGROOT is the shared
+# root.  The sentinel and events-log are untracked/gitignored files that must
+# live at the CANONICAL root so they survive across worktrees.
+# Fix for #1038: previously both used REPO_ROOT, so the sentinel placed at the
+# canonical root was invisible when running from a worktree.
+LOGROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+
+SENTINEL="$LOGROOT/.claude/PROMOTE_OK"
+EVENTS_LOG="$LOGROOT/.claude/logs/workflow-events.jsonl"
+
+# --- 0a. Human-ack sentinel gate (slice #881, fixes #880 bypass) ---
+# Check the sentinel FIRST — before any gate check that could run pytest and
+# wipe the sentinel.  Fix for #1038: old order ran RELEASE-READY gate first;
+# the gate runs the full pytest suite, which includes tests that call
+# promote.sh as a subprocess (in REPO_ROOT cwd); those sub-invocations delete
+# .claude/PROMOTE_OK on the "proceed" path → outer promote.sh always refused.
+#
+# Sentinel is a human-created file at the canonical LOGROOT/.claude/PROMOTE_OK.
+# Subagent worktrees check out only tracked files — this file is gitignored,
+# so it can never exist in a subagent context, structurally blocking bypasses.
+if [ ! -f "$SENTINEL" ]; then
+  echo "PROMOTION REFUSED: human ack required — create .claude/PROMOTE_OK to authorize" >&2
+  echo "INFO: This sentinel is gitignored; it must be created manually by a human." >&2
+  echo "INFO: It is deleted automatically after a successful promotion (one-shot)." >&2
+  exit 1
+fi
+echo "INFO: human-ack sentinel found — proceeding with promotion"
+
+# --- 0b. RELEASE-READY pre-flight guard (slice #838 / ADR-0070 D2) ---
 # Refuse to promote unless health.py --check RELEASE-READY emits a line
 # matching `^PASS: RELEASE-READY`.  The CLI exits 0 for both PASS and WARN
 # (ADR-0064 D3 — only FAIL exits non-zero), so we MUST grep the output text,
@@ -48,19 +78,6 @@ else
   echo "INFO: Resolve all failing conditions before promoting develop → main." >&2
   exit 1
 fi
-
-# --- 0b. Human-ack sentinel gate (slice #881, fixes #880 bypass) ---
-# Require a human-created sentinel file .claude/PROMOTE_OK in the repo root.
-# Subagent worktrees check out only tracked files — this file is gitignored,
-# so it can never exist in a subagent context, structurally blocking bypasses.
-SENTINEL="$REPO_ROOT/.claude/PROMOTE_OK"
-if [ ! -f "$SENTINEL" ]; then
-  echo "PROMOTION REFUSED: human ack required — create .claude/PROMOTE_OK to authorize" >&2
-  echo "INFO: This sentinel is gitignored; it must be created manually by a human." >&2
-  echo "INFO: It is deleted automatically after a successful promotion (one-shot)." >&2
-  exit 1
-fi
-echo "INFO: human-ack sentinel found — proceeding with promotion"
 
 # --- 1. Resolve develop HEAD sha ---
 DEVELOP_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
@@ -96,6 +113,8 @@ else
 fi
 
 # --- 3b. Remove human-ack sentinel (one-shot: fresh ack required per promotion) ---
+# Uses rm -f: defensive even though sentinel is confirmed present above (e.g.
+# if a concurrent process removed it between check and here, rm -f is safe).
 rm -f "$SENTINEL"
 echo "INFO: human-ack sentinel removed — next promotion requires a fresh .claude/PROMOTE_OK"
 

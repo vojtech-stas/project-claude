@@ -8,7 +8,6 @@ Serves: GET /               -> dashboard/index.html
         GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
-        GET /api/workitems        -> JSON {prd:[...], slices:[...], prs:[...], captures:[...], backlog:[...]} via gh CLI (30s cache); data available via /api/status open_work
         GET /api/runs[?n=N]       -> JSON recent session runs metadata from workflow-events.jsonl (slice #864)
         GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
         GET /api/live-poll?cursor=N -> JSON {cursor, events[], reset} — byte-cursor incremental read (Lane B)
@@ -22,7 +21,6 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runtime-reading      -> JSON current-session runtime reading from transcript (slice #928)
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
-        (GET /api/dora removed — slice #854, fleet-economics machinery retired)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)

@@ -733,17 +733,26 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
     'is a PRD' case so the caller can distinguish them.
 
     Fix (issue #1022): added two resolution improvements:
-      - After prd-label check, query native sub-issue parent endpoint FIRST
-        (authoritative GitHub parent link); fall through to body parse on None.
       - _PARENT_PRD_BODY_RE now also matches "Part of PRD #N" wording.
+      - After prd-label check, query native sub-issue parent endpoint as
+        authoritative fallback (fix #1027: body-parse is tried FIRST since the
+        body is already fetched, saving an extra gh round-trip in the common case).
+
+    Fix (issue #1027): body-first reorder — try _parent_prd_from_issue_body
+    BEFORE _fetch_sub_issue_parent.  The body is already in hand from the
+    gh issue view call; parsing it is free.  Only fall back to the sub-issue
+    /parent endpoint when the body yields no parent reference.  This halves
+    gh calls for the common case (slice body says "Part of PRD #N").
 
     Strategy:
       1. Fetch issue N with --json number,labels,body.
       2. If labeled 'prd': return _IS_PRD (is a genuine PRD itself).
-      3. Query native sub-issue parent endpoint; if found, return parent int.
-      4. Parse body for parent PRD patterns (incl. 'Part of PRD #N').
-      5. If found: return that PRD number.
-      6. Otherwise: return None (not a PRD, no parent found).
+      3. Parse body for parent PRD patterns (incl. 'Part of PRD #N') — FREE,
+         body already fetched in step 1.
+      4. If body yields a parent: return that PRD number (no /parent call).
+      5. Query native sub-issue parent endpoint (authoritative fallback).
+      6. If found: return parent int.
+      7. Otherwise: return None (not a PRD, no parent found).
     """
     rc, stdout = _gh_run_transcript([
         "issue", "view", str(slice_n),
@@ -765,19 +774,24 @@ def _resolve_slice_to_prd(slice_n: int) -> "int | str | None":
         # can return N (not None) without conflating with 'no parent found'.
         return _IS_PRD
 
-    # Fix #1022 — query the authoritative native sub-issue parent link FIRST.
-    # A real GitHub sub-issue link is always correct; body parsing is a fallback.
-    sub_parent = _fetch_sub_issue_parent(slice_n)
-    if isinstance(sub_parent, int):
-        return sub_parent
-    # sub_parent is None (no link) or _GH_UNAVAILABLE (transport failure) —
-    # fall through to body parse in both cases.
-
-    # Try to parse parent PRD from body (handles 'Part of PRD #N' + legacy forms).
+    # Fix #1027 (body-first reorder): parse the body FIRST — it's already
+    # fetched from the gh issue view call above, so this is free.  For the
+    # common case where a slice body says "Part of PRD #N", this avoids the
+    # extra round-trip to the sub-issue /parent endpoint entirely.
     body = data.get("body", "")
     parent = _parent_prd_from_issue_body(body)
     if parent is not None:
         return parent
+
+    # Body parse yielded no parent → fall through to the authoritative native
+    # sub-issue parent endpoint (handles slices with a GitHub sub-issue link
+    # but no "Part of PRD #N" text in body — rare but real).
+    # Fix #1022 — this endpoint is now the FALLBACK (was previously first).
+    sub_parent = _fetch_sub_issue_parent(slice_n)
+    if isinstance(sub_parent, int):
+        return sub_parent
+    # sub_parent is None (no link) or _GH_UNAVAILABLE (transport failure) —
+    # fall through to the final None return.
 
     # Not a prd-labeled issue AND no parent PRD pattern found in body.
     # Return None to signal 'non-PRD, unresolvable' — caller must NOT treat

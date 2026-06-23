@@ -190,6 +190,7 @@ class TestResolveDispatchToPrd(unittest.TestCase):
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
         tr._disk_cache_data = None  # force disk-cache reload (slice #959 perf fix)
+        tr._transcript_repo_slug = None  # reset repo-slug cache (fix #1022)
         # Use an isolated temp disk-cache so pre-existing entries don't affect
         # call-count or value assertions
         self._tmp = tempfile.mkdtemp()
@@ -206,10 +207,35 @@ class TestResolveDispatchToPrd(unittest.TestCase):
         tr._prd_cache.clear()
         tr._prd_cache_ts = 0.0
         tr._disk_cache_data = None
+        tr._transcript_repo_slug = None  # reset repo-slug cache (fix #1022)
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def _fake_gh_run(self, args, timeout=15):
-        """Fake _gh_run_transcript that returns canned responses for known numbers."""
+        """Fake _gh_run_transcript that returns canned responses for known numbers.
+
+        Updated for fix #1022: also handles 'repo view' (slug derivation) and
+        'api repos/.../issues/{n}/parent' (sub-issue parent) calls.
+        """
+        # Handle: gh repo view --json nameWithOwner -q .nameWithOwner
+        if "repo" in args and "view" in args:
+            return 0, "vojtech-stas/project-claude"
+
+        # Handle: gh api repos/{slug}/issues/{n}/parent --jq .number
+        if "api" in args:
+            # Find the path arg containing /issues/.../parent
+            for a in args:
+                if "/issues/" in a and "/parent" in a:
+                    parts = a.split("/")
+                    try:
+                        idx = parts.index("issues")
+                        n = int(parts[idx + 1])
+                        # All test issues have no native sub-issue parent link;
+                        # body parsing is the resolution path for these fixtures.
+                        return 0, "null"
+                    except (ValueError, IndexError):
+                        pass
+            return 1, ""
+
         if "issue" in args and "view" in args:
             # Extract number from args
             idx = args.index("view") + 1
@@ -256,7 +282,7 @@ class TestResolveDispatchToPrd(unittest.TestCase):
         self.assertEqual(result, 713, f"Expected 713, got {result}")
 
     def test_result_is_cached(self):
-        """Second call with same number uses cache (gh is only called once)."""
+        """Second call with same number uses cache (gh is not called again)."""
         call_count = [0]
 
         def counting_gh(args, timeout=15):
@@ -268,10 +294,12 @@ class TestResolveDispatchToPrd(unittest.TestCase):
             r2 = self._tr.resolve_dispatch_to_prd(958)
 
         self.assertEqual(r1, r2)
-        # Second call must not trigger gh (cache hit)
-        # First call fetches issue #958 only (body has PRD #956 directly)
-        self.assertEqual(call_count[0], 1,
-                         f"Expected 1 gh call, got {call_count[0]}")
+        # Second call must not trigger gh (cache hit) — only first call hits gh.
+        # First call makes 3 gh calls: issue view + repo view (slug) +
+        # api sub-issue parent (fix #1022). Second call is a cache hit (0 calls).
+        self.assertEqual(call_count[0], 3,
+                         f"Expected 3 gh calls (issue view + repo view + api parent), "
+                         f"got {call_count[0]}")
 
 
 # ---------------------------------------------------------------------------

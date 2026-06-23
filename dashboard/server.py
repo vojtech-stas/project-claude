@@ -543,6 +543,81 @@ def _rollup_background(last_n: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Comparison cache — non-blocking stale-while-revalidate (fix #1020 facet 2).
+# /api/comparison is gh-heavy (collect_trail + compare); without caching it
+# blocks the HTTP thread for >30s on cold start, freezing the browser renderer.
+# Pattern mirrors prd_firing.serve_prd_firing() and _rollup_background().
+# Keyed by prd_number (int); TTL 90s (open PRDs change; closed ones are stable).
+# ---------------------------------------------------------------------------
+_comparison_cache: dict = {}     # {prd_n: {"data": dict, "ts": float}}
+_comparison_computing: dict = {} # {prd_n: True} — in-flight marker
+_comparison_lock = threading.Lock()
+_COMPARISON_CACHE_TTL = 90  # seconds
+
+
+def _comparison_background(prd_n: int) -> None:
+    """Compute comparison in a background thread; cache result."""
+    try:
+        trail = get_trail(prd_n, force_refresh=True)
+        spec = get_spec_for_compare()
+        result = compare(spec, trail)
+        with _comparison_lock:
+            _comparison_cache[prd_n] = {"data": result, "ts": time.time()}
+    except Exception as exc:
+        with _comparison_lock:
+            _comparison_cache[prd_n] = {
+                "data": {"prd_number": prd_n, "run_pass": False,
+                         "error": str(exc), "edges": {}, "violations": [],
+                         "unexpected": []},
+                "ts": time.time(),
+            }
+    finally:
+        with _comparison_lock:
+            _comparison_computing.pop(prd_n, None)
+
+
+def serve_comparison(prd_n: int) -> dict:
+    """Non-blocking serve for /api/comparison?prd=N (fix #1020).
+
+    ALWAYS returns immediately (target < 3 s, typically < 10 ms):
+      - Warm cache (not expired): return cached report.
+      - Stale cache: return last-known data with refreshing:True, kick refresh.
+      - Cold (no prior result): return {"status":"computing","prd_number":N},
+        kick background computation.
+
+    Mirrors prd_firing.serve_prd_firing() pattern.
+    """
+    with _comparison_lock:
+        entry = _comparison_cache.get(prd_n)
+        now = time.time()
+
+        if entry is not None:
+            data = entry["data"]
+            expired = (now - entry.get("ts", 0)) >= _COMPARISON_CACHE_TTL
+            if not expired:
+                return data
+            # Stale — serve last-known with refreshing marker
+            payload = dict(data)
+            payload["refreshing"] = True
+            if not _comparison_computing.get(prd_n):
+                _comparison_computing[prd_n] = True
+                threading.Thread(
+                    target=_comparison_background, args=(prd_n,), daemon=True
+                ).start()
+            return payload
+
+        # Cold start — kick background if not already running
+        if _comparison_computing.get(prd_n):
+            return {"status": "computing", "prd_number": prd_n}
+        _comparison_computing[prd_n] = True
+
+    threading.Thread(
+        target=_comparison_background, args=(prd_n,), daemon=True
+    ).start()
+    return {"status": "computing", "prd_number": prd_n}
+
+
+# ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
@@ -710,17 +785,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/comparison":
             # GET /api/comparison?prd=N[&format=download] — comparison report (ADR-0053 D3).
-            # ?format=download serves identical JSON with Content-Disposition attachment.
+            # Non-blocking (fix #1020): serve_comparison() returns immediately via
+            # stale-while-revalidate; background thread runs compare() + get_trail().
+            # ?format=download bypasses cache (serves fresh JSON with Content-Disposition).
             prd_raw = query.get("prd", [""])[0]
             if not prd_raw or not prd_raw.isdigit():
                 self._send_error(400, "prd parameter required (integer)")
                 return
             fmt = query.get("format", [""])[0]
-            try:
-                trail = get_trail(int(prd_raw))
-                spec = get_spec_for_compare()
-                report = compare(spec, trail)
-                if fmt == "download":
+            prd_n = int(prd_raw)
+            if fmt == "download":
+                # Download mode: bypass cache, compute inline, serve attachment
+                try:
+                    trail = get_trail(prd_n)
+                    spec = get_spec_for_compare()
+                    report = compare(spec, trail)
                     import json as _json
                     body = _json.dumps(report, indent=2).encode("utf-8")
                     self.send_response(200)
@@ -732,10 +811,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                     self.end_headers()
                     self.wfile.write(body)
-                else:
-                    self._send_json(report)
-            except Exception as e:
-                self._send_error(500, str(e))
+                except Exception as e:
+                    self._send_error(500, str(e))
+            else:
+                # Non-blocking path: serve_comparison returns in < 3 s always
+                try:
+                    self._send_json(serve_comparison(prd_n))
+                except Exception as e:
+                    self._send_error(500, str(e))
 
         elif path == "/api/trail-runs":
             # GET /api/trail-runs?last=N — list of last N closed PRDs for run picker.

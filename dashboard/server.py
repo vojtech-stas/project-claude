@@ -342,7 +342,84 @@ def _build_status() -> dict:
 
 # ---------------------------------------------------------------------------
 # /api/promotion — develop/main topology + promotion history (slice #843)
+#
+# Fix #1005: check_release_ready() (full ci-checks.sh, up to 300s) must NOT
+# run on the HTTP request path.  held_reason is now served from a short-TTL
+# background-thread cache.  On a cold/missing cache the endpoint returns
+# held_reason=None with held_reason_source="computing" so the promotion panel
+# shows "computing" while the first background refresh runs (~95s).
 # ---------------------------------------------------------------------------
+
+_PROMOTION_HELD_REASON_TTL = 120   # seconds between background refreshes
+
+# Cache structure: {"held_reason": str|None, "ts": float, "source": str}
+# source: "live" = freshly computed, "computing" = no result yet
+_promotion_held_reason_cache: dict = {}
+_promotion_held_reason_lock = threading.Lock()
+_promotion_bg_running = False   # True while a refresh thread is in flight
+
+
+def _refresh_promotion_held_reason() -> None:
+    """Background daemon: compute held_reason from check_release_ready() +
+    check_meta_tripwire() and store in the module-level cache.  Never raises.
+    """
+    global _promotion_bg_running
+    try:
+        from health import (  # noqa: PLC0415
+            check_release_ready as _rr,
+            check_meta_tripwire as _mt,
+        )
+        held_reason = ""
+        rr = _rr()
+        if rr.get("verdict") == "false":
+            held_reason = rr.get("detail", "RELEASE-READY gate held")
+        elif rr.get("result") == "WARN" and rr.get("verdict") != "true":
+            held_reason = rr.get("detail", "")
+        mt = _mt()
+        if mt.get("result") == "FAIL":
+            mt_detail = mt.get("detail", "")
+            held_reason = (held_reason + " | " + mt_detail).strip(" | ") if held_reason else mt_detail
+        with _promotion_held_reason_lock:
+            _promotion_held_reason_cache["held_reason"] = held_reason or None
+            _promotion_held_reason_cache["ts"] = time.time()
+            _promotion_held_reason_cache["source"] = "live"
+    except Exception:
+        # On error keep any existing cached value; don't overwrite with garbage.
+        pass
+    finally:
+        with _promotion_held_reason_lock:
+            _promotion_bg_running = False
+
+
+def _get_cached_held_reason() -> tuple:
+    """Return (held_reason, source) from cache.
+
+    Spawns a background refresh if the cache is cold or expired.
+    Returns ("computing", "computing") when no data is available yet.
+    """
+    global _promotion_bg_running
+    now = time.time()
+    with _promotion_held_reason_lock:
+        entry = _promotion_held_reason_cache.copy()
+        bg_running = _promotion_bg_running
+
+    cache_age = now - entry.get("ts", 0) if entry.get("ts") else float("inf")
+    cache_fresh = cache_age < _PROMOTION_HELD_REASON_TTL
+
+    if not cache_fresh and not bg_running:
+        # Spawn a background refresh (daemon so it doesn't block server exit)
+        with _promotion_held_reason_lock:
+            if not _promotion_bg_running:   # double-checked under lock
+                _promotion_bg_running = True
+        t = threading.Thread(
+            target=_refresh_promotion_held_reason, daemon=True
+        )
+        t.start()
+
+    if entry.get("source") == "live":
+        return entry.get("held_reason"), "live" if cache_fresh else "stale"
+    return None, "computing"
+
 
 def _build_promotion_state() -> dict:
     """Build the /api/promotion payload: real develop/main state + last N promotions.
@@ -356,18 +433,20 @@ def _build_promotion_state() -> dict:
       last_ts                — ISO timestamp of last promotion, None if no promotions
       lag_hours              — hours since last promotion (None if no promotions)
       pending_since          — last_ts of last promotion if develop is ahead, else None
-      held_reason            — non-empty if RELEASE-READY or META-TRIPWIRE holds promotion
+      held_reason            — non-empty if RELEASE-READY or META-TRIPWIRE holds promotion;
+                               None when computing or gate is clear
+      held_reason_source     — "live"|"stale"|"computing" — freshness of held_reason
 
-    Honest nulls throughout; no fixture data.
+    Honest nulls throughout; no fixture data.  held_reason is served from a
+    background-thread TTL cache (fix #1005 — check_release_ready() is NOT
+    called inline; see _get_cached_held_reason / _refresh_promotion_held_reason).
     """
     from health import (  # noqa: PLC0415
         check_branch_topology as _bt,
-        check_release_ready as _rr,
-        check_meta_tripwire as _mt,
         _read_promotion_events,
     )
 
-    # --- branch topology ---
+    # --- branch topology (cheap git calls, stays synchronous) ---
     bt = _bt()
     develop_sha = bt.get("develop_sha", None)
     main_sha = bt.get("main_sha", None)
@@ -375,7 +454,7 @@ def _build_promotion_state() -> dict:
     behind = bt.get("behind", None)
     main_is_ancestor = bt.get("main_is_ancestor", None)
 
-    # --- promotion events ---
+    # --- promotion events (local file read, stays synchronous) ---
     promotions = _read_promotion_events()
     last_5 = promotions[-5:] if promotions else []
     last_promo = promotions[-1] if promotions else None
@@ -396,17 +475,10 @@ def _build_promotion_state() -> dict:
     # Proxy: last promotion timestamp (develop became ahead after that)
     pending_since = last_ts if (ahead is not None and ahead > 0) else None
 
-    # --- held_reason from RELEASE-READY + META-TRIPWIRE ---
-    held_reason = ""
-    rr = _rr()
-    if rr.get("verdict") == "false":
-        held_reason = rr.get("detail", "RELEASE-READY gate held")
-    elif rr.get("result") == "WARN" and rr.get("verdict") != "true":
-        held_reason = rr.get("detail", "")
-    mt = _mt()
-    if mt.get("result") == "FAIL":
-        mt_detail = mt.get("detail", "")
-        held_reason = (held_reason + " | " + mt_detail).strip(" | ") if held_reason else mt_detail
+    # --- held_reason from background cache (fix #1005) ---
+    # check_release_ready() is NOT called here — it runs in a daemon thread
+    # and stores its result in _promotion_held_reason_cache.
+    held_reason, held_reason_source = _get_cached_held_reason()
 
     return {
         "develop_sha": develop_sha,
@@ -419,7 +491,8 @@ def _build_promotion_state() -> dict:
         "last_ts": last_ts,
         "lag_hours": lag_hours,
         "pending_since": pending_since,
-        "held_reason": held_reason or None,
+        "held_reason": held_reason,
+        "held_reason_source": held_reason_source,
         "branch_topology_result": bt.get("result", "WARN"),
         "branch_topology_detail": bt.get("detail", ""),
     }

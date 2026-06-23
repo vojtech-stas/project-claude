@@ -809,10 +809,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             })
 
         elif path == "/api/prd-firing":
-            # GET /api/prd-firing[?limit=N] — per-PR agent-firing timelines (slice #871).
-            # Derives implementer -> critic(VERDICT/ROUND) -> merge event sequences
-            # for recent PRs from gh CLI (hook-independent). TTL-cached (60s).
-            # Honest-empty when gh unavailable; real gh data only.
+            # GET /api/prd-firing[?limit=N] — per-PR agent-firing timelines.
+            # Non-blocking: serve_prd_firing() returns immediately (issue #962).
             limit_raw = (query.get("limit") or ["30"])[0]
             try:
                 limit = int(limit_raw) if str(limit_raw).isdigit() else 30
@@ -820,7 +818,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 limit = 30
             limit = max(1, min(limit, 100))
             try:
-                self._send_json(_prd_firing_mod.fetch_prd_firing(limit))
+                self._send_json(_prd_firing_mod.serve_prd_firing(limit))
             except Exception as exc:
                 self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
 

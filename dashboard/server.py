@@ -61,6 +61,7 @@ from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
 import live  # noqa: E402
 from live import serve_live_poll, _live_progress_background  # noqa: E402
 import transcript as _transcript_mod  # noqa: E402
+from telemetry_root import _telemetry_log_root  # noqa: E402
 
 # Sibling module imports (facade re-exports)
 from discovery import (  # noqa: E402
@@ -172,7 +173,7 @@ def _build_status() -> dict:
     stale = bool(_SERVER_SHA and current_sha and current_sha != _SERVER_SHA)
 
     # --- hooks_live: newest beacon in hook-fires.jsonl ---
-    fires_log = REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    fires_log = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
     hooks_live = {"alive": False, "newest_beacon_ts": None, "age_minutes": None}
     if fires_log.exists():
         beacon_ts: float = 0.0
@@ -210,7 +211,7 @@ def _build_status() -> dict:
             }
 
     # --- last_event: newest entry in workflow-events.jsonl ---
-    events_log = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     last_event = {"ts": None, "age_minutes": None}
     if events_log.exists():
         newest_event_ts: float = 0.0
@@ -667,7 +668,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_runs(self, query: dict) -> dict:
         """Delegate to events.serve_runs with the canonical log path."""
-        log_path = REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+        log_path = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
         return _serve_runs_fn(query, log_path)
 
     def do_GET(self):

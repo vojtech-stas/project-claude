@@ -109,6 +109,52 @@ def _health_gh_fetch(
 # ---------------------------------------------------------------------------
 _HEALTH_REPO_ROOT = Path(__file__).resolve().parent.parent
 
+
+def _telemetry_log_root() -> Path:
+    """Return the canonical repo root for shared telemetry logs (slice #1021).
+
+    Resolves ``git rev-parse --git-common-dir`` using _HEALTH_REPO_ROOT as the
+    working directory.  Using _HEALTH_REPO_ROOT (rather than a cached absolute
+    path) ensures test suites that patch _HEALTH_REPO_ROOT to a temp dir will
+    receive the expected (patched) fallback when git is unavailable in that dir.
+
+    Algorithm:
+      1. Run ``git rev-parse --git-common-dir`` with cwd=_HEALTH_REPO_ROOT.
+      2. Resolve the returned path to an absolute path (may be relative ".git"
+         or absolute "<canonical_root>/.git").
+      3. Return the parent of that .git directory = canonical root.
+      4. On ANY failure, return _HEALTH_REPO_ROOT unchanged (pre-fix behaviour,
+         also the correct value when running from the canonical root).
+
+    Use for ONLY the two shared log files:
+      - .claude/logs/hook-fires.jsonl
+      - .claude/logs/workflow-events.jsonl
+    Code/doc paths (agents/, skills/, decisions/) remain relative to
+    _HEALTH_REPO_ROOT so worktree-run dashboards read their own source.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(_HEALTH_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return _HEALTH_REPO_ROOT
+        git_common_dir = result.stdout.strip()
+        if not git_common_dir:
+            return _HEALTH_REPO_ROOT
+        git_common_path = Path(git_common_dir)
+        if not git_common_path.is_absolute():
+            git_common_path = (_HEALTH_REPO_ROOT / git_common_path).resolve()
+        else:
+            git_common_path = git_common_path.resolve()
+        return git_common_path.parent
+    except Exception:
+        return _HEALTH_REPO_ROOT
+
+
 # Declared-ID source paths for parsing check rationale + mechanic text (slice #629).
 # _AUDIT_META_SKILL was the former source for DOCS-*/STRUCT-* check IDs; after PRD #919
 # slice #920, the canonical declared-ID source for those checks moved to codebase-critic.md
@@ -798,7 +844,7 @@ def _read_promotion_events() -> list[dict]:
     sorted chronologically (oldest first).  Returns [] if the file is absent
     or contains no promotion events.
     """
-    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return []
     promotions = []
@@ -1721,7 +1767,7 @@ def check_capture_slo() -> dict:
 
     Returns per-session liveness detail.
     """
-    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {
             "id": "CAPTURE-SLO",
@@ -1804,7 +1850,7 @@ def check_hook_integrity() -> dict:
     import json as _json
     from datetime import datetime, timezone, timedelta
 
-    fires_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    fires_log = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
     if not fires_log.exists():
         return {
             "id": "HOOK-INTEGRITY",
@@ -2582,7 +2628,7 @@ def check_blind_dispatch_rate() -> dict:
              "blind": N, "total": N, "rate": float}
     """
     import json as _json
-    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "BLIND-RATE", "result": "WARN",
                 "detail": "workflow-events.jsonl not found", "blind": 0, "total": 0, "rate": None}
@@ -3020,7 +3066,7 @@ def check_green_main() -> dict:
     Red on lag > 0 or stale > 24h.
     """
     import json as _json
-    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "GREEN-MAIN", "result": "WARN",
                 "detail": "workflow-events.jsonl not found; no develop_green events yet"}
@@ -4038,7 +4084,7 @@ def check_log_rotation() -> dict:
     Rotation cap: _LOG_ROTATION_CAP_BYTES (5 MB) — must match the cap
     documented in log-tool-event.sh _ROTATION_CAP_BYTES.
     """
-    logs_dir = _HEALTH_REPO_ROOT / ".claude" / "logs"
+    logs_dir = _telemetry_log_root() / ".claude" / "logs"
     events_log = logs_dir / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "LOG-ROTATION", "result": "WARN",
@@ -4312,7 +4358,7 @@ def check_session_injection() -> dict:
     Bind-forward per ADR-0004 D2: pre-hook sessions are honest gaps, not FAILs.
     """
     import json as _json
-    events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+    events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "SESSION-INJECTION", "result": "WARN",
                 "detail": "workflow-events.jsonl not found (pre-hook setup expected)"}
@@ -5173,7 +5219,7 @@ def check_hook_liveness() -> dict:
     if fires_override:
         fires_log = Path(fires_override)
     else:
-        fires_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+        fires_log = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
 
     if not fires_log.exists():
         return {
@@ -5212,7 +5258,7 @@ def check_hook_liveness() -> dict:
     if events_override:
         events_log = Path(events_override)
     else:
-        events_log = _HEALTH_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+        events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
 
     events_ts: float = 0.0
     if events_log.exists():

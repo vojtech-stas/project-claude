@@ -1,7 +1,7 @@
 """
 dashboard/prd_firing.py — per-PR workflow-firing timeline derived from gh CLI.
 
-Provides two public functions consumed by server.py's /api/prd-firing route:
+Provides public functions consumed by server.py's /api/prd-firing route:
 
   parse_pr_firing_timeline(pr: dict) -> dict
     Given a single PR dict from `gh pr view --json number,title,createdAt,
@@ -13,15 +13,32 @@ Provides two public functions consumed by server.py's /api/prd-firing route:
     Wrap a list of parsed timeline dicts into the /api/prd-firing response
     envelope: {prs, pr_count, fetched_at}.
 
-  fetch_prd_firing(limit: int) -> dict
+  fetch_prd_firing(limit: int) -> dict   [BLOCKING — backward-compat]
     Fetches recent PRs via gh CLI, parses each one, and caches the result
     for _CACHE_TTL seconds.  Returns honest-empty if gh unavailable.
+    NOTE: this is the SLOW blocking path (~40s cold); callers that need
+    non-blocking behaviour must use serve_prd_firing() instead.
 
-Design constraints (from slice #871):
+  serve_prd_firing(limit: int) -> dict   [NON-BLOCKING — HTTP handler]
+    Stale-while-revalidate serve path (issue #962 fix).  Always returns
+    immediately: cached data if warm, {"status":"computing"} on first cold
+    call.  Kicks a daemon background thread to recompute on miss/TTL expiry.
+    Mirrors the pattern used by health.py::serve_health().
+
+  _fetch_prd_firing_blocking(limit: int) -> dict   [internal; testable seam]
+    The pure blocking gh-call computation. Extracted so tests can mock it
+    without patching fetch_prd_firing (which also reads cache). Background
+    thread calls this; HTTP handler never calls it directly.
+
+Design constraints (from slice #871, updated #962):
   - Real gh data only — no fixtures, no mock data.
   - Honest empty: if gh unavailable or no PRs, returns {prs:[], pr_count:0}.
   - Cache: gh calls are slow; cache result for _CACHE_TTL seconds.
   - Works with hooks dark: entirely gh-derived, never reads event log.
+  - Non-blocking serve: /api/prd-firing must return in <3s always (issue #962).
+    Background-warm + stale-while-revalidate; serve {"status":"computing"} on
+    true cold start (no prior payload). TTL is generous (300s) to avoid
+    constant recompute — correlation of ~20 PRs is expensive.
 """
 
 import json
@@ -47,7 +64,15 @@ except ImportError:
 # ---------------------------------------------------------------------------
 _cache: dict = {}          # {limit: {"data": dict, "ts": float}}
 _cache_lock = threading.Lock()
-_CACHE_TTL = 60            # seconds — gh is slow; cache for 1 minute
+_CACHE_TTL = 300           # seconds — generous TTL; ~20 PRs × gh pr view is
+                           # expensive; background-warm keeps it fresh enough.
+                           # (Was 60s — increased for issue #962: frequent expiry
+                           # caused back-to-back cold blocks on every request.)
+
+# ---------------------------------------------------------------------------
+# Background-warm state — mirrors health.py / live.py pattern (issue #962)
+# ---------------------------------------------------------------------------
+_cache_computing: bool = False   # True while background thread is running
 
 # ---------------------------------------------------------------------------
 # CRITIC/VERDICT/ROUND extraction patterns
@@ -295,23 +320,20 @@ def _gh_run(args: list[str], timeout: int = 30) -> tuple[int, str]:
         return 1, ""  # gh unavailable
 
 
-def fetch_prd_firing(limit: int = 30) -> dict:
-    """Fetch recent PRs via gh CLI and build the /api/prd-firing payload.
+# ---------------------------------------------------------------------------
+# Blocking computation — testable seam; called ONLY by background thread
+# ---------------------------------------------------------------------------
 
-    Uses a TTL cache (_CACHE_TTL seconds) because gh CLI calls are slow.
-    Returns honest-empty {prs:[], pr_count:0, fetched_at:...} if gh is
-    unavailable or returns no PRs.
+def _fetch_prd_firing_blocking(limit: int = 30) -> dict:
+    """Pure blocking computation: fetch PRs from gh CLI and build payload.
 
-    Procedure:
-      1. gh pr list --state all --limit N --json number,title,createdAt,mergedAt
-      2. For each PR: gh pr view N --json number,title,createdAt,mergedAt,body,comments
-      3. parse_pr_firing_timeline() -> build_prd_firing_payload()
+    This is the slow path (~40s cold on 20 PRs).  It must NEVER be called
+    directly from the HTTP request handler — use serve_prd_firing() instead.
+    Exposed as a named function so tests can mock it in isolation.
+
+    Does NOT touch _cache; the caller (background thread) is responsible for
+    storing the result.
     """
-    with _cache_lock:
-        cached = _cache.get(limit)
-        if cached and (time.time() - cached.get("ts", 0)) < _CACHE_TTL:
-            return cached["data"]
-
     timelines: list[dict] = []
 
     # Step 1: list recent PRs
@@ -322,24 +344,15 @@ def fetch_prd_firing(limit: int = 30) -> dict:
         "--json", "number,title,createdAt,mergedAt",
     ])
     if rc != 0 or not stdout.strip():
-        payload = build_prd_firing_payload([])
-        with _cache_lock:
-            _cache[limit] = {"data": payload, "ts": time.time()}
-        return payload
+        return build_prd_firing_payload([])
 
     try:
         prs_list = json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
-        payload = build_prd_firing_payload([])
-        with _cache_lock:
-            _cache[limit] = {"data": payload, "ts": time.time()}
-        return payload
+        return build_prd_firing_payload([])
 
     if not isinstance(prs_list, list):
-        payload = build_prd_firing_payload([])
-        with _cache_lock:
-            _cache[limit] = {"data": payload, "ts": time.time()}
-        return payload
+        return build_prd_firing_payload([])
 
     # Step 2: fetch full detail for each PR (comments + body for timeline parsing)
     for pr_stub in prs_list:
@@ -365,7 +378,111 @@ def fetch_prd_firing(limit: int = 30) -> dict:
 
         timelines.append(timeline)
 
-    payload = build_prd_firing_payload(timelines)
+    return build_prd_firing_payload(timelines)
+
+
+# ---------------------------------------------------------------------------
+# Background thread target
+# ---------------------------------------------------------------------------
+
+def _prd_firing_background(limit: int) -> None:
+    """Compute prd-firing payload in a background thread and cache the result.
+
+    Called by serve_prd_firing() on cache miss or TTL expiry.
+    Sets _cache_computing=False in the finally block.
+    """
+    global _cache_computing
+    try:
+        result = _fetch_prd_firing_blocking(limit)
+        with _cache_lock:
+            _cache[limit] = {"data": result, "ts": time.time()}
+    except Exception as exc:
+        # On failure: store an honest-empty so the next serve returns something
+        empty = build_prd_firing_payload([])
+        empty["error"] = str(exc)
+        with _cache_lock:
+            _cache[limit] = {"data": empty, "ts": time.time()}
+    finally:
+        with _cache_lock:
+            _cache_computing = False
+
+
+# ---------------------------------------------------------------------------
+# Non-blocking serve — HTTP handler entry point (issue #962 fix)
+# ---------------------------------------------------------------------------
+
+def serve_prd_firing(limit: int = 30) -> dict:
+    """Stale-while-revalidate serve path for /api/prd-firing.
+
+    ALWAYS returns immediately (target: <3s, typically <10ms):
+      - Warm cache (not expired): return cached data.
+      - Stale cache (TTL expired): return cached data with "refreshing":true
+        and kick a background recompute thread (if not already running).
+      - Cold (no prior payload): return {"status":"computing"} and kick
+        background thread.
+
+    Mirrors health.py::serve_health() / live.py::_live_progress_background
+    pattern (issue #962).
+    """
+    global _cache_computing
+    with _cache_lock:
+        cached_entry = _cache.get(limit)
+        now = time.time()
+
+        if cached_entry is not None:
+            cached_data = cached_entry.get("data")
+            ts = cached_entry.get("ts", 0)
+            expired = (now - ts) >= _CACHE_TTL
+
+            if not expired:
+                # Cache is fresh — serve immediately, no background kick needed
+                return cached_data
+
+            # Cache is stale — serve last-known data with refreshing marker,
+            # kick background refresh if not already running.
+            payload = dict(cached_data)
+            payload["refreshing"] = True
+            if not _cache_computing:
+                _cache_computing = True
+                t = threading.Thread(
+                    target=_prd_firing_background, args=(limit,), daemon=True
+                )
+                t.start()
+            return payload
+
+        # No payload yet (cold start) — kick background if not already running
+        if _cache_computing:
+            return {"status": "computing"}
+        _cache_computing = True
+
+    # Start background thread outside the lock
+    t = threading.Thread(target=_prd_firing_background, args=(limit,), daemon=True)
+    t.start()
+    return {"status": "computing"}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat blocking function (preserves old callers)
+# ---------------------------------------------------------------------------
+
+def fetch_prd_firing(limit: int = 30) -> dict:
+    """Fetch recent PRs via gh CLI and build the /api/prd-firing payload.
+
+    BLOCKING: may take 40s+ on cold start with ~20 PRs.
+
+    Backward-compatible wrapper: checks cache first, then calls
+    _fetch_prd_firing_blocking() and stores the result.
+    HTTP handlers must use serve_prd_firing() instead (issue #962 fix).
+
+    Returns honest-empty {prs:[], pr_count:0, fetched_at:...} if gh is
+    unavailable or returns no PRs.
+    """
+    with _cache_lock:
+        cached = _cache.get(limit)
+        if cached and (time.time() - cached.get("ts", 0)) < _CACHE_TTL:
+            return cached["data"]
+
+    payload = _fetch_prd_firing_blocking(limit)
     with _cache_lock:
         _cache[limit] = {"data": payload, "ts": time.time()}
     return payload

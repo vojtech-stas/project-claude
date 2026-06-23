@@ -3435,10 +3435,30 @@ async function fetchSessionFiring() {
     const researchOther = data.research_other || [];
     const total         = data.dispatch_count || 0;
     const complete      = typeof data.completeness_count === 'number' ? data.completeness_count : null;
-    const prdLabels     = Object.keys(nestedGroups).sort();
+    const allLabels     = Object.keys(nestedGroups).sort();
+
+    // Split nested_groups by whether the node has a resolved PRD number (prd_n).
+    // Nodes with prd_n !== null are genuine PRD nodes ("PRD #N" labels from the
+    // backend resolver).  Nodes with prd_n === null are non-PRD dispatches
+    // (agent_type fallback labels, "(gh unavailable)" labels, etc.) — they must
+    // NOT be rendered as phantom "PRD #N" headers.  Group them under a
+    // "maintenance / non-PRD" bucket instead.  Per issue #1015 bug (b) +
+    // #1007 prd_n field spec (transcript.py nested_groups[label].prd_n).
+    const prdLabels         = allLabels.filter(function(lbl) { return nestedGroups[lbl].prd_n != null; });
+    const nonPrdLabels      = allLabels.filter(function(lbl) { return nestedGroups[lbl].prd_n == null; });
+
+    // Flatten non-PRD nodes into a single maintenance bucket dispatch list
+    var maintenanceDispatches = [];
+    nonPrdLabels.forEach(function(lbl) {
+      var nd = nestedGroups[lbl];
+      Object.values(nd.slices || {}).forEach(function(arr) {
+        maintenanceDispatches = maintenanceDispatches.concat(arr);
+      });
+      maintenanceDispatches = maintenanceDispatches.concat(nd.unresolved || []);
+    });
 
     // Fall back to flat view if nested_groups is missing (old server)
-    if (prdLabels.length === 0 && researchOther.length === 0) {
+    if (allLabels.length === 0 && researchOther.length === 0) {
       const errMsg = data.error ? ' (' + data.error + ')' : '';
       el.innerHTML = '<span style="color:var(--muted);font-size:11px;">No dispatches found' + escHtml(errMsg) + '.</span>';
       return;
@@ -3460,12 +3480,19 @@ async function fetchSessionFiring() {
       total + ' dispatch' + (total !== 1 ? 'es' : '') +
       ' &mdash; ' + prdLabels.length + ' PRD node' + (prdLabels.length !== 1 ? 's' : '') +
       (researchOther.length ? ' + ' + researchOther.length + ' research/other' : '') +
+      (maintenanceDispatches.length ? ' + ' + maintenanceDispatches.length + ' maintenance/non-PRD' : '') +
       '</div>';
 
-    // Nested PRD nodes
+    // Genuine PRD nodes — only those with prd_n set (resolved PRD)
     html += prdLabels.map(function(lbl) {
       return _renderNestedPrdNode(lbl, nestedGroups[lbl]);
     }).join('');
+
+    // Maintenance / non-PRD bucket — dispatches that resolved to a non-PRD
+    // issue (captured, backlog, agent_type fallback) grouped together.
+    if (maintenanceDispatches.length > 0) {
+      html += _renderSliceNode('maintenance / non-PRD', maintenanceDispatches);
+    }
 
     // Research/other section
     html += _renderResearchSection(researchOther);
@@ -4880,6 +4907,20 @@ function renderFiring(data) {
     if (!data || data.error) {
       el.innerHTML = '<span style="color:var(--muted);font-size:11px;">' +
         'Error: ' + escHtml((data && data.error) || 'unknown error') + '</span>';
+      return;
+    }
+
+    // Cold-start / background-warm: server returns {status:'computing'} while
+    // the gh cache is being populated.  Show computing… and schedule a short
+    // retry (3-4s) so the tab auto-updates when data arrives — like #1008 Health.
+    if (data.status === 'computing') {
+      if (statusEl) statusEl.textContent = 'computing…';
+      // Only update content if no already-rendered timelines are present —
+      // avoids blanking a previous warm render during background recompute.
+      if (el && !el.innerHTML.includes('firing-pr-card')) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:11px;">computing… (gh cache warming — will retry)</span>';
+      }
+      setTimeout(fetchFiring, 3500);
       return;
     }
 

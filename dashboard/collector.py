@@ -356,6 +356,88 @@ def _gh_pr_view(pr_number: int, timeout: int = 20) -> tuple[dict | None, str]:
 
 
 # ---------------------------------------------------------------------------
+# Two-tier (develop-base) PR discovery helpers
+# ---------------------------------------------------------------------------
+_CLOSES_RE = re.compile(
+    r"(?:Closes|Fixes|Resolves)\s+#(\d+)", re.IGNORECASE
+)
+
+
+def _parse_closes_from_body(body: str) -> list[int]:
+    """Extract issue numbers from 'Closes #N' patterns in a PR body.
+
+    Fallback for develop-base PRs where closingIssuesReferences is empty.
+    """
+    if not body:
+        return []
+    return [int(m) for m in _CLOSES_RE.findall(body)]
+
+
+def _discover_develop_pr_slice_links(
+    slice_numbers: set[int],
+    limit: int = 200,
+) -> dict[int, int]:
+    """Find slice→PR mapping for develop-base merged PRs.
+
+    GitHub only populates closingIssuesReferences (and triggers ClosedEvent
+    on the issue) when a PR is merged into the *default* branch.  PRs merged
+    to 'develop' leave both fields empty, breaking trail correlation.
+
+    Strategy: fetch recent merged PRs (gh pr list --state merged, no base
+    filter so we catch both main and develop), parse 'Closes #N' from each
+    body, and return a mapping {slice_number: pr_number} for slices that
+    appear in our sub-issue set.
+
+    Args:
+        slice_numbers: set of issue numbers that are known slices of this PRD.
+        limit: max PRs to scan (default 200; capped to avoid slow calls).
+
+    Returns:
+        {slice_issue_number: pr_number} for any match found.
+    """
+    if not slice_numbers:
+        return {}
+
+    stdout, err = _run_gh([
+        "pr", "list",
+        "--base", "develop",
+        "--state", "merged",
+        "--limit", str(min(limit, 200)),
+        "--json", "number,body,closingIssuesReferences,mergedAt",
+    ], timeout=30)
+
+    if stdout is None:
+        return {}
+
+    try:
+        prs = json.loads(stdout)
+    except Exception:
+        return {}
+
+    mapping: dict[int, int] = {}
+    for pr in prs:
+        pr_num = pr.get("number")
+        if not pr_num:
+            continue
+        # Skip if closingIssuesReferences already has data (shouldn't for develop,
+        # but be defensive)
+        cir = pr.get("closingIssuesReferences") or []
+        if cir:
+            for ref in cir:
+                ref_num = ref.get("number")
+                if ref_num and ref_num in slice_numbers and ref_num not in mapping:
+                    mapping[ref_num] = pr_num
+            continue
+        # Parse Closes #N from body
+        body = pr.get("body") or ""
+        for issue_num in _parse_closes_from_body(body):
+            if issue_num in slice_numbers and issue_num not in mapping:
+                mapping[issue_num] = pr_num
+
+    return mapping
+
+
+# ---------------------------------------------------------------------------
 # Trail building
 # ---------------------------------------------------------------------------
 def _build_slice_trail(slice_node: dict, prd_number: int) -> dict:
@@ -418,11 +500,16 @@ def _build_pr_trail(pr_number: int) -> tuple[dict | None, str]:
     # Infer round numbers for verdicts missing explicit ROUND
     verdicts = _infer_rounds(verdicts)
 
-    # Determine labels (PR body contains Closes #N but we use closingIssuesReferences)
+    # Determine closes: prefer closingIssuesReferences; fall back to parsing
+    # "Closes #N" from body (GitHub only populates closingIssuesReferences for
+    # PRs merged to the default branch — develop-base merges leave it empty).
     closing_issues = [
         i.get("number") for i in (pr_data.get("closingIssuesReferences") or [])
         if i.get("number")
     ]
+    if not closing_issues:
+        body_for_closes = pr_data.get("body", "") or ""
+        closing_issues = _parse_closes_from_body(body_for_closes)
 
     # Parse trivial label from PR labels if present (PR JSON doesn't include labels
     # via this endpoint — check body for trivial mention as heuristic)
@@ -530,6 +617,17 @@ def collect_trail(prd_number: int) -> dict:
         slices.append(st)
         if st["closing_pr_number"]:
             candidate_pr_numbers.add(st["closing_pr_number"])
+
+    # Step 2b: Two-tier develop-base fallback — if any slices lack a
+    # closing_pr_number (GitHub doesn't auto-close on develop-base merges),
+    # scan merged develop-base PRs for "Closes #N" bodies to fill the gap.
+    uncovered = {s["number"] for s in slices if not s.get("closing_pr_number")}
+    if uncovered:
+        develop_links = _discover_develop_pr_slice_links(uncovered)
+        for s in slices:
+            if s["number"] in develop_links and not s.get("closing_pr_number"):
+                s["closing_pr_number"] = develop_links[s["number"]]
+                candidate_pr_numbers.add(develop_links[s["number"]])
 
     # Step 3: Fetch each candidate PR
     prs: dict[int, dict] = {}

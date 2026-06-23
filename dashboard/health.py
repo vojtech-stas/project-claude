@@ -135,7 +135,8 @@ _KNOWN_CRITICS = {
 _health_cache: dict = {}       # {"data": {...}, "ts": float}
 _health_computing: bool = False
 _health_lock = threading.Lock()
-_HEALTH_TTL = 30               # seconds — balance freshness vs. latency
+_HEALTH_TTL = 300              # seconds — raised from 30s (#1012): slow-gh compute
+                               # takes ~60-95s; 30s TTL made refreshing=True near-permanent.
 
 # Timeout for the ci-checks.sh subprocess call inside check_release_ready() condition (a).
 # ci-checks.sh now runs gh-dependent checks (CHECK 19 slicer-provenance, etc.) that push

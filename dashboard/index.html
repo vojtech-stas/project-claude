@@ -2423,10 +2423,12 @@ async function loadHealth() {
     renderHygieneIntegrity(data.hygieneIntegrity);
     renderPromotionIntegrity(data.promotionIntegrity);
     renderCascade(data.cascadeFinder);
-    // Fast retry while cold: if the response is empty/refreshing (no checks
-    // in any group), schedule a short re-fetch instead of waiting 60s.
-    // Guard: only retry while the Health tab is visible; stop once data arrives.
-    var _isCold = data.refreshing ||
+    // Fast retry while cold: if checks are genuinely ABSENT (no data in any
+    // group), schedule a short re-fetch instead of waiting 60s.
+    // Fix #1012: do NOT treat data.refreshing as cold — stale-but-present data
+    // is fully renderable. Only retry when checks are actually missing (bootstrap
+    // / cold-cache case). data.refreshing only drives the timestamp indicator.
+    var _isCold =
       (!data.purposeGroups && !data.auditMeta && !data.substrateMeta &&
        !data.verificationIntegrity && !data.registryIntegrity &&
        !data.hygieneIntegrity && !data.promotionIntegrity);

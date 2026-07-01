@@ -902,13 +902,14 @@ fi
 
 # ---------------------------------------------------------------------------
 # CHECK 17: gen_rules.py regen-clean guard (PRD #937 slice #940 / ADR-0073 D3)
-#   Runs gen_rules.py --check: diffs .claude/rules/_global.md (GLOBAL @import
-#   target) + AREA .claude/rules/<scope>.md files against a fresh generation;
-#   also verifies CLAUDE.md contains '@.claude/rules/_global.md' import line.
-#   Exits non-zero if any output is stale or missing.
+#   Runs gen_rules.py --check: diffs .claude/generated/_global.md (GLOBAL
+#   @import target, relocated out of .claude/rules/ per slice #945 to avoid
+#   double-load) + AREA .claude/rules/<scope>.md files against a fresh
+#   generation; also verifies CLAUDE.md contains the '@.claude/generated/
+#   _global.md' import line. Exits non-zero if any output is stale or missing.
 #   Soft-degrades if python3 or tools/gen_rules.py is unavailable.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 17: gen_rules.py regen-clean (.claude/rules/ + @import line) ---"
+echo "--- CHECK 17: gen_rules.py regen-clean (.claude/generated/ + @import line) ---"
 if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/gen_rules.py" ]; then
     echo "SKIP: CHECK 17 — python3 or tools/gen_rules.py not available (soft-degrade)"
 else
@@ -969,9 +970,12 @@ fi
 # ---------------------------------------------------------------------------
 # CHECK 20: gen_rules.py + gen_repo_map.py regen-clean (slice #940 / ADR-0073)
 #   Confirms that:
-#   (a) .claude/rules/_global.md is up-to-date with gen_rules.py output, AND
-#       CLAUDE.md contains the @import line for it (ADR-0073 D1).
-#   (b) .claude/rules/_repo-map.md is up-to-date with gen_repo_map.py output.
+#   (a) .claude/generated/_global.md is up-to-date with gen_rules.py output,
+#       AND CLAUDE.md contains the @import line for it (ADR-0073 D1). Lives
+#       in .claude/generated/, not .claude/rules/, to avoid double-load
+#       (slice #945).
+#   (b) .claude/generated/_repo-map.md is up-to-date with gen_repo_map.py
+#       output.
 #   Runs both generators in --check mode; exits non-zero on any stale output.
 #   Soft-degrades if python3 or the generator scripts are unavailable.
 # ---------------------------------------------------------------------------

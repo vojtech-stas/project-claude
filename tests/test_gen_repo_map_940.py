@@ -7,7 +7,8 @@ Verifies:
 3. --check mode detects stale/missing _repo-map.md.
 4. --check mode exits 0 on a clean tree.
 5. CLAUDE.md @imports _repo-map.md.
-6. Real .claude/rules/_repo-map.md exists and has ≥10 rows.
+6. Real .claude/generated/_repo-map.md exists and has ≥10 rows (relocated
+   out of .claude/rules/ in slice #945 to avoid double-load).
 
 All fixture-based tests use a temp directory and monkeypatching.
 Tests are offline, deterministic, and network-free.
@@ -286,19 +287,19 @@ class TestGenRepoMapCheckMode(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestGenRepoMapRealRepo(unittest.TestCase):
-    """Integration: real .claude/rules/_repo-map.md and CLAUDE.md."""
+    """Integration: real .claude/generated/_repo-map.md and CLAUDE.md."""
 
     def test_repo_map_file_exists(self):
-        """Real .claude/rules/_repo-map.md must exist."""
-        repo_map = _REPO_ROOT / ".claude" / "rules" / "_repo-map.md"
+        """Real .claude/generated/_repo-map.md must exist."""
+        repo_map = _REPO_ROOT / ".claude" / "generated" / "_repo-map.md"
         self.assertTrue(
             repo_map.exists(),
-            ".claude/rules/_repo-map.md must exist (run 'python tools/gen_repo_map.py')",
+            ".claude/generated/_repo-map.md must exist (run 'python tools/gen_repo_map.py')",
         )
 
     def test_repo_map_has_at_least_10_rows(self):
         """Real _repo-map.md must have ≥10 table rows (AC from slice #940)."""
-        repo_map = _REPO_ROOT / ".claude" / "rules" / "_repo-map.md"
+        repo_map = _REPO_ROOT / ".claude" / "generated" / "_repo-map.md"
         if not repo_map.exists():
             self.skipTest("_repo-map.md not found")
         content = repo_map.read_text(encoding="utf-8")
@@ -322,9 +323,9 @@ class TestGenRepoMapRealRepo(unittest.TestCase):
         self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
         content = claude_md.read_text(encoding="utf-8")
         self.assertIn(
-            "@.claude/rules/_repo-map.md",
+            "@.claude/generated/_repo-map.md",
             content,
-            "CLAUDE.md must @import .claude/rules/_repo-map.md",
+            "CLAUDE.md must @import .claude/generated/_repo-map.md",
         )
 
     def test_gen_repo_map_check_exits_zero(self):

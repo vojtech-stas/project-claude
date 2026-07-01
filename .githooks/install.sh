@@ -4,7 +4,7 @@
 # Purpose:
 #   One-shot, idempotent setup for project-claude's tracked git hooks.
 #   Points this clone's git at the in-repo `.githooks/` directory so that
-#   `.githooks/pre-commit` runs on every commit.
+#   `.githooks/pre-commit` and `.githooks/commit-msg` run on every commit.
 #
 # When to run:
 #   Once per fresh clone (or worktree, if hook config doesn't carry over).
@@ -14,11 +14,13 @@
 #   git config core.hooksPath .githooks
 #
 #   This is the single effective operation. After it runs, `git commit`
-#   invokes `.githooks/pre-commit` instead of the default `.git/hooks/`.
+#   invokes `.githooks/pre-commit` and `.githooks/commit-msg` instead of the
+#   default `.git/hooks/`.
 #
 # See:
 #   - decisions/0004-bypass-prevention.md (D3 layer 1)
 #   - .githooks/pre-commit
+#   - .githooks/commit-msg (slice #1041)
 
 set -eu
 
@@ -43,5 +45,10 @@ if [ -f .githooks/pre-commit ] && [ ! -x .githooks/pre-commit ]; then
         echo "install.sh: warning: could not chmod +x .githooks/pre-commit (likely Windows filesystem; git index bit still applies)." >&2
 fi
 
+if [ -f .githooks/commit-msg ] && [ ! -x .githooks/commit-msg ]; then
+    chmod +x .githooks/commit-msg 2>/dev/null || \
+        echo "install.sh: warning: could not chmod +x .githooks/commit-msg (likely Windows filesystem; git index bit still applies)." >&2
+fi
+
 echo "install.sh: ok — git hooks directory is now '.githooks/' (core.hooksPath set)."
-echo "install.sh: active hook(s): .githooks/pre-commit"
+echo "install.sh: active hook(s): .githooks/pre-commit, .githooks/commit-msg"

@@ -31,7 +31,7 @@
 #
 # See:
 #   - decisions/0008-workflow-autolog-bootstrap-and-naming.md (D6)
-#   - .githooks/install.sh, .githooks/pre-commit
+#   - .githooks/install.sh, .githooks/pre-commit, .githooks/commit-msg
 #   - decisions/branch-protection-config.json (reference shape)
 
 set -uo pipefail
@@ -201,7 +201,7 @@ fi
 # Best-effort: ensure the hook scripts are executable. On Windows filesystems
 # the bit is ignored, but chmod still succeeds; on POSIX it actually matters.
 # We silently skip any file that doesn't exist (e.g., partial clone).
-for f in "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/.githooks/install.sh"; do
+for f in "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/.githooks/install.sh" "$REPO_ROOT/.githooks/commit-msg"; do
     if [[ -f "$f" ]]; then
         chmod +x "$f" 2>/dev/null || warn "could not chmod +x '$f' (likely Windows filesystem; git index bit still applies)."
     fi

@@ -199,10 +199,27 @@ class TestMetaTripwireRegistered(unittest.TestCase):
         )
 
     def test_cli_exit_0(self):
-        """python dashboard/health.py --check META-TRIPWIRE must exit 0."""
+        """python dashboard/health.py --check META-TRIPWIRE must exit 0.
+
+        Test-isolation (reviewer round-1 finding on PR #1045): this test
+        exercises the CLI-exit-0-on-PASS mechanics of the --check flag, NOT
+        live promotion/guardrail state. Without injecting
+        _META_TRIPWIRE_RESULT_OVERRIDE, this subprocess reads the REAL
+        workflow-events.jsonl + git log against whatever guardrail-touching
+        commits happen to be unpromoted on the branch under test — which is
+        exactly what slice #1041's own .githooks/* change triggers (FAIL,
+        not PASS). Inject PASS via env so this test is independent of live
+        promotion history, matching the pattern already used by
+        TestMetaTripwireFailsWithoutAck / TestMetaTripwirePassesWithAckOrClean
+        above (in-process) — here via subprocess env since --check spawns a
+        fresh process. The live (uninjected) check_meta_tripwire() still
+        fires correctly at real promotion time (RELEASE-READY condition f).
+        """
+        env = os.environ.copy()
+        env["_META_TRIPWIRE_RESULT_OVERRIDE"] = "PASS"
         result = subprocess.run(
             [sys.executable, str(HEALTH_PY), "--check", "META-TRIPWIRE"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=env,
             cwd=str(REPO_ROOT), timeout=30,
         )
         self.assertEqual(

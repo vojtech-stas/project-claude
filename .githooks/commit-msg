@@ -4,6 +4,15 @@
 # COMMIT_EDITMSG path as $1 per git's hook taxonomy. Blocks: non-conv-commits
 # subject, >72-char subject. Warns: missing Co-Authored-By trailer.
 # See ADR-0023 D6. Bypass: `git commit --no-verify`.
+#
+# Merge/revert/fixup/squash exemption (slice #1041, root-cause #1017/#824/
+# #869): these subject shapes are git-generated or git-workflow-standard and
+# are NOT Conventional-Commits-shaped by design. CI CHECK 3 (tools/ci-checks.sh)
+# excludes merge commits from its range via `git log --no-merges`, and
+# reviewer R-CONV-COMMITS explicitly exempts git revert's auto-generated
+# 'Revert "..."' shape. This hook must not be stricter than that backstop —
+# blocking a legitimate merge/revert/fixup commit at commit time would be a
+# false-positive regression, not an enforcement win.
 set -u
 
 msg_file="$1"
@@ -12,6 +21,12 @@ subject=$(grep -vE '^(#|$)' "$msg_file" | head -n 1)
 if [ -z "$subject" ]; then
     echo "commit-msg: ERROR: empty commit message." >&2
     exit 1
+fi
+
+# Exempt merge/revert/fixup/squash subjects — mirrors CI CHECK 3's
+# `--no-merges` exclusion and reviewer R-CONV-COMMITS's revert exemption.
+if printf '%s' "$subject" | grep -qE '^(Merge |Revert |fixup! |squash! )'; then
+    exit 0
 fi
 
 # Conv-commits subject regex per CLAUDE.md rule #5 (OQ-2 portability: `grep -E`

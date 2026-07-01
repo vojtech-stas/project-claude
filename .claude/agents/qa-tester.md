@@ -398,7 +398,7 @@ FAIL when: exit code wrong OR required log line absent. Record specifics in REAS
 
 Used when the merged diff's dominant changed-path matches `.claude/skills/*` or `tools/*`.
 
-**Step 1 — Parse the command.** Extract the command to run from the "Production check:" line (e.g., `"run python tools/cascade-finder.py --check; assert exit 0 + output contains 'No cycles'"` → `python tools/cascade-finder.py --check`).
+**Step 1 — Parse the command.** Extract the command to run from the "Production check:" line (e.g., `"run bash tools/ci-checks.sh; assert exit 0 + output contains 'ALL CHECKS PASSED'"` → `bash tools/ci-checks.sh`).
 
 **Step 2 — Run the command.** Execute via `Bash`. For skills that require the Claude Code invocation surface (not directly bash-runnable), verify the SKILL.md is syntactically valid (`Read` + structure check) and run any declared CLI-testable command (e.g., `python -m json.tool .claude/settings.json` to validate JSON).
 

@@ -18,7 +18,6 @@ Exports:
     audit_subagents() -> dict
     check_audit_subagents() -> dict  (slice #921/PRD #919: AS-AUDIT registry entry)
     audit_meta() -> dict
-    cascade_finder_summary() -> dict
     check_test_ordering() -> dict         (slice #816/ADR-0067 D2: fix-type PR test-first ordering rate)
     check_quarantine_sla() -> dict        (slice #816/ADR-0067 D4: quarantine register size + oldest-entry SLA)
     check_frontmatter_coverage() -> dict  (slice #820/ADR-0027 D1: % agent files with explicit model: frontmatter)
@@ -1728,20 +1727,6 @@ def audit_meta() -> dict:
         check_r_sensitive_detector(),
     ]
     return {"checks": _enrich_checks(checks)}
-
-
-def cascade_finder_summary() -> dict:
-    cascade_script = _HEALTH_REPO_ROOT / "tools" / "cascade-finder.py"
-    if not cascade_script.exists():
-        return {"available": False, "detail": "tools/cascade-finder.py not found"}
-    try:
-        subprocess.run(
-            [sys.executable, str(cascade_script), "--help"],
-            capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
-        )
-        return {"available": True, "detail": "cascade-finder.py present; use /api/architecture edges for data"}
-    except Exception as e:
-        return {"available": False, "detail": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -5649,7 +5634,6 @@ def _build_health_data() -> dict:
     return {
         "auditMeta": audit,
         "auditSubagents": audit_subagents(),
-        "cascadeFinder": cascade_finder_summary(),
         "substrateMeta": {"checks": substrate_checks},
         "verificationIntegrity": {"checks": verification_checks},
         "registryIntegrity": {"checks": registry_checks},
@@ -5678,7 +5662,6 @@ def _health_background() -> None:
                 "error": str(e),
                 "auditMeta": {"checks": []},
                 "auditSubagents": {},
-                "cascadeFinder": {"available": False, "detail": f"error: {e}"},
                 "substrateMeta": {"checks": []},
                 "verificationIntegrity": {"checks": []},
             }

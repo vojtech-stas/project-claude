@@ -1455,10 +1455,6 @@
     <div class="card-title">promotion panel — develop→main topology &amp; lag</div>
     <div id="promotion-panel"><div class="loading">Loading...</div></div>
   </div>
-  <div class="card" style="grid-column: 1 / -1;">
-    <div class="card-title">cascade-finder</div>
-    <div id="cascade-summary"><div class="loading">Loading...</div></div>
-  </div>
 </div>
 
 <!-- FIRING TAB — per-PR workflow-firing timeline from gh (slice #871) -->
@@ -2422,7 +2418,6 @@ async function loadHealth() {
     renderRegistryIntegrity(data.registryIntegrity);
     renderHygieneIntegrity(data.hygieneIntegrity);
     renderPromotionIntegrity(data.promotionIntegrity);
-    renderCascade(data.cascadeFinder);
     // Fast retry while cold: if checks are genuinely ABSENT (no data in any
     // group), schedule a short re-fetch instead of waiting 60s.
     // Fix #1012: do NOT treat data.refreshing as cold — stale-but-present data
@@ -2949,12 +2944,6 @@ function closeSharedDetail() {
   const panelEl = document.getElementById('shared-detail-panel');
   if (panelEl) panelEl.classList.remove('open');
   document.querySelectorAll('.check-row-clickable').forEach(r => r.classList.remove('active'));
-}
-
-function renderCascade(cf) {
-  const el = document.getElementById('cascade-summary');
-  if (!cf) { el.innerHTML = '<span style="color:var(--muted)">No data</span>'; return; }
-  el.innerHTML = `<p style="color:var(--muted);font-size:12px;">Available: ${cf.available ? '<span style="color:var(--pass)">yes</span>' : '<span style="color:var(--fail)">no</span>'}</p><p style="color:var(--muted);font-size:11px;margin-top:6px;">${escHtml(cf.detail||'')}</p>`;
 }
 
 // Auto-load architecture tab on start; also kick off trail run picker

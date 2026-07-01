@@ -5,7 +5,7 @@ dashboard/server.py — project-claude workflow dashboard server.
 Serves: GET /               -> dashboard/index.html
         GET /api/architecture -> JSON {skills, agents, hooks, adrs, edges}
         GET /api/pipeline     -> JSON pipeline spec (SPEC v2 from pipeline_spec.py)
-        GET /api/health       -> JSON {auditMeta, auditSubagents, cascadeFinder}
+        GET /api/health       -> JSON {auditMeta, auditSubagents}
         GET /api/file?path=   -> file content (path-traversal safe)
         GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
         GET /api/runs[?n=N]       -> JSON recent session runs metadata from workflow-events.jsonl (slice #864)
@@ -79,7 +79,7 @@ from health import (  # noqa: E402
     check_docs8_supersession_notes,
     check_docs9_glossary_cap,
     check_docs10_backlog_surfacing,
-    audit_subagents, audit_meta, cascade_finder_summary,
+    audit_subagents, audit_meta,
     serve_health as _serve_health_cached,
 )
 from events import serve_runs as _serve_runs_fn  # noqa: E402
@@ -265,7 +265,7 @@ def _build_status() -> dict:
         warn_count = 0
         fail_count = 0
         # Walk each top-level group that is a dict with a 'checks' list.
-        # Skip groups without a checks list (cascadeFinder, auditSubagents).
+        # Skip groups without a checks list (auditSubagents).
         # auditSubagents values are per-agent dicts — not counted here.
         for group_key, group_val in health_data.items():
             if not isinstance(group_val, dict):

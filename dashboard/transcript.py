@@ -839,6 +839,92 @@ def _resolve_pr_to_prd(pr_n: int) -> "int | str | None":
     return None
 
 
+def _resolve_dispatch_to_prd_detailed(n: int) -> "tuple[int | None, bool]":
+    """Map a dispatch issue/PR number to its parent PRD number, AND report
+    whether gh transport was actually healthy for this resolution.
+
+    This is the detailed sibling of resolve_dispatch_to_prd() (public API,
+    unchanged for backward compatibility — see #1030). It exists so callers
+    that need to distinguish "gh succeeded, genuinely no PRD parent" from
+    "gh transport failed" (e.g. _derive_prd_label's label text) can do so,
+    without changing the int|None contract other callers/tests depend on.
+
+    Returns (result, gh_ok):
+      result — int (parent PRD) or None (unresolvable / non-PRD / gh failure)
+      gh_ok  — True  if gh transport succeeded (result is either a resolved
+                      PRD or a genuine non-PRD determination)
+               False if gh transport itself failed (_GH_UNAVAILABLE) — the
+                      None result here is NOT a "no PRD parent" fact, it's
+                      "we don't know because gh didn't answer".
+
+    Fix (issue #1030): previously resolve_dispatch_to_prd() alone collapsed
+    both outcomes to None, so _derive_prd_label always guessed "gh
+    unavailable" for any None — even when gh had actually succeeded and the
+    issue simply had no PRD parent.
+    """
+    _prd_cache_reset_if_stale()
+
+    # 1. Check in-process cache first (fastest path)
+    if n in _prd_cache:
+        cached = _prd_cache[n]
+        if cached is _GH_UNAVAILABLE:
+            return None, False
+        return cached, True  # type: ignore[return-value]
+
+    # 2. Check disk cache (warm path; avoids gh on restart)
+    disk_data = _load_disk_cache()
+    disk_key = str(n)
+    if disk_key in disk_data:
+        val = disk_data[disk_key]
+        # Disk stores: int (resolved parent PRD or self for a PRD issue),
+        # or None (gh was unavailable at write time — retry gh now).
+        if val is None:
+            # Could not resolve (gh was unavailable at write time) — retry gh
+            pass  # fall through to gh
+        else:
+            _prd_cache[n] = val
+            return val, True  # type: ignore[return-value]
+
+    # 3. Try gh (slow path)
+    result = _resolve_slice_to_prd(n)
+
+    if result is _GH_UNAVAILABLE:
+        # gh unavailable — try as PR as a secondary attempt
+        pr_result = _resolve_pr_to_prd(n)
+        if pr_result is _GH_UNAVAILABLE or pr_result is None:
+            _prd_cache[n] = _GH_UNAVAILABLE
+            # Do NOT write None to disk for gh failures — we want to retry on restart
+            return None, False
+        _prd_cache[n] = pr_result
+        disk_data[disk_key] = pr_result
+        _write_disk_cache(disk_data)
+        return pr_result, True  # type: ignore[return-value]
+
+    if result is _IS_PRD:
+        # Issue IS a genuine prd-labeled issue — return N (it IS the PRD).
+        _prd_cache[n] = n
+        disk_data[disk_key] = n
+        _write_disk_cache(disk_data)
+        return n, True
+
+    if result is None:
+        # Issue is NOT prd-labeled AND has no resolvable parent PRD body.
+        # Fix #1018: do NOT treat this as a phantom 'PRD #N' node.
+        # Return None so the UI routes it to the maintenance/non-PRD bucket.
+        # Cache in-process only (same as gh-unavailable): the label set on a
+        # non-prd issue can change (e.g. promotion to prd), so we don't persist
+        # None to disk — the next session will re-verify via gh.
+        # gh_ok=True: this IS a genuine non-PRD determination, gh succeeded.
+        _prd_cache[n] = None  # type: ignore[assignment]
+        return None, True
+
+    # result is the parent PRD int (slice with a known parent)
+    _prd_cache[n] = result
+    disk_data[disk_key] = result
+    _write_disk_cache(disk_data)
+    return result, True  # type: ignore[return-value]
+
+
 def resolve_dispatch_to_prd(n: int) -> "int | None":
     """Map a dispatch issue/PR number to its parent PRD number.
 
@@ -858,67 +944,14 @@ def resolve_dispatch_to_prd(n: int) -> "int | None":
     Lookup order: disk cache → in-process cache → gh (write-through on hit).
 
     Returns int (parent PRD) or None (gh unavailable / unresolvable / non-PRD).
+
+    Note (#1030): this function intentionally keeps the int|None contract —
+    existing callers/tests distinguish only "resolved" vs "not resolved".
+    Callers that need to distinguish "gh failed" from "genuinely non-PRD"
+    (e.g. label text) should use _resolve_dispatch_to_prd_detailed() instead.
     """
-    _prd_cache_reset_if_stale()
-
-    # 1. Check in-process cache first (fastest path)
-    if n in _prd_cache:
-        cached = _prd_cache[n]
-        if cached is _GH_UNAVAILABLE:
-            return None
-        return cached  # type: ignore[return-value]
-
-    # 2. Check disk cache (warm path; avoids gh on restart)
-    disk_data = _load_disk_cache()
-    disk_key = str(n)
-    if disk_key in disk_data:
-        val = disk_data[disk_key]
-        # Disk stores: int (resolved parent PRD or self for a PRD issue),
-        # or None (gh was unavailable at write time — retry gh now).
-        if val is None:
-            # Could not resolve (gh was unavailable at write time) — retry gh
-            pass  # fall through to gh
-        else:
-            _prd_cache[n] = val
-            return val  # type: ignore[return-value]
-
-    # 3. Try gh (slow path)
-    result = _resolve_slice_to_prd(n)
-
-    if result is _GH_UNAVAILABLE:
-        # gh unavailable — try as PR as a secondary attempt
-        pr_result = _resolve_pr_to_prd(n)
-        if pr_result is _GH_UNAVAILABLE or pr_result is None:
-            _prd_cache[n] = _GH_UNAVAILABLE
-            # Do NOT write None to disk for gh failures — we want to retry on restart
-            return None
-        _prd_cache[n] = pr_result
-        disk_data[disk_key] = pr_result
-        _write_disk_cache(disk_data)
-        return pr_result  # type: ignore[return-value]
-
-    if result is _IS_PRD:
-        # Issue IS a genuine prd-labeled issue — return N (it IS the PRD).
-        _prd_cache[n] = n
-        disk_data[disk_key] = n
-        _write_disk_cache(disk_data)
-        return n
-
-    if result is None:
-        # Issue is NOT prd-labeled AND has no resolvable parent PRD body.
-        # Fix #1018: do NOT treat this as a phantom 'PRD #N' node.
-        # Return None so the UI routes it to the maintenance/non-PRD bucket.
-        # Cache in-process only (same as gh-unavailable): the label set on a
-        # non-prd issue can change (e.g. promotion to prd), so we don't persist
-        # None to disk — the next session will re-verify via gh.
-        _prd_cache[n] = None  # type: ignore[assignment]
-        return None
-
-    # result is the parent PRD int (slice with a known parent)
-    _prd_cache[n] = result
-    disk_data[disk_key] = result
-    _write_disk_cache(disk_data)
-    return result  # type: ignore[return-value]
+    result, _gh_ok = _resolve_dispatch_to_prd_detailed(n)
+    return result
 
 
 def _read_subagent_meta(subagents_dir: Path) -> dict:
@@ -1040,11 +1073,18 @@ def _derive_prd_label(description: str, agent_type: str, use_gh: bool = True) ->
     When gh is unavailable or use_gh=False, falls back to the raw #N label
     with a "(gh unavailable)" suffix — honest-empty per fallback AC.
 
+    Fix (issue #1030): a genuinely-non-PRD issue (gh succeeded, no PRD
+    parent found) now gets "#N (non-PRD)" instead of "#N (gh unavailable)" —
+    the latter is reserved for actual gh transport failures, via
+    _resolve_dispatch_to_prd_detailed()'s gh_ok flag.
+
     Strategy:
       1. Extract the first issue number #N from the description.
-      2. (use_gh=True) Resolve N to its parent PRD via resolve_dispatch_to_prd().
+      2. (use_gh=True) Resolve N to its parent PRD via
+         _resolve_dispatch_to_prd_detailed().
          - On success: label = "PRD #<parent>" to make it clear this is a PRD bucket.
-         - On gh failure: label = "#N (gh unavailable)".
+         - On genuine non-PRD (gh_ok=True, result=None): label = "#N (non-PRD)".
+         - On gh transport failure (gh_ok=False): label = "#N (gh unavailable)".
       3. (use_gh=False) label = "#N".
       4. If no issue number found: fall back to agent_type, then "unattributed".
     """
@@ -1053,11 +1093,14 @@ def _derive_prd_label(description: str, agent_type: str, use_gh: bool = True) ->
         if m:
             raw_n = int(m.group(1))
             if use_gh:
-                parent_prd = resolve_dispatch_to_prd(raw_n)
+                parent_prd, gh_ok = _resolve_dispatch_to_prd_detailed(raw_n)
                 if parent_prd is not None:
                     return f"PRD #{parent_prd}"
+                elif gh_ok:
+                    # gh succeeded; issue genuinely has no PRD parent.
+                    return f"#{raw_n} (non-PRD)"
                 else:
-                    # gh unavailable or truly unresolvable — honest fallback
+                    # gh transport actually failed — honest fallback
                     return f"#{raw_n} (gh unavailable)"
             else:
                 return f"#{raw_n}"

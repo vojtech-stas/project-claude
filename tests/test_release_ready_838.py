@@ -57,6 +57,13 @@ def _call_check(env_overrides: dict | None = None) -> dict:
 
     All conditions are defaulted to PASS (fast-path — avoids real CI/pytest/gh).
     Pass env_overrides to override specific conditions.
+
+    Condition (f) is stubbed via _META_TRIPWIRE_RESULT_OVERRIDE=PASS (added
+    per reviewer round-1 finding on PR #1045): without this, condition (f)
+    reads LIVE check_meta_tripwire() state — i.e. real unpromoted guardrail
+    commits on whatever branch is checked out — instead of the injected
+    all-conditions-pass scenario this helper is meant to construct. The live
+    (uninjected) check still fires correctly at real promotion time.
     """
     # Default fast-path: all conditions injected as PASS.
     defaults = {
@@ -65,6 +72,7 @@ def _call_check(env_overrides: dict | None = None) -> dict:
         "_RELEASE_READY_PROOF_INTEGRITY_RESULT": "PASS",
         "_RELEASE_READY_STREAK_RESULT": "PASS",
         "_RELEASE_READY_NEEDS_HUMAN_COUNT": "0",
+        "_META_TRIPWIRE_RESULT_OVERRIDE": "PASS",
     }
     env_patch = {**defaults, **(env_overrides or {})}
 

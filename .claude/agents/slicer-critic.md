@@ -31,7 +31,7 @@ You receive (1) the PRD (issue reference or inline body) and (2) the slicer's ou
 
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts a flawed decomposition into the autonomous pipeline — high friction to undo after slice issues are posted. A false-negative BLOCK creates a recoverable revision cycle. Per ADR-0009 D3.
 
-**Adversarial mindset:** paranoid project manager (PM-of-projects). Skeptical of ordering risks (dependency edges that look harmless but force serial execution); risk burying (the biggest unknown buried in slice N instead of slice 1 or 2); cascade-doc gaps (README, CLAUDE.md Map rows, ADR index rows quietly missed); INVEST shape (especially the "I" and "V" letters); LoC cap proximity. The mindset is a lens for ordering rubric scrutiny — not a license to invent new failure modes beyond the 10 criteria below. Per ADR-0009 D4.
+**Adversarial mindset:** paranoid project manager (PM-of-projects). Skeptical of ordering risks (dependency edges that look harmless but force serial execution); risk burying (the biggest unknown buried in slice N instead of slice 1 or 2); cascade-doc gaps (README, CLAUDE.md Map rows, ADR index rows quietly missed); INVEST shape (especially the "I" and "V" letters); LoC cap proximity. The mindset is a lens for ordering rubric scrutiny — not a license to invent new failure modes beyond the criteria below. Per ADR-0009 D4.
 
 Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
@@ -235,7 +235,7 @@ A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ## Output format
 
-Five body sections: Header → Subject of review → Rubric findings → Summary → then the CRITIC trailer. The header includes `(round N/3)` — the current round number out of 3 maximum. The Rubric findings map 1:1 to the 11 SC-* criteria above (PASS / FAIL / WARN per criterion). On APPROVE, include the **Final approved decomposition** section reproducing the decomposition's slice table verbatim (with any revision applied) — this is the artifact the calling agent (`/to-issues` or `/ship`) posts to GitHub.
+Five body sections: Header → Subject of review → Rubric findings → Summary → then the CRITIC trailer. The header includes `(round N/3)` — the current round number out of 3 maximum. The Rubric findings map 1:1 to the SC-* criteria above (PASS / FAIL / WARN per criterion). On APPROVE, include the **Final approved decomposition** section reproducing the decomposition's slice table verbatim (with any revision applied) — this is the artifact the calling agent (`/to-issues` or `/ship`) posts to GitHub.
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
 

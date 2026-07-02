@@ -29,6 +29,23 @@ import subprocess
 import sys
 from typing import Optional
 
+# ---------------------------------------------------------------------------
+# Windows cp1252 fix (#1050): force stdout/stderr to utf-8 at startup.
+#
+# On native Windows, sys.stdout/sys.stderr default to the console's
+# codepage (typically cp1252), not utf-8. This script prints `gh` issue
+# body content that routinely contains non-cp1252 glyphs (em-dashes, curly
+# quotes, emoji), so an unguarded print() raises UnicodeEncodeError.
+# reconfigure() is available on TextIOWrapper since Python 3.7; guard with
+# hasattr for non-TextIOWrapper streams (e.g. when stdout is already
+# replaced by a test harness or CI redirector). Deliberately NOT relying
+# on an external PYTHONIOENCODING env var — the fix must be self-contained
+# in this module. Same bug class + same treatment as #834 (run_evals.py).
+# ---------------------------------------------------------------------------
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def body_has_provenance(body: str) -> bool:
     """Return True if body contains a Slicer-provenance: trailer.
@@ -68,6 +85,8 @@ def _fetch_open_slices() -> Optional[list[dict]]:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
     except FileNotFoundError:

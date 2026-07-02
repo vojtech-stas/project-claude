@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys as _sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -65,7 +66,16 @@ from pathlib import Path
 # Paths — mirror live.py's pattern
 # ---------------------------------------------------------------------------
 _OBSERVER_REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_LOG = _OBSERVER_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+
+# sys.path injection so telemetry_root is importable when this module is
+# imported standalone (e.g. by tests), mirroring live.py's pattern.
+_DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
+if _DASHBOARD_DIR_STR not in _sys.path:
+    _sys.path.insert(0, _DASHBOARD_DIR_STR)
+
+from telemetry_root import _telemetry_log_root  # noqa: E402
+
+_DEFAULT_LOG = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
 
 # Fixture-session guard — mirrors events.py FIXTURE_SID_RE (rule #21)
 _FIXTURE_SID_RE = re.compile(

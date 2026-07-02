@@ -26,8 +26,13 @@ This test creates a REAL git worktree via `git worktree add` (never
 touching the real live-dashboard worktree or any shared session tree),
 copies dashboard-up.ps1 into <worktree>/tools/, runs it there with
 -CheckOnly (side-effect-free), and asserts the decision output correctly
-names the target as a worktree (would-reset-eligible). It also asserts a
-plain repo-root invocation names the target as root (skip-reset).
+names the target as a worktree (would-reset-eligible). It ALSO creates a
+separate scratch plain `git init` repo (NOT a worktree of anything) and
+asserts that invocation names the target as root (skip-reset) -- note
+this canNOT reuse THIS repo's own REPO_ROOT for that assertion, because
+under harness worktree-isolation (ADR-0036) REPO_ROOT itself may already
+BE a linked worktree of the shared .git, which would make the "root"
+assertion meaningless (it would correctly say "worktree" too).
 
 Per ADR-0067 D3: this test file is committed BEFORE the fix. It FAILS
 before the fix (classification says "repo root" for the worktree target)
@@ -100,9 +105,40 @@ class TestDashboardUpTargetClassification(unittest.TestCase):
         cls._worktree_script = worktree_tools / "dashboard-up.ps1"
         shutil.copyfile(SCRIPT_PATH, cls._worktree_script)
 
+        # Separate scratch PLAIN repo root (a fresh `git init`, NOT a
+        # worktree of anything) -- used for the "root" classification
+        # assertion. This canNOT reuse THIS repo's own REPO_ROOT: under
+        # harness worktree-isolation (ADR-0036) REPO_ROOT may itself
+        # already be a linked worktree of a shared .git, in which case it
+        # legitimately classifies as "worktree" too, making the "root"
+        # assertion meaningless.
+        cls._root_dir = str(Path(cls._tmpdir) / f"zzztest-root-{uuid.uuid4().hex[:8]}")
+        Path(cls._root_dir).mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["git", "-C", cls._root_dir, "init", "-q"],
+            capture_output=True, text=True, check=True,
+        )
+        subprocess.run(
+            ["git", "-C", cls._root_dir, "config", "user.email", "test@example.com"],
+            capture_output=True, text=True, check=True,
+        )
+        subprocess.run(
+            ["git", "-C", cls._root_dir, "config", "user.name", "test"],
+            capture_output=True, text=True, check=True,
+        )
+        root_tools = Path(cls._root_dir) / "tools"
+        root_tools.mkdir(parents=True, exist_ok=True)
+        cls._root_script = root_tools / "dashboard-up.ps1"
+        shutil.copyfile(SCRIPT_PATH, cls._root_script)
+        # dashboard-up.ps1 shells out to `git rev-parse origin/develop` for
+        # developSha (unrelated to classification) -- a bare `git init` with
+        # no commits/remote will just print developSha=(null), which is
+        # fine; the classification lines are independent of that value.
+
     @classmethod
     def tearDownClass(cls):
-        # Always remove the scratch worktree + branch, even on failure.
+        # Always remove the scratch worktree + branch + root repo, even on
+        # failure.
         subprocess.run(
             ["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force",
              cls._worktree_dir],
@@ -115,8 +151,9 @@ class TestDashboardUpTargetClassification(unittest.TestCase):
         shutil.rmtree(cls._tmpdir, ignore_errors=True)
 
     def test_git_truth_confirms_worktree_shape(self):
-        """Sanity: the scratch dir IS a worktree by git's own definition
-        (--git-dir != --git-common-dir), and REPO_ROOT is NOT."""
+        """Sanity: the scratch worktree dir IS a worktree by git's own
+        definition (--git-dir != --git-common-dir), and the scratch plain
+        repo root is NOT (--git-dir == --git-common-dir)."""
         git_dir = subprocess.run(
             ["git", "-C", self._worktree_dir, "rev-parse", "--git-dir"],
             capture_output=True, text=True, check=True,
@@ -128,6 +165,20 @@ class TestDashboardUpTargetClassification(unittest.TestCase):
         self.assertNotEqual(
             Path(git_dir).resolve(), Path(common_dir).resolve(),
             "scratch dir must be a real worktree (--git-dir != --git-common-dir)",
+        )
+
+        root_git_dir = subprocess.run(
+            ["git", "-C", self._root_dir, "rev-parse", "--git-dir"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        root_common_dir = subprocess.run(
+            ["git", "-C", self._root_dir, "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(
+            Path(self._root_dir, root_git_dir).resolve(),
+            Path(self._root_dir, root_common_dir).resolve(),
+            "scratch plain repo root must NOT be a worktree (--git-dir == --git-common-dir)",
         )
 
     def test_checkonly_real_worktree_target_classified_as_worktree(self):
@@ -161,14 +212,15 @@ class TestDashboardUpTargetClassification(unittest.TestCase):
         )
 
     def test_checkonly_plain_repo_root_classified_as_root(self):
-        """Running the ORIGINAL (uncopied) dashboard-up.ps1 straight from
-        REPO_ROOT/tools/ must print an explicit classification line naming
-        TARGET as root (skip-reset guard preserved for the real repo root).
+        """Running dashboard-up.ps1 -CheckOnly from a scratch PLAIN repo
+        root (a fresh `git init`, not a worktree of anything) must print an
+        explicit classification line naming TARGET as root (skip-reset
+        guard preserved for the real repo root).
 
         FAILS before the fix (no classification line exists yet in
         -CheckOnly output). PASSES after the fix."""
         port = _free_port()
-        result = _run_checkonly(SCRIPT_PATH, port)
+        result = _run_checkonly(self._root_script, port)
         self.assertEqual(
             result.returncode, 0,
             f"exit={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}",
@@ -178,6 +230,10 @@ class TestDashboardUpTargetClassification(unittest.TestCase):
             "classification: root", stdout_lower,
             f"expected an explicit '-CheckOnly' classification line naming "
             f"the target as root (skip reset): {result.stdout!r}",
+        )
+        self.assertNotIn(
+            "classification: worktree", stdout_lower,
+            f"a plain repo root was misclassified as a worktree: {result.stdout!r}",
         )
 
 

@@ -21,6 +21,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _DISCOVERY_REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# sys.path injection so telemetry_root is importable when discovery.py is
+# imported standalone (e.g. by tests), mirroring live.py's pattern.
+_DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
+if _DASHBOARD_DIR_STR not in sys.path:
+    sys.path.insert(0, _DASHBOARD_DIR_STR)
+
+from telemetry_root import _telemetry_log_root  # noqa: E402
+
 # git-aware enumeration helper (issue #999 — same fix class as #926 for health.py)
 # Lazily imported to keep the module usable even if _gitfiles is somehow missing.
 try:
@@ -274,7 +282,7 @@ def _read_hook_fire_telemetry() -> dict:
     Reads only the last ~5000 lines to avoid unbounded growth becoming slow.
     Fail-soft: returns empty dict on any error (every event type will show 0/null).
     """
-    beacon_path = _DISCOVERY_REPO_ROOT / ".claude" / "logs" / "hook-fires.jsonl"
+    beacon_path = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
     telemetry: dict = {}
     if not beacon_path.exists():
         return telemetry

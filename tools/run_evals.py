@@ -31,6 +31,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Windows cp1252 fix (#834): force stdout/stderr to utf-8 at startup.
+#
+# On native Windows, sys.stdout/sys.stderr default to the console's
+# codepage (typically cp1252), not utf-8. This tool prints CRITIC trailer
+# text and eval fixture content that routinely contains non-cp1252 glyphs
+# (em-dashes, curly quotes, emoji), so an unguarded print() raises
+# UnicodeEncodeError. reconfigure() is available on TextIOWrapper since
+# Python 3.7; guard with hasattr for non-TextIOWrapper streams (e.g. when
+# stdout is already replaced by a test harness or CI redirector).
+# Deliberately NOT relying on an external PYTHONIOENCODING env var — the
+# fix must be self-contained in this module.
+# ---------------------------------------------------------------------------
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 

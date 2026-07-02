@@ -32,6 +32,7 @@ if _DASHBOARD_DIR_STR not in _sys.path:
     _sys.path.insert(0, _DASHBOARD_DIR_STR)
 
 from collector import get_trail, _repo_slug  # noqa: E402
+from telemetry_root import _telemetry_log_root  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Live-progress cache — resolves the most recent open PRD + reads its trail.
@@ -43,7 +44,7 @@ _live_progress_computing: bool = False
 _live_progress_lock = threading.Lock()
 _LIVE_PROGRESS_TTL = 25           # seconds
 
-_WORKFLOW_LOG = _LIVE_REPO_ROOT / ".claude" / "logs" / "workflow-events.jsonl"
+_WORKFLOW_LOG = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
 _CAPTURE_PILL_THRESHOLD = 120     # seconds — coarse freshness threshold
 
 # Reader-side fixture-pattern guard (mirrors log-tool-event.sh FIXTURE_PATTERN).

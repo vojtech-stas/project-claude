@@ -4667,10 +4667,19 @@ function _renderRollup(result, el) {
           }
         }
 
-        // --- last event age (le is declared above in hooks block) ---
-        const lastEvText = le.age_minutes != null
-          ? 'event ' + ageStr(le.age_minutes)
-          : 'no events';
+        // --- last activity age (slice #1054: honest freshness) ---
+        // last_event alone can go stale for days (SessionStart doesn't fire on
+        // resumed sessions) while hook-fires.jsonl beacons keep flowing. Prefer
+        // d.last_activity (max of beacon vs event, with source) so the header
+        // never falsely reads "no events" while the system is actively running.
+        // Falls back to the old event-only text if last_activity is absent
+        // (e.g. an older cached /api/status response mid-deploy).
+        const la = d.last_activity || {};
+        const lastEvText = la.age_minutes != null
+          ? 'activity ' + ageStr(la.age_minutes) + (la.source === 'hook-beacon' ? ' · beacon' : ' · event')
+          : (le.age_minutes != null
+              ? 'event ' + ageStr(le.age_minutes)
+              : 'no events');
 
         // --- main_green ---
         const mg = d.main_green || {};

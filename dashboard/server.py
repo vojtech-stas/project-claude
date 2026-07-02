@@ -986,10 +986,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/session-firing":
             # GET /api/session-firing — per-PRD firing tree from transcript (slice #901).
             # Maps subagent dispatches to PRD buckets via subagents/agent-*.meta.json.
+            # Non-blocking: serve_session_firing() returns immediately (issue #1061) —
+            # cold parse of a large transcript (~85k events) is background-warmed by
+            # a daemon thread rather than blocking the request path.
             # Returns {groups: {<prd-label>: [{agent,start,end,verdict}…]},
-            #          dispatch_count, source, error}.
+            #          dispatch_count, source, error} OR {status:"computing"}/
+            #          {..., refreshing:true} while the background build runs.
             try:
-                self._send_json(_transcript_mod.get_session_firing())
+                self._send_json(_transcript_mod.serve_session_firing())
             except Exception as exc:
                 self._send_json(
                     {"groups": {}, "dispatch_count": 0, "source": "",

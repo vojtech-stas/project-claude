@@ -749,12 +749,18 @@ class TestServerFiringRoutePresent(unittest.TestCase):
         )
 
     def test_server_py_calls_get_session_firing(self):
-        """server.py must call get_session_firing() in the route handler."""
+        """server.py must call the transcript module's session-firing serve path.
+
+        Updated by issue #1061: the route now calls the non-blocking
+        serve_session_firing() wrapper instead of calling get_session_firing()
+        directly, so the cold-start parse no longer blocks the request path.
+        """
         src = SERVER_PY.read_text(encoding="utf-8")
         self.assertIn(
-            "get_session_firing",
+            "serve_session_firing",
             src,
-            "server.py must call get_session_firing() for the /api/session-firing route",
+            "server.py must call serve_session_firing() for the /api/session-firing "
+            "route (non-blocking wrapper, issue #1061)",
         )
 
     def test_index_html_fetches_session_firing(self):

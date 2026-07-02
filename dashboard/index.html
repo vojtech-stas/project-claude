@@ -2116,16 +2116,16 @@ function renderComponentGraph(data) {
 
   // Fix C: render ALL skills/agents/hooks regardless of edges; ADRs = edge-targets only (graph)
   const sections = [
-    { title: 'Skills', items: data.skills || [], dotClass: 'dot-skill' },
-    { title: 'Agents', items: data.agents || [], dotClass: null },
+    { title: 'Skills', items: data.skills || [], dotClass: 'dot-skill', nodeType: 'skill' },
+    { title: 'Agents', items: data.agents || [], dotClass: null, nodeType: null },
     {
-      title: 'Hooks', items: data.hooks || [], dotClass: 'dot-hook',
+      title: 'Hooks', items: data.hooks || [], dotClass: 'dot-hook', nodeType: 'hook',
       descFn: item => {
         const when = item.matcher ? `${item.event} · ${item.matcher}` : item.event;
         return item.description ? `${when} — ${item.description}` : when;
       },
     },
-    { title: 'ADRs', items: data.adrs || [], dotClass: 'dot-adr' },
+    { title: 'ADRs', items: data.adrs || [], dotClass: 'dot-adr', nodeType: 'adr' },
   ];
   for (const s of sections) {
     if (!s.items || s.items.length === 0) continue;
@@ -2133,11 +2133,15 @@ function renderComponentGraph(data) {
     html += `<div class="agent-grid">`;
     for (const item of s.items) {
       const dotCls = s.dotClass || (item.type === 'critic' ? 'dot-critic' : 'dot-generator');
+      // Badge kind for the file-viewer sidebar (#1065): agents carry their own
+      // real classification (item.type = critic|generator from discovery.py's
+      // _classify_agent); other sections use their fixed section nodeType.
+      const badgeType = s.nodeType || item.type || 'generator';
       const name = item.name || item.stem || item.title || '?';
       const rawDesc = s.descFn ? s.descFn(item) : (item.description || item.title || item.command || '');
       const desc = rawDesc.slice(0, 120);
       const path = item.path || '';
-      html += `<div class="agent-card" onclick="viewFile('${escHtml(path)}','${escHtml(name)}')">`;
+      html += `<div class="agent-card" onclick="viewFile('${escHtml(path)}','${escHtml(name)}','${escHtml(badgeType)}')">`;
       html += `<div class="card-name"><span class="node-dot ${dotCls}"></span>${escHtml(name)}</div>`;
       html += `<div class="card-desc">${escHtml(desc)}</div>`;
       html += `</div>`;

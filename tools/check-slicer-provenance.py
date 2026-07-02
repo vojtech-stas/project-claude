@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """
 tools/check-slicer-provenance.py — slicer-provenance guard (PRD #919 slice #922).
+Extended in slice #1067 to recognize the rule-#13 root-cause lane.
 
 Verifies that every OPEN GitHub issue labeled `slice` carries the canonical
 `Slicer-provenance:` trailer in its body, indicating it was created via the
 `/to-issues` slicer + slicer-critic pipeline rather than hand-crafted directly
-via `gh issue create`.
+via `gh issue create` — UNLESS the slice carries the `root-cause` label, in
+which case it belongs to the rule #13 lane (root-cause captures promoted
+directly to fix-slices), which never passes through the slicer BY DESIGN
+(rule #16 only governs PRD-decomposition slices). That narrow exemption is
+the ONLY exemption — there is no blanket exemption for any other label.
 
-A missing trailer means the slice bypassed the slicer, violating rule #16 and
-the prescribed linear flow (grill-heavy → /to-prd → /to-issues → /ship).
+A missing trailer on a non-root-cause (PRD-decomposition) slice means the
+slice bypassed the slicer, violating rule #16 and the prescribed linear flow
+(grill-heavy → /to-prd → /to-issues → /ship).
 
 Exit codes:
-  0 — all open slice issues have the provenance trailer (or gh unavailable)
-  1 — one or more open slice issues are missing the trailer
+  0 — all slicer-lane open slice issues have the provenance trailer, and all
+      root-cause-lane slices are exempt (or gh unavailable)
+  1 — one or more slicer-lane (non-root-cause) open slice issues are missing
+      the trailer
 
 Usage:
   python3 tools/check-slicer-provenance.py
@@ -50,11 +58,69 @@ def body_has_provenance(body: str) -> bool:
     return False
 
 
+def is_root_cause_exempt(labels: Optional[list]) -> bool:
+    """Return True if the issue's labels grant the rule-#13 root-cause exemption.
+
+    Narrow by design (issue #1067): ONLY the `root-cause` label exempts a
+    slice from the Slicer-provenance requirement. No other label (e.g.
+    `captured`) grants exemption, and PRD-decomposition slices (the plain
+    `slice` label with no `root-cause`) keep the strict requirement.
+
+    Pure, unit-testable — no I/O. Tolerates a falsy/None `labels` value.
+    """
+    if not labels:
+        return False
+    for label in labels:
+        name = (label or {}).get("name", "")
+        if name == "root-cause":
+            return True
+    return False
+
+
+def classify_issues(issues: list[dict]) -> dict:
+    """Classify issues into three lane buckets (pure, unit-testable — no I/O).
+
+    Returns a dict with:
+      slicer_ok         — slicer-lane issues (no root-cause label) that DO
+                           carry the Slicer-provenance trailer
+      root_cause_exempt — issues carrying the `root-cause` label (rule #13
+                           lane); exempt from the trailer requirement
+                           regardless of whether they happen to carry one
+      missing           — slicer-lane issues (no root-cause label) that lack
+                           the trailer; still flagged (PRD-decomposition
+                           slices keep the strict requirement)
+
+    An issue with no `labels` key at all defaults to the strict slicer lane
+    (fail-safe: absence of label data must never silently exempt a slice).
+    """
+    slicer_ok: list[int] = []
+    root_cause_exempt: list[int] = []
+    missing: list[int] = []
+
+    for issue in issues:
+        number = issue["number"]
+        body = issue.get("body") or ""
+        labels = issue.get("labels")
+
+        if is_root_cause_exempt(labels):
+            root_cause_exempt.append(number)
+        elif body_has_provenance(body):
+            slicer_ok.append(number)
+        else:
+            missing.append(number)
+
+    return {
+        "slicer_ok": slicer_ok,
+        "root_cause_exempt": root_cause_exempt,
+        "missing": missing,
+    }
+
+
 def _fetch_open_slices() -> Optional[list[dict]]:
-    """Run `gh issue list --label slice --state open --json number,body`.
+    """Run `gh issue list --label slice --state open --json number,body,labels`.
 
     Returns:
-      A list of issue dicts (keys: number, body) on success.
+      A list of issue dicts (keys: number, body, labels) on success.
       None if gh is unavailable, unauthenticated, or errors.
     """
     try:
@@ -63,7 +129,7 @@ def _fetch_open_slices() -> Optional[list[dict]]:
                 "gh", "issue", "list",
                 "--label", "slice",
                 "--state", "open",
-                "--json", "number,body",
+                "--json", "number,body,labels",
                 "--limit", "200",
             ],
             capture_output=True,
@@ -130,30 +196,32 @@ def main() -> int:
         print("PASS: slicer-provenance — no open slice issues found")
         return 0
 
-    missing = [
-        issue["number"]
-        for issue in issues
-        if not body_has_provenance(issue.get("body") or "")
-    ]
+    result = classify_issues(issues)
+    slicer_ok = result["slicer_ok"]
+    root_cause_exempt = result["root_cause_exempt"]
+    missing = result["missing"]
+
+    detail = (
+        f"{len(slicer_ok)} slicer-lane ok, "
+        f"{len(root_cause_exempt)} root-cause-lane exempt, "
+        f"{len(missing)} MISSING"
+    )
 
     if missing:
         numbers = ", ".join(f"#{n}" for n in sorted(missing))
         print(
-            f"FAIL: slicer-provenance — {len(missing)} open slice issue(s) "
-            f"lack the Slicer-provenance: trailer: {numbers}",
+            f"FAIL: slicer-provenance — {detail}: {numbers}",
             file=sys.stderr,
         )
         print(
             "These slices appear to have been created outside the /to-issues "
-            "slicer pipeline (rule #16 violation).",
+            "slicer pipeline (rule #16 violation) and do not carry the "
+            "`root-cause` label (rule #13 lane exemption).",
             file=sys.stderr,
         )
         return 1
 
-    print(
-        f"PASS: slicer-provenance — all {len(issues)} open slice issue(s) "
-        "carry the Slicer-provenance: trailer"
-    )
+    print(f"PASS: slicer-provenance — {detail}")
     return 0
 
 

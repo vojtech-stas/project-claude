@@ -59,22 +59,86 @@ function Write-Info($msg) {
 }
 
 # --- Step 2: detect what's on PORT ------------------------------------------
+# Cross-platform ordered fallback chain (#1053 CI fix — GitHub Actions runs
+# this test suite on ubuntu-latest via pwsh, where Get-NetTCPConnection and
+# Windows-shaped netstat output do not exist):
+#   (a) Get-NetTCPConnection (Windows; wrapped in try/catch)
+#   (b) non-Windows only (guarded via Test-Path variable: for PS 5.1 parse
+#       safety — $IsLinux/$IsMacOS are pwsh-only automatic variables and do
+#       not exist in Windows PowerShell 5.1): lsof, then ss
+#   (c) netstat, platform-appropriate regex (Windows LISTENING shape vs
+#       Linux/macOS LISTEN shape)
 function Get-ListeningPid([int]$port) {
+    # (a) Windows: Get-NetTCPConnection
     try {
         $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop
         if ($conns) {
             return ($conns | Select-Object -First 1 -ExpandProperty OwningProcess)
         }
     } catch {
-        # Get-NetTCPConnection unavailable or no match - fall back to netstat.
-        $lines = netstat -ano 2>$null | Select-String -Pattern (":$port\s.*LISTENING")
-        foreach ($line in $lines) {
-            $parts = ($line.ToString().Trim() -split '\s+')
-            if ($parts.Length -ge 5) {
-                return [int]$parts[-1]
+        # Not available (non-Windows) or no match — fall through.
+    }
+
+    # Determine platform without referencing $IsLinux/$IsMacOS directly at
+    # parse time (those automatic variables don't exist under PS 5.1; a bare
+    # reference is harmless — PS treats an undefined variable as $null — but
+    # we guard via Test-Path so intent is explicit and Set-StrictMode-safe).
+    $onLinux = (Test-Path variable:IsLinux) -and $IsLinux
+    $onMacOS = (Test-Path variable:IsMacOS) -and $IsMacOS
+
+    if ($onLinux -or $onMacOS) {
+        # (b1) lsof
+        try {
+            $lsofOut = & lsof -t -iTCP:$port -sTCP:LISTEN 2>$null
+            if ($lsofOut) {
+                $first = ($lsofOut | Select-Object -First 1).ToString().Trim()
+                if ($first -match '^\d+$') {
+                    return [int]$first
+                }
+            }
+        } catch { }
+
+        # (b2) ss -ltnp
+        try {
+            $ssOut = & ss -ltnp 2>$null | Select-String -Pattern (":$port\s")
+            foreach ($line in $ssOut) {
+                if ($line.ToString() -match 'pid=(\d+)') {
+                    return [int]$Matches[1]
+                }
+            }
+        } catch { }
+    }
+
+    # (c) netstat, platform-appropriate regex.
+    try {
+        $netstatOut = & netstat -ano 2>$null
+        if (-not $netstatOut) {
+            $netstatOut = & netstat -lntp 2>$null
+        }
+        if ($onLinux -or $onMacOS) {
+            # Linux/macOS shape: "LISTEN ... pid=1234/python" or "... 1234/python"
+            $lines = $netstatOut | Select-String -Pattern (":$port\s.*LISTEN")
+            foreach ($line in $lines) {
+                $text = $line.ToString()
+                if ($text -match 'pid=(\d+)') {
+                    return [int]$Matches[1]
+                }
+                if ($text -match '(\d+)/\S+\s*$') {
+                    return [int]$Matches[1]
+                }
+            }
+        } else {
+            # Windows shape: "TCP  127.0.0.1:8766  0.0.0.0:0  LISTENING  1234"
+            $lines = $netstatOut | Select-String -Pattern (":$port\s.*LISTENING")
+            foreach ($line in $lines) {
+                $parts = ($line.ToString().Trim() -split '\s+')
+                if ($parts.Length -ge 5) {
+                    return [int]$parts[-1]
+                }
             }
         }
-    }
+    } catch { }
+
     return $null
 }
 

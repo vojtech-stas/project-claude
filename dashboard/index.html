@@ -3311,6 +3311,7 @@ registerTabHook('live', startSessionLive);
 
 let _sessionFiringLoaded = false;
 let _sessionFiringTimer = null;
+let _sessionFiringRetryTimer = null;  // short-interval retry while status:'computing' (issue #1061)
 
 function _firingOutcomeClass(outcome) {
   const o = (outcome || '').toUpperCase();
@@ -3414,6 +3415,18 @@ async function fetchSessionFiring() {
       return;
     }
     const data = await resp.json();
+
+    // Cold-start / background-warm: server returns {status:'computing'} while
+    // the transcript firing-tree build runs in a daemon thread (issue #1061).
+    // Show a computing state and retry shortly rather than falling through to
+    // "No dispatches found" (which would be misleading during the cold build).
+    if (data && data.status === 'computing') {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">computing… (building firing tree — will retry)</span>';
+      clearTimeout(_sessionFiringRetryTimer);
+      _sessionFiringRetryTimer = setTimeout(fetchSessionFiring, 2000);
+      return;
+    }
+
     if (srcEl) {
       const src = data.source || '';
       srcEl.textContent = src ? src.split(/[\\/]/).slice(-3).join('/') : '—';
@@ -3494,6 +3507,7 @@ async function fetchSessionFiring() {
 
 function reloadSessionFiring() {
   _sessionFiringLoaded = false;
+  clearTimeout(_sessionFiringRetryTimer);
   fetchSessionFiring();
 }
 

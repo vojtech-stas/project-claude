@@ -27,7 +27,11 @@ Public API:
   parse_transcript(path: Path) -> list[dict]
   get_session_events() -> dict  (for /api/session-live)
   build_firing_tree(path: Path) -> dict  (for /api/session-firing)
-  get_session_firing() -> dict  (cached, for /api/session-firing)
+  get_session_firing() -> dict  (cached, BLOCKING — see serve_session_firing)
+  serve_session_firing() -> dict  (NON-BLOCKING — HTTP handler, issue #1061)
+    Stale-while-revalidate: warm cache -> immediate; cold/stale -> returns
+    {"status":"computing"} or last-known+refreshing, kicks a background
+    daemon thread to build. Mirrors prd_firing.serve_prd_firing() (#962).
   get_runtime_reading() -> dict  (cached, for /api/runtime-reading)
 
 CLI:
@@ -1508,6 +1512,13 @@ _firing_cache: dict = {
 }
 _firing_cache_lock = _threading.Lock()
 
+# ---------------------------------------------------------------------------
+# Background-warm state for serve_session_firing() (issue #1061)
+# Mirrors prd_firing._cache_computing (issue #962) — a single daemon thread
+# builds the tree while the HTTP request path returns immediately.
+# ---------------------------------------------------------------------------
+_firing_cache_computing: bool = False
+
 
 def get_session_firing() -> dict:
     """Return the firing tree dict for /api/session-firing.
@@ -1561,6 +1572,103 @@ def get_session_firing() -> dict:
         _firing_cache["size"]   = size
         _firing_cache["result"] = result
     return result
+
+
+def _firing_background() -> None:
+    """Build the firing tree in a background thread and populate _firing_cache.
+
+    Called by serve_session_firing() on cold start / stale cache. Reuses the
+    existing get_session_firing() (blocking) computation so the mtime+size
+    cache-write logic (slice #997) is not duplicated. Always clears the
+    computing flag in the finally block, even on failure.
+    """
+    global _firing_cache_computing
+    try:
+        get_session_firing()
+    except Exception:
+        pass  # get_session_firing() already returns honest-empty on error
+    finally:
+        with _firing_cache_lock:
+            _firing_cache_computing = False
+
+
+def serve_session_firing() -> dict:
+    """Stale-while-revalidate serve path for /api/session-firing (issue #1061).
+
+    ALWAYS returns immediately (target: <1s, typically <10ms):
+      - Warm cache (transcript unchanged — same path/mtime/size): return
+        cached tree.
+      - Stale cache (transcript changed): return last-known tree with
+        "refreshing": true and kick a background rebuild (if not already
+        running).
+      - Cold (no prior payload): return {"status": "computing"} and kick a
+        background rebuild.
+
+    Mirrors prd_firing.serve_prd_firing() (issue #962) and
+    health.py::serve_health(). The mtime+size parse-cache (slice #997) only
+    sped up WARM loads; this wrapper additionally takes the cold/first-hit
+    cost off the request path entirely.
+    """
+    global _firing_cache_computing
+
+    path = resolve_transcript()
+    if path is None:
+        return {
+            "groups": {},
+            "nested_groups": {},
+            "research_other": [],
+            "dispatch_count": 0,
+            "source": "",
+            "error": "no transcript file found",
+        }
+
+    try:
+        st = path.stat()
+        mtime = st.st_mtime
+        size  = st.st_size
+    except Exception as exc:
+        return {
+            "groups": {},
+            "nested_groups": {},
+            "research_other": [],
+            "dispatch_count": 0,
+            "source": str(path),
+            "error": f"stat failed: {exc}",
+        }
+
+    with _firing_cache_lock:
+        fresh = (
+            _firing_cache["path"]  == path
+            and _firing_cache["mtime"] == mtime
+            and _firing_cache["size"]  == size
+            and _firing_cache["result"] is not None
+        )
+        if fresh:
+            # Cache matches current transcript state — serve immediately.
+            return _firing_cache["result"]  # type: ignore[return-value]
+
+        stale_result = _firing_cache["result"]
+
+        if stale_result is not None:
+            # Transcript changed since last build — serve stale + refresh.
+            payload = dict(stale_result)
+            payload["refreshing"] = True
+            if not _firing_cache_computing:
+                _firing_cache_computing = True
+                t = _threading.Thread(target=_firing_background, daemon=True)
+                t.start()
+            return payload
+
+        # No payload yet (true cold start) — kick background build if not
+        # already running.
+        if _firing_cache_computing:
+            return {"status": "computing"}
+        _firing_cache_computing = True
+
+    # Start background thread outside the lock.
+    t = _threading.Thread(target=_firing_background, daemon=True)
+    t.start()
+    return {"status": "computing"}
 
 
 # ---------------------------------------------------------------------------

@@ -3412,6 +3412,44 @@ def check_tests_collected() -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _test_ordering_classify_commits(commit_shas, sp_module, repo_root):
+    """Classify an ordered commit-sha sequence for test-before-fix ordering.
+
+    Returns (first_test_idx, first_fix_idx) — same file-touch classification
+    logic used by both the direct-history path and the gh-aware squash path
+    (slice #1060). A commit "touches_tests" if any changed file starts with
+    tests/; "touches_non_tests" if any changed file does not. A commit that
+    touches BOTH counts only toward first_test_idx (mirrors pre-#1060
+    behavior for mixed commits) so classification stays stable regardless
+    of source (direct history vs gh PR commit list).
+
+    If a commit's diff-tree call fails, that commit is skipped for
+    classification purposes; the caller (squash path) verifies commit-oid
+    reachability separately (git cat-file) BEFORE calling this helper, so
+    an unreachable oid never silently degrades to "no test commit found".
+    """
+    first_test_idx = None
+    first_fix_idx = None
+    for idx, sha in enumerate(commit_shas):
+        try:
+            files_result = sp_module.run(
+                ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", sha],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=10,
+                cwd=str(repo_root),
+            )
+            changed = files_result.stdout.splitlines()
+        except Exception:
+            continue
+        touches_tests = any(f.startswith("tests/") for f in changed)
+        touches_non_tests = any(not f.startswith("tests/") for f in changed)
+        if touches_tests and first_test_idx is None:
+            first_test_idx = idx
+        if touches_non_tests and not touches_tests and first_fix_idx is None:
+            first_fix_idx = idx
+    return first_test_idx, first_fix_idx
+
+
 def check_test_ordering() -> dict:
     """TEST-ORDERING: % of fix-type PRs where test commit precedes fix commit.
 
@@ -3420,18 +3458,31 @@ def check_test_ordering() -> dict:
 
     Algorithm:
     1. Fetch recently merged PRs whose headRefName starts with fix/.
-    2. For each, check whether any commit in the PR branch touched tests/
-       and whether that commit precedes (is an ancestor of) the first
-       non-tests-only commit. Uses `git log --name-only` on the PR's
-       merge commit range when available.
-    3. Report: ordered/<total> with honest grandfathered bucket for PRs
-       merged before this check's activation (pre-ADR-0067-D2).
+    2. Squash-merge detection (slice #1060 / ADR-0042 D3): the pipeline's
+       ONLY merge mode is squash-merge, which collapses a PR's test+fix
+       commits into ONE develop commit. A merge commit with exactly one
+       parent is a squash (a merge-preserving strategy would have two).
+       For such PRs, fetch the PR's ORIGINAL branch commit list via
+       `gh pr view N --json commits` (routed through the health gh_cache
+       seam) and evaluate ordering on THAT sequence — using the same
+       file-touch classification logic — instead of the collapsed
+       develop-history commit. This also avoids the direct-history range
+       walk picking up unrelated sibling PRs' commits (root-cause of the
+       false-negatives on PRs 1045/1047/1049/1051/1055/1058).
+       Degrade: if gh is unavailable, or a commit oid gh reports is no
+       longer reachable locally, the PR is bucketed 'unverifiable' — never
+       silently ordered, never falsely disordered.
+    3. Non-squash / single-commit PRs keep the existing direct-history path
+       (`git log --name-only` over the PR's merge-commit range).
+    4. Report: ordered/<total> with honest grandfathered + unverifiable
+       buckets for PRs merged before this check's activation
+       (pre-ADR-0067-D2) or whose ordering could not be determined.
 
     Honest grandfathering (ADR-0004 D2): fix-type PRs merged before the
     R-PROVE reviewer rule merge cannot be held to the ordering standard.
     We grandfather all fix/* PRs with merge number < the R-PROVE slice
-    (issue #816). PASS = 100% of post-activation PRs conform, or no
-    post-activation PRs yet (WARN).
+    (issue #816). PASS = 100% of post-activation, verifiable PRs conform,
+    or no post-activation PRs yet (WARN).
     """
     import json as _json
     import subprocess as _sp
@@ -3471,6 +3522,7 @@ def check_test_ordering() -> dict:
     grandfathered_count = 0
     ordered = 0
     disordered = []
+    unverifiable = []
     post_activation = []
 
     for pr in fix_prs:
@@ -3491,42 +3543,87 @@ def check_test_ordering() -> dict:
             # Cannot check — treat as WARN (not FAIL); count but mark unknown
             continue
 
-        # Get commit list for this PR using git log
+        # Squash-merge detection: a merge commit with exactly one parent is
+        # a squash (a merge-preserving strategy produces two parents).
+        is_squash = False
         try:
-            result = _sp.run(
-                ["git", "log", "--reverse", "--pretty=%H",
-                 f"origin/main...{merge_commit}", "--"],
+            parents_result = _sp.run(
+                ["git", "show", "-s", "--format=%P", merge_commit],
                 capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=15,
+                errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
-            commit_shas = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+            parent_shas = parents_result.stdout.split()
+            is_squash = len(parent_shas) <= 1
         except Exception:
+            is_squash = False
+
+        commit_shas = None
+        squash_unverifiable = False
+
+        if is_squash:
+            # gh-aware path: read the PR's ORIGINAL branch commit list.
+            gh_commits = _gh_json(["pr", "view", str(pr_num), "--json", "commits"])
+            if gh_commits is None or not gh_commits.get("commits"):
+                squash_unverifiable = True
+            else:
+                gh_commit_list = gh_commits["commits"]
+                if len(gh_commit_list) <= 1:
+                    # Single-commit PR — squash collapse is a no-op; direct
+                    # history path below already covers it correctly.
+                    is_squash = False
+                else:
+                    oids = [c.get("oid", "") for c in gh_commit_list]
+                    # Verify every commit object is still reachable locally
+                    # (gh retains the metadata even after squash, but the
+                    # underlying blobs could theoretically be GC'd).
+                    all_reachable = True
+                    for oid in oids:
+                        if not oid:
+                            all_reachable = False
+                            break
+                        try:
+                            check_result = _sp.run(
+                                ["git", "cat-file", "-t", oid],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=10,
+                                cwd=str(_HEALTH_REPO_ROOT),
+                            )
+                            if check_result.returncode != 0:
+                                all_reachable = False
+                                break
+                        except Exception:
+                            all_reachable = False
+                            break
+                    if all_reachable:
+                        commit_shas = oids
+                    else:
+                        squash_unverifiable = True
+
+        if squash_unverifiable:
+            unverifiable.append(pr_num)
             continue
+
+        if commit_shas is None:
+            # Direct-history path (non-squash, or single-commit PR).
+            try:
+                result = _sp.run(
+                    ["git", "log", "--reverse", "--pretty=%H",
+                     f"origin/main...{merge_commit}", "--"],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=15,
+                    cwd=str(_HEALTH_REPO_ROOT),
+                )
+                commit_shas = [l.strip() for l in result.stdout.splitlines() if l.strip()]
+            except Exception:
+                continue
 
         if not commit_shas:
             continue
 
-        # For each commit, check whether it touches tests/
-        first_test_idx = None
-        first_fix_idx = None
-        for idx, sha in enumerate(commit_shas):
-            try:
-                files_result = _sp.run(
-                    ["git", "diff-tree", "--no-commit-id", "-r", "--name-only", sha],
-                    capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=10,
-                    cwd=str(_HEALTH_REPO_ROOT),
-                )
-                changed = files_result.stdout.splitlines()
-            except Exception:
-                continue
-            touches_tests = any(f.startswith("tests/") for f in changed)
-            touches_non_tests = any(not f.startswith("tests/") for f in changed)
-            if touches_tests and first_test_idx is None:
-                first_test_idx = idx
-            if touches_non_tests and not touches_tests and first_fix_idx is None:
-                first_fix_idx = idx
+        first_test_idx, first_fix_idx = _test_ordering_classify_commits(
+            commit_shas, _sp, _HEALTH_REPO_ROOT,
+        )
 
         if first_test_idx is not None and first_fix_idx is not None:
             if first_test_idx < first_fix_idx:
@@ -3536,9 +3633,12 @@ def check_test_ordering() -> dict:
         elif first_test_idx is not None:
             # Only test commits — counts as ordered (no fix commit yet / docs-only fix)
             ordered += 1
-        # else: no test commit found — counts as disordered
+        # else: no test commit found — counts as disordered (pre-existing:
+        # no explicit bucket append here; out of scope for slice #1060,
+        # which addresses squash-merge misdetection only).
 
     total_post = len(post_activation)
+    verifiable_total = total_post - len(unverifiable)
     if total_post == 0:
         result_val = "WARN"
         detail = (
@@ -3548,15 +3648,17 @@ def check_test_ordering() -> dict:
     elif disordered:
         result_val = "WARN"
         detail = (
-            f"{ordered}/{total_post} ordered "
+            f"{ordered}/{verifiable_total} ordered "
             f"(grandfathered: {grandfathered_count}; "
+            f"unverifiable: {unverifiable}; "
             f"disordered PRs: {disordered})"
         )
     else:
         result_val = "PASS"
         detail = (
-            f"{ordered}/{total_post} fix-type PRs have test-first ordering "
-            f"(grandfathered pre-ADR-0067-D2: {grandfathered_count})"
+            f"{ordered}/{verifiable_total} fix-type PRs have test-first ordering "
+            f"(grandfathered pre-ADR-0067-D2: {grandfathered_count}; "
+            f"unverifiable: {unverifiable})"
         )
 
     return {
@@ -3567,6 +3669,7 @@ def check_test_ordering() -> dict:
         "total": total_post,
         "grandfathered": grandfathered_count,
         "disordered": disordered,
+        "unverifiable": unverifiable,
     }
 
 

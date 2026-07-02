@@ -135,7 +135,7 @@ def _build_repo_map() -> str:
         ("promote.sh",     "tools/promote.sh",      "Promote develop→main via RELEASE-READY gate"),
         ("run_evals.py",   "tools/run_evals.py",    "Run critic golden-set evals on-demand"),
         ("check-slicer-provenance.py","tools/check-slicer-provenance.py",
-         "Verify all open slice issues carry Slicer-provenance trailer"),
+         "Verify slicer-lane slice issues carry Slicer-provenance trailer (root-cause lane exempt)"),
     ]
     for tool_name, tool_path, tool_desc in _TOOLS:
         full_path = REPO_ROOT / tool_path

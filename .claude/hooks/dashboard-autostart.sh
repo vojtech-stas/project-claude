@@ -60,6 +60,17 @@ fi
 # Resolve restart helper (tools/restart-dashboard.sh in the main repo root).
 RESTART_HELPER="$MAIN_ROOT/tools/restart-dashboard.sh"
 
+# --- Windows/PowerShell delegation (#1053) ---
+# On Windows with PowerShell available, delegate to the managed lifecycle
+# helper (tools/dashboard-up.ps1): it survives session exit (detached launch)
+# and independently detects staleness (#726 class). Falls through to the
+# curl-based bash logic below when PowerShell is unavailable.
+DASHBOARD_UP_PS1="$MAIN_ROOT/tools/dashboard-up.ps1"
+if [ -f "$DASHBOARD_UP_PS1" ] && command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -File "$DASHBOARD_UP_PS1" >&2 || warn "dashboard-up.ps1 exited non-zero"
+  exit 0
+fi
+
 # --- Idempotency check (ADR-0033 D1.4): is the server already up on 127.0.0.1:8765? ---
 HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 http://127.0.0.1:8765/api/architecture 2>/dev/null || echo "000")
 

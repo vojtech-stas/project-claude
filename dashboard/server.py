@@ -140,6 +140,12 @@ def _build_status() -> dict:
       server_sha, stale             — server startup identity (mirrors /api/meta)
       hooks_live                    — {alive, newest_beacon_ts, age_minutes}
       last_event                    — {ts, age_minutes} from workflow-events.jsonl
+      last_activity                 — {ts, age_minutes, source} = newer of
+                                       hooks_live vs last_event, source is
+                                       "hook-beacon" | "workflow-event" | None
+                                       (slice #1054 — honest freshness; events
+                                       log can go stale for days while beacons
+                                       keep flowing on resumed sessions)
       main_green                    — {sha, lag, age_hours} from GREEN-MAIN check
       health_summary                — {pass, warn, fail} counts across all checks
       open_work                     — {prs, slices, captured, backlog} open counts
@@ -243,6 +249,47 @@ def _build_status() -> dict:
             age_min = round((time.time() - newest_event_ts) / 60.0, 1)
             last_event = {"ts": newest_event_str, "age_minutes": age_min}
 
+    # --- last_activity: honest freshness = newer of hook-beacon vs workflow-event ---
+    # Rationale (slice #1054): workflow-events.jsonl can go stale for days
+    # (SessionStart doesn't fire on resumed sessions) while hook-fires.jsonl
+    # beacons keep flowing during active work. Consulting last_event alone
+    # produces a false "no events" / "event 150h ago" reading even when the
+    # system is actively running. last_activity picks whichever log has the
+    # newer timestamp and labels its source so the UI can be honest about
+    # which signal it's showing. Additive — last_event's shape is unchanged
+    # for any other consumer relying on it.
+    beacon_ts_for_activity = hooks_live.get("newest_beacon_ts")
+    event_ts_for_activity = last_event.get("ts")
+    last_activity = {"ts": None, "age_minutes": None, "source": None}
+    _beacon_epoch = None
+    _event_epoch = None
+    if beacon_ts_for_activity:
+        try:
+            _beacon_epoch = datetime.fromisoformat(
+                beacon_ts_for_activity.replace("Z", "+00:00")
+            ).timestamp()
+        except Exception:
+            _beacon_epoch = None
+    if event_ts_for_activity:
+        try:
+            _event_epoch = datetime.fromisoformat(
+                event_ts_for_activity.replace("Z", "+00:00")
+            ).timestamp()
+        except Exception:
+            _event_epoch = None
+    if _beacon_epoch is not None and (_event_epoch is None or _beacon_epoch >= _event_epoch):
+        last_activity = {
+            "ts": beacon_ts_for_activity,
+            "age_minutes": round((time.time() - _beacon_epoch) / 60.0, 1),
+            "source": "hook-beacon",
+        }
+    elif _event_epoch is not None:
+        last_activity = {
+            "ts": event_ts_for_activity,
+            "age_minutes": round((time.time() - _event_epoch) / 60.0, 1),
+            "source": "workflow-event",
+        }
+
     # --- main_green: reuse GREEN-MAIN check from health.py ---
     from health import check_green_main as _check_green_main
     gm = _check_green_main()
@@ -333,6 +380,7 @@ def _build_status() -> dict:
         "stale": stale,
         "hooks_live": hooks_live,
         "last_event": last_event,
+        "last_activity": last_activity,
         "main_green": main_green,
         "health_summary": health_summary,
         "open_work": open_work,

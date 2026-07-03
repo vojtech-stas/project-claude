@@ -335,6 +335,58 @@ def _event_type_from_cmd(cmd: str) -> str:
     return ""
 
 
+# AUTO-MODE derived-key tables — MUST mirror log-tool-event.sh's python block
+# (_PRE / _POST dicts) exactly. When event_type_arg == "auto", the script does
+# NOT beacon "ok"/"error" under the literal "auto" key: it derives the real
+# event_type at runtime from (hook_event_name, tool_name) and beacons under
+# THAT name instead (see log-tool-event.sh AUTO-MODE block). Only the bash-
+# level "attempt" beacon (written before parsing) ever uses the literal "auto"
+# argument. So an "auto"-registered hook's telemetry must be aggregated across
+# the whole set of derived keys its (event, matcher) pair can produce — never
+# just the single literal "auto" key (slice #1056; classification gap, not
+# the #1021/#1052 path-routing class).
+_AUTO_PRE_MAP = {"Agent": "agent_start", "Skill": "skill_invoke"}
+_AUTO_POST_MAP = {"Agent": "agent_complete", "Bash": "bash_complete", "AskUserQuestion": "grill_qa"}
+_AUTO_PRE_FALLBACK = "pre_tool"
+_AUTO_POST_FALLBACK = "post_tool"
+
+
+def _auto_mode_derived_keys(event: str, matcher: str) -> list:
+    """Return the set of telemetry keys an "auto"-mode hook's beacons can carry.
+
+    Given the settings.json `event` (PreToolUse/PostToolUse) and `matcher`
+    (pipe-separated tool-name alternation, e.g. "Agent|Skill"), returns every
+    distinct derived event-type key log-tool-event.sh's AUTO-MODE block could
+    produce for a tool call matching that matcher — mirroring the _PRE/_POST
+    dicts + "pre_tool"/"post_tool" fallback in log-tool-event.sh verbatim.
+    """
+    tool_names = [t for t in matcher.split("|") if t] or [""]
+    is_post = event == "PostToolUse"
+    table = _AUTO_POST_MAP if is_post else _AUTO_PRE_MAP
+    fallback = _AUTO_POST_FALLBACK if is_post else _AUTO_PRE_FALLBACK
+    keys = []
+    for tool_name in tool_names:
+        key = table.get(tool_name, fallback)
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _aggregate_auto_telemetry(telemetry: dict, event: str, matcher: str) -> dict:
+    """Sum fire_count/error_count and max last_fired across an auto hook's derived keys."""
+    agg = {"fire_count": 0, "error_count": 0, "last_fired": None}
+    for key in _auto_mode_derived_keys(event, matcher):
+        data = telemetry.get(key)
+        if not data:
+            continue
+        agg["fire_count"] += data.get("fire_count", 0)
+        agg["error_count"] += data.get("error_count", 0)
+        last = data.get("last_fired")
+        if last and (agg["last_fired"] is None or last > agg["last_fired"]):
+            agg["last_fired"] = last
+    return agg
+
+
 def discover_hooks() -> list:
     settings_path = _DISCOVERY_REPO_ROOT / ".claude" / "settings.json"
     hooks = []
@@ -369,10 +421,16 @@ def discover_hooks() -> list:
                     # shared script stem "log-tool-event".
                     event_type_arg = _event_type_from_cmd(cmd)
                     telemetry_key = event_type_arg if event_type_arg else clean_name
-                    fire_data = telemetry.get(
-                        telemetry_key,
-                        {"fire_count": 0, "error_count": 0, "last_fired": None},
-                    )
+                    if event_type_arg == "auto":
+                        # AUTO-MODE (slice #1056): the literal "auto" argument is never
+                        # the beacon key for status ok/error — aggregate across the
+                        # runtime-derived key set instead (see _auto_mode_derived_keys).
+                        fire_data = _aggregate_auto_telemetry(telemetry, event, matcher)
+                    else:
+                        fire_data = telemetry.get(
+                            telemetry_key,
+                            {"fire_count": 0, "error_count": 0, "last_fired": None},
+                        )
                     hooks.append({
                         "name": telemetry_key if event_type_arg else clean_name,
                         "clean_name": telemetry_key if event_type_arg else clean_name,

@@ -52,11 +52,56 @@ if (Test-Path $LiveDashboardWorktree) {
     $TARGET = $RepoRoot
 }
 
-$IsLiveDashboardTarget = ($TARGET -eq $LiveDashboardWorktree)
-
 function Write-Info($msg) {
     Write-Host "[dashboard-up] $msg"
 }
+
+# --- Target classification: git truth, not path heuristics ------------------
+# #1059: the old classification compared $TARGET against a single hardcoded
+# ".claude\worktrees\live-dashboard" path. That fails whenever dashboard-up.ps1
+# is invoked FROM inside a worktree whose own path doesn't match that literal
+# (e.g. $RepoRoot itself resolves to the worktree because the script lives in
+# that worktree's own tools/ dir) -- the check silently falls through to
+# treating the worktree as "repo root" and SKIPS the freshness reset.
+#
+# Ask git instead: a target is a WORKTREE iff `git rev-parse --git-dir` !=
+# `git rev-parse --git-common-dir` (a real repo root has git-dir ==
+# common-dir == ".git"; any linked worktree's git-dir lives under
+# <common-dir>/worktrees/<name>, which is OUTSIDE the target). This is true
+# regardless of what the worktree happens to be named or where it sits on
+# disk.
+function Resolve-GitPathAgainst([string]$baseDir, [string]$gitPath) {
+    # `git rev-parse --git-dir` / `--git-common-dir` may print EITHER a
+    # relative path (resolved against $baseDir) OR an absolute path
+    # (typically when the repo lives on a different drive/mount than
+    # $baseDir). PowerShell's own Join-Path does NOT collapse when the
+    # second argument is already rooted (it naively concatenates), so use
+    # [System.IO.Path]::Combine + GetFullPath, which correctly discards the
+    # base when $gitPath is absolute -- matching POSIX/.NET semantics.
+    $combined = [System.IO.Path]::Combine($baseDir, $gitPath)
+    return [System.IO.Path]::GetFullPath($combined).TrimEnd('\', '/')
+}
+
+function Test-IsGitWorktree([string]$targetDir) {
+    try {
+        $gitDir = (git -C "$targetDir" rev-parse --git-dir 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not $gitDir) {
+            return $false
+        }
+        $commonDir = (git -C "$targetDir" rev-parse --git-common-dir 2>$null)
+        if ($LASTEXITCODE -ne 0 -or -not $commonDir) {
+            return $false
+        }
+        $gitDirFull = Resolve-GitPathAgainst -baseDir $targetDir -gitPath $gitDir.Trim()
+        $commonDirFull = Resolve-GitPathAgainst -baseDir $targetDir -gitPath $commonDir.Trim()
+        return ($gitDirFull -ne $commonDirFull)
+    } catch {
+        return $false
+    }
+}
+
+$IsLiveDashboardTarget = Test-IsGitWorktree -targetDir $TARGET
+$TargetClassification = if ($IsLiveDashboardTarget) { "worktree" } else { "root" }
 
 # --- Step 2: detect what's on PORT ------------------------------------------
 # Cross-platform ordered fallback chain (#1053 CI fix — GitHub Actions runs
@@ -183,6 +228,7 @@ if ($existingPid) {
 # --- CheckOnly mode: report decision, touch nothing -------------------------
 if ($CheckOnly) {
     Write-Info "target=$TARGET"
+    Write-Info "classification: $TargetClassification"
     Write-Info "port=$PORT"
     Write-Info "developSha=$developSha"
     if ($existingPid) {
@@ -214,13 +260,13 @@ if ($decision -eq "stale-relaunch") {
     }
 }
 
-# --- Step 3: update target (ONLY the live-dashboard worktree) ---------------
+# --- Step 3: update target (ONLY when classification=worktree) --------------
 if ($IsLiveDashboardTarget) {
-    Write-Info "updating live-dashboard worktree to origin/develop..."
+    Write-Info "target classified as worktree - updating to origin/develop..."
     git -C "$TARGET" fetch origin develop 2>&1 | ForEach-Object { Write-Info "  $_" }
     git -C "$TARGET" reset --hard origin/develop 2>&1 | ForEach-Object { Write-Info "  $_" }
 } else {
-    Write-Info "target is repo root - skipping reset, serving as-is"
+    Write-Info "target classified as repo root - skipping reset, serving as-is"
 }
 
 # --- Step 4: launch DETACHED --------------------------------------------------

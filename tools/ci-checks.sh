@@ -944,13 +944,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK 19: Slicer-provenance guard (PRD #919 slice #922)
+# CHECK 19: Slicer-provenance guard (PRD #919 slice #922; lanes per slice #1067)
 #   Queries open `slice`-labeled GitHub issues and flags any that lack the
 #   `Slicer-provenance:` trailer written by `/to-issues` (rule #16 + linear
-#   flow convention).  Enforces the mandatory slicer step: slices MUST be
-#   created via /to-issues (slicer + slicer-critic), not hand-crafted via gh.
-#   Scope: `slice`-labeled issues only — trivial-lane (I3) PRs are never
-#   affected.  Soft-degrades if gh is missing or unauthenticated in CI.
+#   flow convention).  Enforces the mandatory slicer step: PRD-decomposition
+#   slices MUST be created via /to-issues (slicer + slicer-critic), not
+#   hand-crafted via gh.  EXEMPTION (narrow): slices carrying the
+#   `root-cause` label are the rule-#13 lane, which never passes through the
+#   slicer BY DESIGN, and are exempt from the trailer requirement — no other
+#   label grants exemption.  Scope: `slice`-labeled issues only —
+#   trivial-lane (I3) PRs are never affected (no slice issue exists for
+#   them).  Soft-degrades if gh is missing or unauthenticated in CI.
 #   Calls the standalone script directly (NOT via --check <ID>) so PARITY
 #   is unaffected and no false registry-orphan is created.
 # ---------------------------------------------------------------------------

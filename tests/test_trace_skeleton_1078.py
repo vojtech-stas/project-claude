@@ -483,6 +483,100 @@ class TestPrMergePendingConfirm(unittest.TestCase):
         )
 
 
+class TestPrMergeRestChecksOnNonzeroGhExit(unittest.TestCase):
+    """Regression for slice #1100 (root-cause, proven live on PR #1095's
+    merge): gh can exit non-zero AFTER a successful server-side merge
+    ('Auto merge is not allowed for this repository' / a --delete-branch
+    race with a sibling worktree holding the branch — both reported AFTER
+    the merge already completed). `_do_default` must REST-check merged
+    state before concluding failure on ANY non-zero gh exit — a real merge
+    must never be silently lost with no span (rule #13 / ADR-0067 D3).
+
+    FAILS before the fix: `_do_default` only ever calls the REST-confirm
+    path when the `gh pr merge` command itself returned 0; on a nonzero
+    exit it exhausts its retry budget and returns failure WITHOUT ever
+    consulting the REST API — so a PR that is actually merged is reported
+    as failed, with no span (the exact silent-half-success the wrapper
+    exists to kill).
+    PASSES after the fix: on exhausting the retry budget with a nonzero gh
+    exit, the wrapper REST-checks once more; if the PR is actually merged
+    it appends exactly one span and exits 0; if genuinely unmerged, the
+    existing failure contract (nonzero exit, no span, never colliding with
+    the reserved MERGE-PENDING exit code 3) is unchanged.
+    """
+
+    def setUp(self):
+        if not PR_MERGE.exists():
+            self.skip_reason = f"tools/pipe/pr-merge not found at {PR_MERGE}"
+        else:
+            self.skip_reason = None
+        self.tmp = tempfile.mkdtemp(prefix="pr_merge_falseneg_test_")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, args, env_updates, cwd=None):
+        if self.skip_reason:
+            self.fail(self.skip_reason)
+        env = os.environ.copy()
+        env.update(env_updates)
+        cmd = [sys.executable, str(PR_MERGE)] + args
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(REPO_ROOT), env=env, timeout=30)
+
+    def test_nonzero_gh_exit_after_real_merge_still_appends_span(self):
+        """gh pr merge exits 1 (simulating the 'Auto merge is not allowed'
+        quirk reported AFTER the merge already happened server-side); REST
+        reports merged=true throughout. The wrapper must confirm + append
+        exactly ONE pr_merged span and exit 0 — never a false-negative."""
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        env_updates = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+            "FAKE_GH_MERGE_EXIT": "1",
+            "FAKE_GH_MERGE_STDERR": "GraphQL: Auto merge is not allowed for this repository",
+            "FAKE_GH_UPDATE_BRANCH_EXIT": "0",
+            "FAKE_GH_CHECKS_EXIT": "0",
+            "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "abc999real"}),
+            "PR_MERGE_BUDGET_S": "0",
+        }
+        result = self._run(["1095"], env_updates)
+        self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        lines = _read_jsonl(log_path)
+        self.assertEqual(len(lines), 1, f"expected exactly 1 pr_merged span, got {lines}")
+        span = lines[0]
+        self.assertEqual(span["kind"], "pr_merged")
+        self.assertEqual(span["attrs"]["pr"], "1095")
+        self.assertEqual(span["attrs"]["sha"], "abc999real")
+
+    def test_genuinely_unmerged_nonzero_exit_still_fails_no_span(self):
+        """Contrast case: gh exits nonzero AND the REST API confirms the PR
+        is genuinely NOT merged — existing failure contract unchanged
+        (nonzero exit, no span, never exit 3 — that code is reserved
+        exclusively for the MERGE-PENDING re-invoke contract)."""
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        env_updates = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+            "FAKE_GH_MERGE_EXIT": "1",
+            "FAKE_GH_MERGE_STDERR": "some other real gh failure",
+            "FAKE_GH_UPDATE_BRANCH_EXIT": "0",
+            "FAKE_GH_CHECKS_EXIT": "0",
+            "FAKE_GH_API_JSON": json.dumps({"merged": False}),
+            "PR_MERGE_BUDGET_S": "0",
+        }
+        result = self._run(["1096"], env_updates)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotEqual(
+            result.returncode, 3,
+            "genuine non-merge must not collide with the reserved MERGE-PENDING exit-3 contract",
+        )
+        lines = _read_jsonl(log_path)
+        self.assertEqual(len(lines), 0, f"genuinely-unmerged PR must write NO span; got {lines}")
+
+
 # ---------------------------------------------------------------------------
 # (d) acid query — ordered causal path / explicit failure for unknown PR
 # ---------------------------------------------------------------------------

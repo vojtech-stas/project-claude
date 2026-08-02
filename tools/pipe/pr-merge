@@ -10,8 +10,19 @@ Real-path repoint target for reviewer.md's APPROVE-merge action + BEHIND-
 retry loop (slice #1078 / PRD #1075 criterion 1): embodies the existing
 retry protocol (gh pr update-branch -> poll ci checks -> retry --auto,
 bounded 3 attempts total) so the reviewer's inline prose collapses to one
-wrapper call. NEVER plain `--squash` — always `--squash --auto --delete-branch`
-(preserves the existing reviewer.md merge protocol's branch cleanup).
+wrapper call. NEVER plain `--squash` — always `--squash --auto` (no
+`--delete-branch`: worktree-guard prune owns branch cleanup post-merge;
+the flag only produced post-merge noise — "failed to delete local
+branch ... used by worktree" — that masked genuine merge success; slice
+#1100).
+
+FALSE-NEGATIVE FIX (slice #1100, root-cause proven live on PR #1095's
+merge): `gh pr merge` can exit non-zero AFTER the merge already
+succeeded server-side (the "Auto merge is not allowed for this
+repository" quirk observed here). `_do_default` therefore REST-checks
+merged state (via `_check_merged_once`) before concluding failure on
+ANY non-zero gh exit — never trusting a raw exit code alone to mean
+"no merge happened".
 
 BOUNDED-BUDGET DESIGN (reviewer round-1 finding #2, PR #1089): a single
 invocation of this script — whether the default mode or --confirm mode —
@@ -196,7 +207,7 @@ def _do_default(pr, deadline, start):
         # The merge command itself is a single cheap call — always attempt it
         # at least once regardless of remaining budget. The deadline only
         # bounds the (potentially slow) BEHIND-class retry cycle below.
-        res = _run_gh(["pr", "merge", pr, "--squash", "--auto", "--delete-branch"])
+        res = _run_gh(["pr", "merge", pr, "--squash", "--auto"])
         sys.stdout.write(res.stdout)
         sys.stderr.write(res.stderr)
         last_returncode = res.returncode
@@ -211,10 +222,17 @@ def _do_default(pr, deadline, start):
         _poll_checks_until_green(pr, deadline)
 
     if not merged_command_ok:
-        print(f"pr-merge: gh pr merge did not succeed for PR #{pr} within budget; no span written", file=sys.stderr)
-        # Exit 3 is reserved exclusively for the MERGE-PENDING contract —
-        # never let a raw gh exit code collide with that meaning.
-        return last_returncode if last_returncode not in (0, 3) else 1
+        # A non-zero gh exit is NOT proof no merge happened — gh can exit
+        # non-zero AFTER a successful server-side merge (e.g. "Auto merge is
+        # not allowed for this repository"). REST-check before concluding
+        # failure so a real merge is never silently lost (slice #1100).
+        merged_despite_gh_exit, _sha_despite_gh_exit = _check_merged_once(pr)
+        if not merged_despite_gh_exit:
+            print(f"pr-merge: gh pr merge did not succeed for PR #{pr} within budget; no span written", file=sys.stderr)
+            # Exit 3 is reserved exclusively for the MERGE-PENDING contract —
+            # never let a raw gh exit code collide with that meaning.
+            return last_returncode if last_returncode not in (0, 3) else 1
+        print(f"pr-merge: gh exited non-zero for PR #{pr} but REST confirms merged=true — proceeding", file=sys.stderr)
 
     trace = _load_trace()
     existing = _existing_pr_merged_span(trace, pr)

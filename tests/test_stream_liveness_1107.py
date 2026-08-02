@@ -151,8 +151,15 @@ class TestFixtureA_SessionScopedOldButSynced(unittest.TestCase):
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},  # fresh always-on
                     # grill_qa (on-demand): never fired — must not FAIL either.
                 ],
+                # Post-explosion (slice #1136): every always-on v3 kind needs
+                # a fresh span too, or this "should PASS" fixture would pick
+                # up unrelated v3-kind never-fired FAILs.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )
@@ -232,8 +239,14 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     {"hook": "grill_qa", "ts": _iso(now - days_seconds)},
                 ],
+                # Post-explosion (slice #1136): full always-on v3 coverage so
+                # this fixture isolates the grill_qa on-demand behavior.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )
@@ -266,8 +279,14 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     # grill_qa: no entry at all -- never fired.
                 ],
+                # Post-explosion (slice #1136): full always-on v3 coverage so
+                # this fixture isolates the grill_qa on-demand behavior.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )
@@ -294,8 +313,14 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     {"hook": "skill_invoke", "ts": _iso(now - days_seconds)},
                 ],
+                # Post-explosion (slice #1136): full always-on v3 coverage so
+                # this fixture isolates the skill_invoke on-demand behavior.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )
@@ -326,8 +351,13 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     # skill_invoke: no entry at all -- never fired.
                 ],
+                # Post-explosion (slice #1136): full always-on v3 coverage.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )

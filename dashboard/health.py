@@ -36,6 +36,9 @@ Exports:
     check_capture_shape() -> dict        (slice #783/ADR-0063 D2: 3-heading regex over root-cause issues)
     check_green_main() -> dict           (slice #783/ADR-0062 D3: last main_green sha + lag + age)
     check_record_vs_gh() -> dict         (slice #1081/PRD #1075 cr.3: recorded pr_merged spans vs gh ground truth)
+    check_slice_vs_pr() -> dict          (slice #1136/PRD #1127 cr.11b: merged slice PR vs dispatch+pr_opened spans)
+    check_merged_without_verdict() -> dict  (slice #1136/PRD #1127 cr.11b: merged PR vs verdict span, ADR-0076 anchor)
+    check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -191,6 +194,31 @@ def _load_trace_v3():
         return mod
     except Exception:
         return None
+
+
+def _v3_trace_log_exists() -> bool:
+    """Whether the canonical v3 trace log currently exists on disk.
+
+    Root-cause fix (discovered wiring CHECK 22 into CI, slice #1136): the
+    v3 trace log is a gitignored LOCAL runtime artifact — GitHub Actions'
+    fresh checkout structurally never has it (same class as a genuinely
+    fresh repo before the first span is ever emitted). Every
+    RECORD-VS-GH-pattern reconciler (check_record_vs_gh,
+    check_slice_vs_pr, check_merged_without_verdict,
+    check_closed_prd_vs_qa) MUST check this BEFORE reconciling — reading
+    an absent log returns an empty span list indistinguishable from "every
+    single artifact's span was individually dropped", which would
+    fabricate a FAIL against ALL historical artifacts at once rather than
+    degrading honestly to WARN. Mirrors the existing trace_exists idiom
+    already used by check_stream_liveness.
+    """
+    try:
+        trace_mod = _load_trace_v3()
+        path = trace_mod.trace_log_path() if trace_mod is not None else None
+    except Exception:
+        path = None
+    return bool(path) and os.path.exists(path)
+
 
 # Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
 _KNOWN_CRITICS = {
@@ -1527,6 +1555,9 @@ PURPOSE_GROUP_MAP: dict = {
     "GREEN-MAIN":      "Verification integrity",
     "RECORD-VS-GH":    "Verification integrity",
     "RESIDUAL-RATIO":  "Verification integrity",
+    "SLICE-VS-PR":              "Verification integrity",
+    "MERGED-WITHOUT-VERDICT":   "Verification integrity",
+    "CLOSED-PRD-VS-QA":         "Verification integrity",
     # --- Isolation/hygiene ---
     # Worktree orphans, log rotation, untracked files, session injection
     "ISOLATION-GROUP":   "Isolation/hygiene",
@@ -3342,6 +3373,20 @@ def check_record_vs_gh() -> dict:
             "detail": f"unverifiable — anchor timestamp unparsable: {exc}",
         }
 
+    # --- Step 1.5: trace log existence check (root-cause fix, slice #1136) ---
+    # A structurally-absent trace log (gitignored local file; ALWAYS absent
+    # in a CI fresh checkout) must degrade to WARN, never fabricate a FAIL
+    # naming every historical PR as "missing" at once.
+    if not _v3_trace_log_exists():
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": (
+                "unverifiable — trace-v3.jsonl not found in this "
+                "environment (gitignored local log; always absent in CI "
+                "checkouts)"
+            ),
+        }
+
     # --- Step 2: fetch merged PRs on develop, routed through gh_cache ---
     rc, out = _health_gh_fetch(
         ["pr", "list", "--base", "develop", "--state", "merged",
@@ -3435,6 +3480,469 @@ def check_record_vs_gh() -> dict:
         "id": "RECORD-VS-GH", "result": "PASS", "detail": detail,
         "missing": [], "covered": covered, "expected": expected,
         "grandfathered": grandfathered, "exceptions": exceptions_sorted,
+    }
+
+
+# ---------------------------------------------------------------------------
+# ADR-0076 reconciler family — SLICE-VS-PR, MERGED-WITHOUT-VERDICT,
+# CLOSED-PRD-VS-QA (PRD #1127 §2 criterion 11b / slice #1136). All three
+# share ONE bind-forward anchor per ADR-0076's binding paragraph ("every
+# decision below binds FORWARD from the merge of this PRD's slice 1") --
+# threaded from that paragraph, never re-derived per-check.
+# ---------------------------------------------------------------------------
+
+# The walking-skeleton dispatch-verb slice (#1129, merged as PR #1137,
+# commit f271843) -- PRD #1127's own slice 1. Pre-anchor history predates
+# the dispatch verb, the verdict span kind, and the closed VALID_KINDS enum
+# entirely; the reconcilers below grandfather it honestly rather than
+# fabricate retroactive spans (ADR-0004 D2 bootstrap-mode).
+_ADR_0076_ANCHOR_SHA = "f271843"
+
+
+def _resolve_adr_0076_anchor_ts():
+    """Resolve the ADR-0076 bind-forward anchor's commit timestamp, honoring
+    the shared _ADR_0076_ANCHOR_TS_OVERRIDE test seam (one override for all
+    three reconcilers below -- they share exactly one anchor instant).
+
+    Returns (anchor_dt_or_None, anchor_ts_str, error_detail_or_None).
+    """
+    from datetime import datetime as _dt
+
+    def _parse_ts(s: str):
+        return _dt.fromisoformat(s.replace("Z", "+00:00"))
+
+    override = os.environ.get("_ADR_0076_ANCHOR_TS_OVERRIDE")
+    if override:
+        ts_str = override
+    else:
+        try:
+            r = subprocess.run(
+                ["git", "show", "-s", "--format=%cI", _ADR_0076_ANCHOR_SHA],
+                capture_output=True, text=True, timeout=10,
+                cwd=str(_HEALTH_REPO_ROOT),
+            )
+            ts_str = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            ts_str = ""
+    if not ts_str:
+        return None, "", (
+            f"could not resolve ADR-0076 anchor commit {_ADR_0076_ANCHOR_SHA} timestamp"
+        )
+    try:
+        return _parse_ts(ts_str), ts_str, None
+    except Exception as exc:
+        return None, ts_str, f"anchor timestamp unparsable: {exc}"
+
+
+def check_slice_vs_pr() -> dict:
+    """SLICE-VS-PR: reconcile merged slice-closing PRs on develop against
+    their recorded dispatch + pr_opened v3 spans (PRD #1127 §2 criterion
+    11b; ADR-0076 D1 enforcement item (c) -- the #918 hand-created-slice
+    class stays caught even when it routes entirely around the verbs).
+
+    Ground truth for "is this a slice PR": GitHub's own
+    closingIssuesReferences is empty for every PR here (this repo's default
+    branch is main; every slice PR merges to develop, and GitHub only
+    auto-populates issue-closing references against the default branch) --
+    so this check parses each merged PR's own body for a `Closes #<n>`
+    reference (the same regex tools/pipe/pr-open uses to derive its own
+    pr_opened span's attrs.slice) and cross-checks the referenced issue
+    against the set of slice-labeled issues fetched independently via
+    `gh issue list --label slice`. This ground truth is INDEPENDENT of the
+    trace spans being reconciled, so a PR that bypassed tools/pipe/dispatch
+    or tools/pipe/pr-open entirely is still caught by it.
+
+    Bind-forward window: only PRs merged strictly AFTER the shared
+    _ADR_0076_ANCHOR_SHA commit timestamp are expected to carry
+    dispatch+pr_opened spans; pre-anchor slice PRs predate the dispatch
+    verb and the closed span-kind enum and are honestly grandfathered.
+
+    For each post-anchor PR closing a slice-labeled issue #<s>: missing a
+    `dispatch` span with attrs.slice == str(s), or missing a `pr_opened`
+    span with attrs.pr == str(PR number), is a named FAIL.
+
+    Returns dict with id='SLICE-VS-PR', result in {PASS, WARN, FAIL}.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    def _parse_ts(s: str):
+        return _dt.fromisoformat(s.replace("Z", "+00:00"))
+
+    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
+    if anchor_dt is None:
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical slice PR at once.
+    if not _v3_trace_log_exists():
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
+
+    rc, out = _health_gh_fetch(
+        ["pr", "list", "--base", "develop", "--state", "merged",
+         "--limit", "100", "--json", "number,mergedAt,body"],
+        ttl=60.0, timeout=5.0,
+    )
+    if rc != 0 or not out.strip():
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (timeout or non-zero exit)"}
+    try:
+        prs = _json.loads(out)
+    except Exception as exc:
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": f"unverifiable — gh unavailable (unparsable output: {exc})"}
+    if not isinstance(prs, list):
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (unexpected output shape)"}
+
+    rc2, out2 = _health_gh_fetch(
+        ["issue", "list", "--label", "slice", "--state", "all",
+         "--limit", "500", "--json", "number"],
+        ttl=60.0, timeout=5.0,
+    )
+    if rc2 != 0 or not out2.strip():
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": "unverifiable — gh unavailable fetching slice-labeled issues"}
+    try:
+        slice_issues = _json.loads(out2)
+    except Exception as exc:
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": f"unverifiable — slice-issue list unparsable: {exc}"}
+    if not isinstance(slice_issues, list):
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": "unverifiable — slice-issue list unexpected shape"}
+    slice_numbers = {
+        str(i.get("number")) for i in slice_issues if isinstance(i, dict)
+    }
+
+    try:
+        trace_mod = _load_trace_v3()
+        spans = trace_mod.read_spans() if trace_mod is not None else []
+    except Exception:
+        spans = []
+    dispatch_slices = {
+        str(s.get("attrs", {}).get("slice"))
+        for s in spans
+        if s.get("kind") == "dispatch" and s.get("attrs", {}).get("slice") is not None
+    }
+    pr_opened_prs = {
+        str(s.get("attrs", {}).get("pr"))
+        for s in spans
+        if s.get("kind") == "pr_opened" and s.get("attrs", {}).get("pr") is not None
+    }
+
+    close_re = re.compile(r"(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
+
+    post_window = []
+    grandfathered = 0
+    for pr in prs:
+        merged_at = pr.get("mergedAt") or ""
+        if not merged_at:
+            continue
+        try:
+            merged_dt = _parse_ts(merged_at)
+        except Exception:
+            continue
+        if merged_dt > anchor_dt:
+            post_window.append(pr)
+        else:
+            grandfathered += 1
+
+    checked = 0
+    missing = []
+    for pr in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
+        num = str(pr.get("number"))
+        closes = close_re.findall(pr.get("body") or "")
+        slice_closed = [c for c in closes if c in slice_numbers]
+        if not slice_closed:
+            continue  # not a slice-closing PR (PRD-tier/trivial/docs) -- out of scope
+        checked += 1
+        reasons = []
+        for s in slice_closed:
+            if s not in dispatch_slices:
+                reasons.append(f"no dispatch span for slice #{s}")
+        if num not in pr_opened_prs:
+            reasons.append(f"no pr_opened span for PR #{num}")
+        if reasons:
+            missing.append((num, slice_closed, pr.get("mergedAt", ""), "; ".join(reasons)))
+
+    if missing:
+        first_pr, first_slices, first_ts, first_reason = missing[0]
+        detail = (
+            f"PR #{first_pr} (closes slice #{','.join(first_slices)}) merged "
+            f"{first_ts} {first_reason} ({checked - len(missing)}/{checked} "
+            f"post-anchor slice PRs covered since {_ADR_0076_ANCHOR_SHA} @ "
+            f"{anchor_ts_str}; grandfathered={grandfathered})"
+        )
+        return {
+            "id": "SLICE-VS-PR", "result": "FAIL", "detail": detail,
+            "missing": [f"{p}(slice #{','.join(s)})" for p, s, _, _ in missing],
+            "checked": checked, "grandfathered": grandfathered,
+        }
+
+    detail = (
+        f"{checked}/{checked} post-anchor slice-closing PRs covered (since "
+        f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}); grandfathered="
+        f"{grandfathered} pre-anchor (ADR-0004 D2 bootstrap-mode)"
+    )
+    return {
+        "id": "SLICE-VS-PR", "result": "PASS", "detail": detail,
+        "missing": [], "checked": checked, "grandfathered": grandfathered,
+    }
+
+
+def check_merged_without_verdict() -> dict:
+    """MERGED-WITHOUT-VERDICT: every PR merged to develop after the ADR-0076
+    bind-forward anchor MUST carry a recorded `verdict` v3 span (PRD #1127
+    §2 criterion 11b; ADR-0076 D3's merge-time reviewer-verdict assertion).
+
+    tools/pipe/pr-merge only started emitting `verdict` spans once slice
+    #1130 (this PRD's own pr-merge verdict-floor extension) landed -- ITSELF
+    after this PRD's slice-1 anchor. A post-anchor PR merged before slice
+    #1130 landed therefore genuinely has no verdict span; this reconciler
+    reports that honestly as a named FAIL (a real, permanent gap in the
+    recorded chain) rather than quietly widening its own window to hide it
+    -- ADR-0076's binding paragraph is explicit that the gap is named, not
+    hidden.
+
+    Ground truth: `gh pr list --base develop --state merged --json
+    number,mergedAt` (same shape as RECORD-VS-GH). Spans: recorded
+    `verdict`-kind spans in the canonical v3 trace log, matched on attrs.pr
+    (string).
+
+    Returns dict with id='MERGED-WITHOUT-VERDICT', result in {PASS, WARN, FAIL}.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    def _parse_ts(s: str):
+        return _dt.fromisoformat(s.replace("Z", "+00:00"))
+
+    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
+    if anchor_dt is None:
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical merged PR at once.
+    if not _v3_trace_log_exists():
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
+
+    rc, out = _health_gh_fetch(
+        ["pr", "list", "--base", "develop", "--state", "merged",
+         "--limit", "100", "--json", "number,mergedAt"],
+        ttl=60.0, timeout=5.0,
+    )
+    if rc != 0 or not out.strip():
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (timeout or non-zero exit)"}
+    try:
+        prs = _json.loads(out)
+    except Exception as exc:
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": f"unverifiable — gh unavailable (unparsable output: {exc})"}
+    if not isinstance(prs, list):
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (unexpected output shape)"}
+
+    try:
+        trace_mod = _load_trace_v3()
+        spans = trace_mod.read_spans() if trace_mod is not None else []
+    except Exception:
+        spans = []
+    verdict_prs = {
+        str(s.get("attrs", {}).get("pr"))
+        for s in spans
+        if s.get("kind") == "verdict" and s.get("attrs", {}).get("pr") is not None
+    }
+
+    post_window = []
+    grandfathered = 0
+    for pr in prs:
+        merged_at = pr.get("mergedAt") or ""
+        if not merged_at:
+            continue
+        try:
+            merged_dt = _parse_ts(merged_at)
+        except Exception:
+            continue
+        if merged_dt > anchor_dt:
+            post_window.append(pr)
+        else:
+            grandfathered += 1
+
+    missing = []
+    for pr in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
+        num = str(pr.get("number"))
+        if num not in verdict_prs:
+            missing.append((num, pr.get("mergedAt", "")))
+
+    expected = len(post_window)
+    covered = expected - len(missing)
+
+    if missing:
+        first_num, first_ts = missing[0]
+        detail = (
+            f"PR #{first_num} merged {first_ts} has no verdict span "
+            f"({covered}/{expected} post-anchor merges covered since "
+            f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}; missing="
+            f"{[n for n, _ in missing]}; grandfathered={grandfathered})"
+        )
+        return {
+            "id": "MERGED-WITHOUT-VERDICT", "result": "FAIL", "detail": detail,
+            "missing": [n for n, _ in missing], "covered": covered,
+            "expected": expected, "grandfathered": grandfathered,
+        }
+
+    detail = (
+        f"{covered}/{expected} post-anchor merged PRs covered (since "
+        f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}) have recorded verdict "
+        f"spans; grandfathered={grandfathered} pre-anchor (ADR-0004 D2)"
+    )
+    return {
+        "id": "MERGED-WITHOUT-VERDICT", "result": "PASS", "detail": detail,
+        "missing": [], "covered": covered, "expected": expected,
+        "grandfathered": grandfathered,
+    }
+
+
+def check_closed_prd_vs_qa() -> dict:
+    """CLOSED-PRD-VS-QA: every prd-labeled issue closed after the ADR-0076
+    bind-forward anchor MUST carry a recorded `qa_verified` PASS v3 span
+    (PRD #1127 §2 criterion 11b; the production-verification gate, ADR-0037
+    D1, cross-checked at the recorded-evidence layer).
+
+    Matching predicate mirrors tools/pipe/prd-close's own precondition check
+    (_qa_verified_pass_exists) exactly, rather than re-deriving it: a
+    qa_verified span whose attrs.prd == str(prd_number) AND attrs.verdict ==
+    'PASS'.
+
+    Ground truth: `gh issue list --label prd --state closed --json
+    number,closedAt`.
+
+    Bind-forward window: only PRDs closed strictly AFTER the shared
+    _ADR_0076_ANCHOR_SHA commit timestamp are expected to carry a
+    qa_verified span (the qa-verify wrapper + prd-close verb both post-date
+    this PRD's own slice-1 anchor); pre-anchor closures are honestly
+    grandfathered.
+
+    Returns dict with id='CLOSED-PRD-VS-QA', result in {PASS, WARN, FAIL}.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    def _parse_ts(s: str):
+        return _dt.fromisoformat(s.replace("Z", "+00:00"))
+
+    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
+    if anchor_dt is None:
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical closed PRD at once.
+    if not _v3_trace_log_exists():
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
+
+    rc, out = _health_gh_fetch(
+        ["issue", "list", "--label", "prd", "--state", "closed",
+         "--limit", "200", "--json", "number,closedAt"],
+        ttl=60.0, timeout=5.0,
+    )
+    if rc != 0 or not out.strip():
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (timeout or non-zero exit)"}
+    try:
+        prds = _json.loads(out)
+    except Exception as exc:
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": f"unverifiable — gh unavailable (unparsable output: {exc})"}
+    if not isinstance(prds, list):
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": "unverifiable — gh unavailable (unexpected output shape)"}
+
+    try:
+        trace_mod = _load_trace_v3()
+        spans = trace_mod.read_spans() if trace_mod is not None else []
+    except Exception:
+        spans = []
+    # Same predicate as tools/pipe/prd-close's own _qa_verified_pass_exists
+    # precondition -- reused here, not re-derived.
+    qa_pass_prds = {
+        str(s.get("attrs", {}).get("prd"))
+        for s in spans
+        if s.get("kind") == "qa_verified"
+        and s.get("attrs", {}).get("verdict") == "PASS"
+        and s.get("attrs", {}).get("prd") is not None
+    }
+
+    post_window = []
+    grandfathered = 0
+    for prd in prds:
+        closed_at = prd.get("closedAt") or ""
+        if not closed_at:
+            continue
+        try:
+            closed_dt = _parse_ts(closed_at)
+        except Exception:
+            continue
+        if closed_dt > anchor_dt:
+            post_window.append(prd)
+        else:
+            grandfathered += 1
+
+    missing = []
+    for prd in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
+        num = str(prd.get("number"))
+        if num not in qa_pass_prds:
+            missing.append((num, prd.get("closedAt", "")))
+
+    expected = len(post_window)
+    covered = expected - len(missing)
+
+    if missing:
+        first_num, first_ts = missing[0]
+        detail = (
+            f"PRD #{first_num} closed {first_ts} has no qa_verified PASS "
+            f"span ({covered}/{expected} post-anchor closed PRDs covered "
+            f"since {_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}; missing="
+            f"{[n for n, _ in missing]}; grandfathered={grandfathered})"
+        )
+        return {
+            "id": "CLOSED-PRD-VS-QA", "result": "FAIL", "detail": detail,
+            "missing": [n for n, _ in missing], "covered": covered,
+            "expected": expected, "grandfathered": grandfathered,
+        }
+
+    detail = (
+        f"{covered}/{expected} post-anchor closed prd-labeled issues covered "
+        f"(since {_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}) have a "
+        f"qa_verified PASS span; grandfathered={grandfathered} pre-anchor "
+        f"(ADR-0004 D2)"
+    )
+    return {
+        "id": "CLOSED-PRD-VS-QA", "result": "PASS", "detail": detail,
+        "missing": [], "covered": covered, "expected": expected,
+        "grandfathered": grandfathered,
     }
 
 
@@ -5846,9 +6354,62 @@ def _stream_liveness_registered_streams(settings_path: Path) -> dict:
     return streams
 
 
+# Generous window for v3 span kinds classified "always-on" below (PRD #1127
+# §2 criterion 10 / slice #1136). These verbs fire roughly once per
+# slice-PR cycle -- multiple times on an active shipping day, but
+# legitimately silent for many hours (nights, non-shipping days) without
+# that silence meaning the verb has gone dark. The 60m hook-cadence window
+# would false-FAIL the very next quiet morning; reusing it here (rather
+# than widening it globally) keeps the hook-stream semantics unchanged
+# while giving v3 kinds a window that matches their own real cadence.
+_STREAM_LIVENESS_V3_DARK_MINUTES = 24 * 60  # 24h
+
+
+def _stream_liveness_v3_kind_classes() -> dict:
+    """Explode the single aggregate "trace-v3" stream into one row per
+    registered v3 span kind (PRD #1127 §2 criterion 10 / ADR-0076 D2).
+
+    Denominator: tools/trace.py's VALID_KINDS closed enum -- imported, never
+    a copied list, so a kind added there is picked up here automatically.
+
+    Cadence classification, from this PRD's own real observed cadence data
+    (see PR #1136's body for the exact per-kind figures):
+      - always-on (v3, generous _STREAM_LIVENESS_V3_DARK_MINUTES window):
+        pr_opened, pr_merged, verdict, dispatch, dispatch_end -- fire on
+        (roughly) every slice-PR cycle. Never-fired still FAILs (a verb that
+        has never once been invoked is a fault, not mere sparseness) --
+        same "always-on" semantics hook streams already use, just judged
+        against a wider clock.
+      - on-demand: qa_verified, develop_green, promotion, batch_planned --
+        genuinely sparse/on-demand verbs. Dead-feed honesty rule: a kind
+        that has NEVER fired yet (batch_planned only just landed this PRD)
+        reads as pending/idle, not FAIL -- the existing on-demand bucket
+        already treats never-fired as idle, so this is a direct reuse, not
+        a new mechanism.
+
+    Returns {f"v3:{kind}": cadence_class for kind in VALID_KINDS}. On any
+    failure to import tools/trace.py's VALID_KINDS, degrades to the single
+    pre-explosion aggregate key {"trace-v3": always-on} rather than
+    silently dropping v3 liveness coverage entirely.
+    """
+    trace_mod = _load_trace_v3()
+    if trace_mod is None or not hasattr(trace_mod, "VALID_KINDS"):
+        return {"trace-v3": _STREAM_CADENCE_ALWAYS_ON}
+    always_on_kinds = {"pr_opened", "pr_merged", "verdict", "dispatch", "dispatch_end"}
+    classes: dict = {}
+    for kind in sorted(trace_mod.VALID_KINDS):
+        name = f"v3:{kind}"
+        classes[name] = (
+            _STREAM_CADENCE_ALWAYS_ON if kind in always_on_kinds
+            else _STREAM_CADENCE_ON_DEMAND
+        )
+    return classes
+
+
 def check_stream_liveness() -> dict:
     """STREAM-LIVENESS: see module comment above (PRD #1075 criterion 8;
-    cadence classes per issue #1107).
+    cadence classes per issue #1107; per-kind v3 explosion per PRD #1127
+    §2 criterion 10 / slice #1136 -- see _stream_liveness_v3_kind_classes).
 
     Env overrides (test seam, mirrors check_hook_liveness's override pattern):
       _STREAM_LIVENESS_SETTINGS_OVERRIDE — path to a synthetic settings.json
@@ -5903,7 +6464,10 @@ def check_stream_liveness() -> dict:
             "id": "STREAM-LIVENESS", "result": "WARN",
             "detail": f"no registered streams discoverable from {settings_path}",
         }
-    stream_classes.setdefault("trace-v3", _STREAM_CADENCE_ALWAYS_ON)
+    # Per-kind explosion of the v3 span stream (PRD #1127 §2 criterion 10):
+    # replaces the single aggregate "trace-v3" row with one row per
+    # registered VALID_KINDS member.
+    stream_classes.update(_stream_liveness_v3_kind_classes())
 
     # --- last-fired per hook stream, from hook-fires.jsonl ---
     last_fired: dict = {}
@@ -5928,7 +6492,12 @@ def check_stream_liveness() -> dict:
         except Exception:
             pass
 
-    # --- last-fired for the trace-v3 stream, from the canonical trace log ---
+    # --- last-fired per v3 span kind, from the canonical trace log (PRD
+    # #1127 §2 criterion 10: explode the single aggregate "trace-v3" row
+    # into one row per registered kind). Also tracks the old aggregate max
+    # for the fallback "trace-v3" key (used only when tools/trace.py's
+    # VALID_KINDS enum could not be imported; see
+    # _stream_liveness_v3_kind_classes()). ---
     if trace_override:
         trace_path = trace_override
     else:
@@ -5938,7 +6507,8 @@ def check_stream_liveness() -> dict:
         except Exception:
             trace_path = None
     trace_exists = bool(trace_path) and os.path.exists(trace_path)
-    trace_ts = 0.0
+    trace_ts = 0.0  # aggregate max -- fallback-mode "trace-v3" key only
+    kind_last_fired: dict = {}
     if trace_exists:
         try:
             with open(trace_path, encoding="utf-8", errors="replace") as fh:
@@ -5953,9 +6523,16 @@ def check_stream_liveness() -> dict:
                     ts_val = _parse_ts(obj.get("ts", ""))
                     if ts_val > trace_ts:
                         trace_ts = ts_val
+                    kind = obj.get("kind")
+                    if kind and ts_val > kind_last_fired.get(kind, 0.0):
+                        kind_last_fired[kind] = ts_val
         except Exception:
             pass
-    last_fired["trace-v3"] = trace_ts
+    if "trace-v3" in stream_classes:
+        last_fired["trace-v3"] = trace_ts
+    for _v3_name in stream_classes:
+        if _v3_name.startswith("v3:"):
+            last_fired[_v3_name] = kind_last_fired.get(_v3_name[3:], 0.0)
 
     if not fires_exists and not trace_exists:
         return {
@@ -6010,17 +6587,27 @@ def check_stream_liveness() -> dict:
                     pass_streams.append(f"{name}[on-demand,{age_min:.0f}m]")
             continue
 
-        # always-on (default; unchanged behavior)
+        # always-on (default; unchanged behavior for hook streams). v3 kinds
+        # (name prefix "v3:") use the generous _STREAM_LIVENESS_V3_DARK_MINUTES
+        # per-merge-cadence window instead of the 60m hook-cadence window --
+        # same always-on/never-fired-still-FAILs semantics, wider clock.
         if ts_val == 0.0:
             fail_streams.append(f"{name}(never-fired)")
             continue
+        window = (
+            _STREAM_LIVENESS_V3_DARK_MINUTES if name.startswith("v3:")
+            else _STREAM_LIVENESS_DARK_MINUTES
+        )
         delta_min = (now_ts - ts_val) / 60.0
-        if delta_min > _STREAM_LIVENESS_DARK_MINUTES:
+        if delta_min > window:
             fail_streams.append(f"{name}({delta_min:.0f}m)")
         else:
             pass_streams.append(name)
 
-    detail_parts = [f"window={_STREAM_LIVENESS_DARK_MINUTES}m"]
+    detail_parts = [
+        f"window={_STREAM_LIVENESS_DARK_MINUTES}m",
+        f"v3_window={_STREAM_LIVENESS_V3_DARK_MINUTES}m",
+    ]
     if pass_streams:
         detail_parts.append(f"live: {', '.join(pass_streams)}")
     if idle_streams:
@@ -6142,6 +6729,10 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
     "RECORD-VS-GH":    check_record_vs_gh,
+    # ADR-0076 reconciler family (PRD #1127 §2 criterion 11b / slice #1136)
+    "SLICE-VS-PR":            check_slice_vs_pr,
+    "MERGED-WITHOUT-VERDICT": check_merged_without_verdict,
+    "CLOSED-PRD-VS-QA":       check_closed_prd_vs_qa,
     "PROOF-PRESENCE":  check_proof_presence,
     "SILENT-DRIFT":    check_silent_drift,
     # Two-tier topology (ADR-0070 wave 5 — slice #843 full implementation)

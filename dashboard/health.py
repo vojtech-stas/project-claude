@@ -2305,23 +2305,7 @@ def check_spec_coverage() -> dict:
         return {"id": "SPEC-COVERAGE", "result": "WARN",
                 "detail": "gh API unavailable for slice issues"}
 
-    # --- 3. Parse §2 criteria from each PRD ---
-    _sec2_start = re.compile(r'^## 2\.', re.MULTILINE)
-    _next_h2 = re.compile(r'^## [^2]', re.MULTILINE)
-    _crit_num = re.compile(r'^(\d+)\.\s+\S', re.MULTILINE)
-
-    def _parse_sec2_criteria(body: str) -> set:
-        """Return the set of numbered criterion IDs from PRD §2."""
-        if not body:
-            return set()
-        m = _sec2_start.search(body)
-        if not m:
-            return set()
-        nh2 = _next_h2.search(body, m.end())
-        end = m.end() + nh2.start() if nh2 else len(body)
-        sec2 = body[m.start():end]
-        return {int(n) for n in _crit_num.findall(sec2)}
-
+    # --- 3. Parse §2 criteria from each PRD (module-level helper — #1077 fix) ---
     # --- 4. Build PRD → criteria map ---
     prd_criteria = {}
     for issue in prd_issues:
@@ -2330,27 +2314,23 @@ def check_spec_coverage() -> dict:
         prd_criteria[n] = criteria
 
     # --- 5. Build PRD → cited union from slice Covers: lines ---
-    _parent_prd = re.compile(r'PRD\s+#(\d+)')
-    _covers_line = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
-    _covers_num = re.compile(r'#(\d+)')
-
     prd_cited = {n: set() for n in prd_criteria}
     prd_has_covers = {n: False for n in prd_criteria}
 
     for issue in slice_issues:
         body = issue.get("body") or ""
         # Find parent PRD
-        pm = _parent_prd.search(body)
+        pm = _SPEC_PARENT_PRD.search(body)
         if not pm:
             continue
         prd_num = int(pm.group(1))
         if prd_num not in prd_criteria:
             continue
         # Find Covers: line
-        cm = _covers_line.search(body)
+        cm = _SPEC_COVERS_LINE.search(body)
         if cm:
             prd_has_covers[prd_num] = True
-            cited_nums = {int(x) for x in _covers_num.findall(cm.group(1))}
+            cited_nums = set(_SPEC_COVERS_NUM.findall(cm.group(1)))
             prd_cited[prd_num] |= cited_nums
 
     # --- 6. Compute per-PRD coverage ---
@@ -2373,7 +2353,11 @@ def check_spec_coverage() -> dict:
         if not orphans and not phantoms:
             fully_covered.append(prd_num)
         else:
-            partial.append((prd_num, sorted(orphans), sorted(phantoms)))
+            partial.append((
+                prd_num,
+                sorted(orphans, key=_crit_sort_key),
+                sorted(phantoms, key=_crit_sort_key),
+            ))
 
     # --- 7. Build summary detail ---
     total_post_conv = len(fully_covered) + len(partial)
@@ -2414,6 +2398,46 @@ def check_spec_coverage() -> dict:
         "partial": partial,
         "grandfathered": sorted(grandfathered),
     }
+
+
+# ---------------------------------------------------------------------------
+# SPEC-COVERAGE regexes + helpers — module-level for direct unit-testability
+# (issue #1077 / ADR-0066 D2): the prior digit-only regexes silently dropped
+# the trailing letter on lettered sub-criteria (e.g. PRD #1075's `2a.`/`2b.`/
+# `10a.`-`10d.`), collapsing distinct criteria onto one digit and producing
+# false phantoms/orphans against a PRD with complete semantic coverage.
+# Criterion IDs are now strings (e.g. "2", "2a", "10b") — never ints, so "2"
+# and "2a" cannot collide as they would under an int model.
+# ---------------------------------------------------------------------------
+_SPEC_SEC2_START = re.compile(r'^## 2\.', re.MULTILINE)
+_SPEC_NEXT_H2 = re.compile(r'^## [^2]', re.MULTILINE)
+_SPEC_CRIT_NUM = re.compile(r'^(\d+[a-z]?)\.\s+\S', re.MULTILINE)
+_SPEC_PARENT_PRD = re.compile(r'PRD\s+#(\d+)')
+_SPEC_COVERS_LINE = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
+_SPEC_COVERS_NUM = re.compile(r'#(\d+[a-z]?)')
+
+
+def _parse_sec2_criteria(body: str) -> set:
+    """Return the set of §2 criterion-ID strings (e.g. {"1", "2a", "2b"})
+    found in a PRD body's §2 section. Empty set if §2 is absent/empty."""
+    if not body:
+        return set()
+    m = _SPEC_SEC2_START.search(body)
+    if not m:
+        return set()
+    nh2 = _SPEC_NEXT_H2.search(body, m.end())
+    end = m.end() + nh2.start() if nh2 else len(body)
+    sec2 = body[m.start():end]
+    return set(_SPEC_CRIT_NUM.findall(sec2))
+
+
+def _crit_sort_key(cid: str):
+    """Sort key for criterion-ID strings: (numeric part, letter suffix) so
+    "10a" sorts after "2a" — a bare string sort would put "10a" first."""
+    m = re.match(r'(\d+)([a-z]?)', cid)
+    if not m:
+        return (0, cid)
+    return (int(m.group(1)), m.group(2))
 
 
 # ---------------------------------------------------------------------------

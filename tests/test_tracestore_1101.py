@@ -93,10 +93,33 @@ class TestTracestore1101Prerequisites(unittest.TestCase):
 
     def test_concurrent_reader_never_sees_zero_during_fold(self):
         """(#1101 prereq 1) A warm db (4 spans) is refolded against a MUCH
-        larger fixture (500 spans) while a separate connection polls
-        COUNT(*) FROM spans in a tight loop. The reader must NEVER observe
-        0 (or a missing-table error) — it must see either the full OLD
-        generation or the full NEW one, never a transient in-between."""
+        larger fixture while a separate connection polls COUNT(*) FROM spans
+        in a tight loop. The reader must NEVER observe 0 (or a
+        missing-table error) — it must see either the full OLD generation
+        or the full NEW one, never a transient in-between.
+
+        Fixture size + reader head-start, calibrated against reviewer
+        instrumentation on PR #1108 round 1 (reviewer rebuilt the pre-fix
+        commit 835bcdff0 and measured the actual race window):
+
+            N=   500  fold_ms= 40.1  saw_zero_or_missing=False  <- too small
+            N=  5000  fold_ms= 62.0  saw_zero_or_missing=True
+            N= 20000  fold_ms=196.8  saw_zero_or_missing=True   <- reliable
+
+        N=500 never landed inside the gap even across 38 polls because the
+        reader thread's OS-scheduled startup (opening its own sqlite3
+        connection) can itself eat a meaningful slice of a ~40ms fold —
+        without a head start the reader may not be polling yet when the
+        gap opens. This test uses N=15000 (comfortably above the 5000
+        threshold that reproduced deterministically) AND gives the reader
+        an explicit 50ms head start before fold() is invoked, so the
+        reader is provably already inside its polling loop before the
+        writer's vulnerable window begins.
+
+        Fails-before verified manually (see PR #1108 round 2 body) against
+        the ACTUAL pre-fix module at commit 835bcdff0
+        (`git show 835bcdff0:dashboard/tracestore.py`).
+        """
         warm_spans = _make_many_spans(4, trace_prefix="pr-warm")
         _write_fixture_log(self.log_path, warm_spans)
         warm_count = self.tracestore.fold(
@@ -104,15 +127,17 @@ class TestTracestore1101Prerequisites(unittest.TestCase):
         )
         self.assertEqual(warm_count, 4)
 
-        big_spans = _make_many_spans(500, trace_prefix="pr-big")
+        big_spans = _make_many_spans(15000, trace_prefix="pr-big")
         _write_fixture_log(self.log_path, big_spans)
 
         zero_or_missing_seen = threading.Event()
+        reader_started = threading.Event()
         stop = threading.Event()
 
         def reader_loop():
             conn = sqlite3.connect(self.db_path, timeout=5.0)
             try:
+                reader_started.set()
                 while not stop.is_set():
                     try:
                         row = conn.execute(
@@ -133,13 +158,18 @@ class TestTracestore1101Prerequisites(unittest.TestCase):
 
         reader = threading.Thread(target=reader_loop, daemon=True)
         reader.start()
+        # Explicit head start (per reviewer instrumentation): wait for the
+        # reader's own connection + first loop iteration to be genuinely
+        # running BEFORE the vulnerable fold() call begins.
+        reader_started.wait(timeout=5)
+        time.sleep(0.05)
         try:
             self.tracestore.fold(
                 log_path=self.log_path, db_path_=self.db_path, force=True
             )
         finally:
             stop.set()
-            reader.join(timeout=2)
+            reader.join(timeout=5)
 
         self.assertFalse(
             zero_or_missing_seen.is_set(),

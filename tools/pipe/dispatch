@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/dispatch — precondition-checked, span-atomic wrapper for the
+orchestrator's implementer-dispatch transition (PRD #1127 walking skeleton,
+slice #1129 / ADR-0076 D1).
+
+Usage:
+  python tools/pipe/dispatch <slice-number>
+  python tools/pipe/dispatch --end <slice-number> --result <result>
+
+Real-path repoint target for ship/SKILL.md steps 5b/5c: the orchestrator
+calls `dispatch <slice>` immediately before each implementer `Agent` call,
+and `dispatch --end <slice> --result <r>` immediately after that dispatch
+returns.
+
+REFUSES (non-zero exit, named reason on stderr, NO span written) when any
+precondition fails (PRD #1127 §2 criteria 1a-1d):
+  1a. the slice issue is closed or does not exist (gh REST lookup fails or
+      reports a non-"open" state)
+  1b. the slice body lacks a `Slicer-provenance:` trailer AND the issue
+      lacks the `root-cause` label (the two provenance lanes per CLAUDE.md's
+      slicer-provenance guard / root-cause capture discipline)
+  1c. the slice is assigned to an identity other than the requester's — I2
+      protocol mechanized: EMPTY assignees or an assignee list containing
+      the requesting gh login both PASS; any other non-empty assignee list
+      REFUSES. (This checks the gh-level *collaborator* identity, which is
+      typically shared across every agent session under one bot account —
+      it catches a human or a differently-authenticated actor claiming the
+      slice, not a same-account race between two agent sessions; that race
+      is the pre-existing I2 "first assignee wins" convention, unaffected
+      here.)
+  1d. the canonical trace ledger already holds an ACTIVE `dispatch` span for
+      this slice — i.e. a `dispatch` span (by trace_id) with no matching
+      `dispatch_end` span yet — duplicate-dispatch mutex.
+
+On success (all four preconditions pass): appends ONE `dispatch` v3 span
+(attrs: slice, prd, session_id) atomic with a 0 exit. The process never
+half-succeeds: validation runs entirely before the only file write.
+
+`--end <slice> --result <r>`: appends the matching `dispatch_end` span
+(attrs: slice, result) unconditionally — no precondition re-check (a
+dispatch's outcome must always be recordable, even on an unusual failure
+path). Repeated `--end` calls for the same slice are legal (append-only
+ledger, mirrors every other v3 writer here).
+
+**`--end`-without-a-prior-`dispatch` posture (decided explicitly, PR #1137
+round-1 fix):** recording a stray `dispatch_end` with no matching prior
+`dispatch` is HARMLESS and always allowed — it is simply the chronologically
+last event for that trace_id until a REAL `dispatch` follows it. Because
+both the mutex (`_running_dispatch_exists` above) and the tracestore
+"running now" query (`dashboard/tracestore.py running` /
+`running_dispatches()`) decide "active" by the chronologically LAST
+dispatch/dispatch_end event per trace_id (never by trace_id set membership),
+a stray leading `dispatch_end` can never disarm a mutex for a dispatch that
+hasn't happened yet, nor mask a later real one — the next `dispatch` simply
+becomes the new last event and the mutex re-arms normally.
+
+Session identity: `CLAUDE_SESSION_ID` env var with a stable "orchestrator"
+fallback — the SAME convention already used by tools/pipe/qa-verify,
+tools/promote.sh, and tools/record-green.sh (all: `os.environ.get(
+"CLAUDE_SESSION_ID", "orchestrator")`). This is the recorded *conversation*
+identity in the emitted span's `session_id` attr — a DIFFERENT axis from
+1c's gh-login-based assignee check (see 1c docstring above); the two are
+deliberately not conflated.
+
+gh REST resolution mirrors tools/pipe/pr-merge's `_remote_owner_repo()` +
+"REST not GraphQL" pattern (PRD #1127 §6 rabbit-hole: no added GraphQL
+mutation load beyond what the existing wrappers already issue).
+
+Env overrides (test seam; mirrors every other tools/pipe/* wrapper):
+  TRACE_LOG_OVERRIDE — tools/trace.py's own override (test seam)
+"""
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+
+
+def _load_trace():
+    # Loaded under a distinct module name — never "trace" (stdlib collision),
+    # same defensive pattern as every sibling tools/pipe/* wrapper.
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _gh():
+    return shutil.which("gh") or "gh"
+
+
+def _run_gh(args):
+    return subprocess.run([_gh()] + args, capture_output=True, text=True)
+
+
+def _remote_owner_repo():
+    """Resolve owner/repo from `git remote get-url origin` (mirrors
+    tools/pipe/pr-merge's `_remote_owner_repo()` verbatim — avoids depending
+    on gh's own {owner}/{repo} api templating so this stays stubbable)."""
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        return None
+    m = re.search(r"[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _fetch_issue(slice_num):
+    """REST-fetch the slice issue (state/labels/assignees/body). Returns the
+    parsed dict, or None if the lookup itself failed — treated the same as
+    "does not exist" by the 1a precondition (refuse)."""
+    owner_repo = _remote_owner_repo()
+    if not owner_repo:
+        return None
+    owner, repo = owner_repo
+    res = _run_gh(["api", f"repos/{owner}/{repo}/issues/{slice_num}"])
+    if res.returncode != 0:
+        return None
+    try:
+        return json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def _current_login():
+    res = _run_gh(["api", "user"])
+    if res.returncode != 0:
+        return None
+    try:
+        data = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data.get("login")
+
+
+def _has_provenance(issue):
+    """1b: passes if EITHER the body carries a `Slicer-provenance:` trailer
+    OR the issue carries the `root-cause` label (the root-cause capture
+    lane per CLAUDE.md rule #13 / ADR-0063 is exempt from slicer
+    provenance — mirrors tools/check-slicer-provenance.py's own carveout)."""
+    body = issue.get("body") or ""
+    if re.search(r"Slicer-provenance:", body):
+        return True
+    labels = [l.get("name") for l in issue.get("labels", []) if isinstance(l, dict)]
+    return "root-cause" in labels
+
+
+def _extract_prd(body):
+    """Best-effort PRD-number extraction from the slice body's `Parent`
+    line (`Parent: PRD #<n> — ...` or a bare `PRD #<n>` mention)."""
+    body = body or ""
+    m = re.search(r"Parent.*?#(\d+)", body, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1)
+    m = re.search(r"PRD\s*#(\d+)", body)
+    return m.group(1) if m else None
+
+
+def _running_dispatch_exists(trace, slice_num):
+    """1d mutex: True iff, for this slice, the chronologically LAST
+    dispatch/dispatch_end event — ordered by `ts`, then file/append order
+    as the tiebreak (mirrors dashboard/tracestore.py's `ORDER BY ts,
+    rowid` convention for the exact same query) — is a `dispatch`: i.e.
+    an active, unterminated dispatch.
+
+    Per-trace_id EVENT-ORDER semantics, NOT a trace_id-membership set
+    difference (reviewer round-1 BLOCK on PR #1137, rule #19 fix):
+    `dispatched_trace_ids - ended_trace_ids` is permanently wrong here
+    because trace_id is constant per slice (`slice-<n>`) — the FIRST
+    `dispatch_end` ever recorded for a slice poisons that trace_id
+    forever, so every LATER round's dispatch reads as inactive and the
+    mutex never re-arms. Grouping by trace_id and taking each group's
+    chronological LAST event correctly re-arms the mutex every round, and
+    is immune to a stray leading `dispatch_end` with no prior `dispatch`
+    (the last-event-wins model ignores it once a real dispatch follows)."""
+    slice_str = str(slice_num)
+    spans = trace.read_spans()
+    relevant = [
+        s for s in spans
+        if s.get("kind") in ("dispatch", "dispatch_end")
+        and str(s.get("attrs", {}).get("slice")) == slice_str
+    ]
+    if not relevant:
+        return False
+    # Stable sort by ts; equal-ts entries keep their original file/append
+    # order — the same tiebreak tracestore's `ORDER BY ts, rowid` uses.
+    relevant.sort(key=lambda s: s.get("ts", ""))
+    last_by_trace = {}
+    for s in relevant:
+        last_by_trace[s.get("trace_id")] = s  # ascending scan -> last write wins
+    return any(s.get("kind") == "dispatch" for s in last_by_trace.values())
+
+
+def _cmd_dispatch(slice_num):
+    trace = _load_trace()
+
+    issue = _fetch_issue(slice_num)
+    if issue is None or issue.get("state") != "open":
+        state = issue.get("state") if issue else "not-found"
+        print(f"dispatch: refused — slice #{slice_num} is {state}", file=sys.stderr)
+        return 1
+
+    if not _has_provenance(issue):
+        print(
+            f"dispatch: refused — slice #{slice_num} lacks a Slicer-provenance: "
+            f"trailer and the root-cause label",
+            file=sys.stderr,
+        )
+        return 1
+
+    assignees = [a.get("login") for a in issue.get("assignees", []) if isinstance(a, dict)]
+    if assignees:
+        login = _current_login()
+        if login is None or login not in assignees:
+            print(
+                f"dispatch: refused — slice #{slice_num} is assigned to "
+                f"{assignees}, not the requesting identity ({login!r})",
+                file=sys.stderr,
+            )
+            return 1
+
+    if _running_dispatch_exists(trace, slice_num):
+        print(
+            f"dispatch: refused — an active dispatch span already exists for "
+            f"slice #{slice_num} (no matching dispatch_end yet)",
+            file=sys.stderr,
+        )
+        return 1
+
+    prd = _extract_prd(issue.get("body"))
+    session_id = os.environ.get("CLAUDE_SESSION_ID", "orchestrator")
+    attrs = {"slice": str(slice_num), "session_id": session_id}
+    if prd:
+        attrs["prd"] = prd
+
+    trace.emit_span(trace_id=f"slice-{slice_num}", kind="dispatch", attrs=attrs)
+    print(f"dispatch: recorded slice=#{slice_num} prd={prd or 'unknown'} session={session_id}")
+    return 0
+
+
+def _cmd_end(slice_num, result):
+    trace = _load_trace()
+    attrs = {"slice": str(slice_num), "result": result}
+    trace.emit_span(trace_id=f"slice-{slice_num}", kind="dispatch_end", attrs=attrs)
+    print(f"dispatch: recorded dispatch_end slice=#{slice_num} result={result}")
+    return 0
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    if not argv:
+        print("usage: dispatch <slice> | dispatch --end <slice> --result <r>", file=sys.stderr)
+        return 64
+
+    if argv[0] == "--end":
+        rest = argv[1:]
+        if not rest:
+            print("usage: dispatch --end <slice> --result <r>", file=sys.stderr)
+            return 64
+        slice_num = rest[0]
+        result = None
+        if "--result" in rest:
+            idx = rest.index("--result")
+            if idx + 1 < len(rest):
+                result = rest[idx + 1]
+        if not result:
+            print("usage: dispatch --end <slice> --result <r>", file=sys.stderr)
+            return 64
+        return _cmd_end(slice_num, result)
+
+    slice_num = argv[0]
+    return _cmd_dispatch(slice_num)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

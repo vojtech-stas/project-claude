@@ -70,6 +70,13 @@ Python API (for dashboard reuse):
   fold(log_path=None, db_path_=None, force=False) -> int  (spans folded)
   acid_path(pr_number, log_path=None, db_path_=None) -> list[dict] | None
   span_tree(trace_id, log_path=None, db_path_=None) -> list[dict]
+  running_dispatches(log_path=None, db_path_=None) -> list[dict]
+    "Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
+    trace_id whose chronologically LAST dispatch/dispatch_end event is a
+    `dispatch` (per-trace_id event-order semantics, not trace_id-membership
+    — see the function's own docstring for the round-1 fix rationale) —
+    the duplicate-dispatch mutex's read side and the W2 run-board's future
+    data model, both for free.
   serve_trace_runs(limit=30, log_path=None, db_path_=None) -> dict
     Background-warmed /api/trace-runs payload builder (slice #1082, PRD
     #1075 criterion 9 — the Firing tab's PRIMARY renderer) — mirrors
@@ -82,6 +89,7 @@ CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
   python dashboard/tracestore.py fold
   python dashboard/tracestore.py path --pr <n>
+  python dashboard/tracestore.py running
 
 utf-8: the JSONL is always read via trace.read_spans() (utf-8), and SQLite
 TEXT columns store native Python str (unicode) without any extra encoding
@@ -328,6 +336,44 @@ def acid_path(pr_number, log_path=None, db_path_=None):
         conn.close()
 
 
+def running_dispatches(log_path=None, db_path_=None):
+    """"Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
+    trace_id whose chronologically LAST dispatch/dispatch_end event (ordered
+    by `ts`, then `rowid` as the tiebreak — the same ordering `acid_path`/
+    `span_tree` already use) is a `dispatch` — i.e. every dispatch still in
+    flight, once per trace_id. Generic over trace_id (not slice-specific
+    parsing): mirrors `tools/pipe/dispatch`'s own trace_id convention
+    (`slice-<n>`) without hardcoding it here.
+
+    Per-trace_id EVENT-ORDER semantics, NOT a trace_id-membership check
+    (reviewer round-1 BLOCK on PR #1137, rule #19 fix — the SAME model as
+    `tools/pipe/dispatch`'s `_running_dispatch_exists` mutex): "exclude any
+    trace_id that ever has a dispatch_end" is permanently wrong because
+    trace_id is constant per slice — a slice's first-ever `dispatch_end`
+    would hide EVERY later round's dispatch, including a genuinely
+    unterminated one. Taking each trace_id's chronological LAST event
+    instead correctly surfaces round 2+ as running and is immune to a
+    stray leading `dispatch_end` with no prior `dispatch`."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    conn = _connect(resolved_db)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM spans WHERE kind IN ('dispatch', 'dispatch_end') "
+            "ORDER BY ts, rowid"
+        ).fetchall()
+    finally:
+        conn.close()
+    last_by_trace = {}
+    for r in rows:
+        last_by_trace[r["trace_id"]] = r  # ascending scan -> last write wins
+    running = [
+        _row_to_span(r) for r in last_by_trace.values() if r["kind"] == "dispatch"
+    ]
+    running.sort(key=lambda s: s.get("ts", ""))
+    return running
+
+
 def span_tree(trace_id, log_path=None, db_path_=None):
     """Span-tree API: every span for one trace_id, ts-ordered with a
     `rowid` tie-break (#1101 prereq 4). Returns [] when the trace_id is
@@ -468,6 +514,20 @@ def _cmd_fold(args):
     return 0
 
 
+def _cmd_running(args):
+    running = running_dispatches()
+    if not running:
+        print("no running dispatches")
+        return 0
+    for s in running:
+        attrs = s.get("attrs", {})
+        print(
+            f"{s.get('ts')} trace_id={s.get('trace_id')} slice={attrs.get('slice')} "
+            f"prd={attrs.get('prd', '?')} session_id={attrs.get('session_id', '?')}"
+        )
+    return 0
+
+
 def _cmd_path(args):
     chain = acid_path(args.pr)
     if chain is None:
@@ -496,6 +556,9 @@ def main(argv=None):
     p_path = sub.add_parser("path", help="indexed acid-test causal-path query")
     p_path.add_argument("--pr", required=True, type=int)
     p_path.set_defaults(func=_cmd_path)
+
+    p_running = sub.add_parser("running", help='"running now" query: dispatch spans lacking a terminal dispatch_end')
+    p_running.set_defaults(func=_cmd_running)
 
     args = parser.parse_args(argv)
     return args.func(args)

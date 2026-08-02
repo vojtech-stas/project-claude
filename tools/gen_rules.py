@@ -129,12 +129,13 @@ SCOPE_PATHS: dict[str, str] = {
 
 # Rule-ID conservation baseline (PRD #937 slice #939 — §2 criterion 7).
 # This is the TOTAL number of rule_ids across all active ADR scopes as of the
-# scope-migration commit (slice #939, 2026-06-18).  --check verifies that the
-# live count equals this value; a mismatch means a rule was silently added or
-# removed without updating this constant.
+# scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
+# PIP-* ids (slice #1129).  --check verifies that the live count equals this
+# value; a mismatch means a rule was silently added or removed without
+# updating this constant.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(13) + REG(3) + SLI(5) + VER(8) = 74
-RULE_IDS_BASELINE: int = 74
+#            ISO(6) + OUT(5) + PIP(19) + REG(3) + SLI(5) + VER(8) = 80
+RULE_IDS_BASELINE: int = 80
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -364,6 +365,44 @@ _RULE_STATEMENTS: dict[str, str] = {
         "`codebase-critic` fires once per PRD at the last open slice, before that "
         "slice's reviewer pass, judging the cumulative PRD diff; reviewer remains "
         "the sole merge gate."
+    ),
+    # ADR-0076: guarded-verb pipeline engine
+    "PIP-014": (
+        "The complete verb set (`tools/pipe/{dispatch,pr-open,pr-merge,qa-verify,"
+        "prd-close,record-green,batch-plan}` + `tools/promote.sh`) is the sole "
+        "sanctioned path for mechanical pipeline transitions: precondition checks "
+        "→ side effect → atomic v3 span; a refused transition exits non-zero and "
+        "never half-succeeds (ADR-0076 D1)."
+    ),
+    "PIP-015": (
+        "`tools/trace.py` accepts only the closed kind set {pr_opened, pr_merged, "
+        "qa_verified, develop_green, promotion, dispatch, dispatch_end, verdict, "
+        "batch_planned}; an unknown kind is a hard error (non-zero, nothing "
+        "written) (ADR-0076 D2)."
+    ),
+    "PIP-016": (
+        "`tools/pipe/pr-merge` refuses to merge a slice PR lacking a reviewer "
+        "comment containing `VERDICT: APPROVE` and emits a `verdict` span derived "
+        "from the comment it verified; `develop` gains server-side branch "
+        "protection requiring the `ci` status context (ADR-0076 D3)."
+    ),
+    "PIP-017": (
+        "The PreToolUse(Bash) validation hook DENIES exactly three incident-backed "
+        "raw forms with a working sanctioned alternative (raw `gh pr merge`, "
+        "subagent-context `tools/promote.sh`, refspec-form pushes to main) and "
+        "advisory-nudges `gh issue create --label slice|prd` rather than denying "
+        "it (no sanctioned posting verb exists yet) (ADR-0076 D4)."
+    ),
+    "PIP-018": (
+        "Each verb's landing PR deletes the SKILL.md prose block it mechanizes in "
+        "the same PR — reviewer-checkable via a named grep count=0 while the verb "
+        "call site remains (ADR-0076 D5)."
+    ),
+    "PIP-019": (
+        "Sequencing between verbs stays LLM judgment this phase; a sequencing-as-"
+        "code executor is commissioned only if the recorded evidence trigger "
+        "fires (nonzero RECORD-VS-GH emission-gap rate after 2+ PRDs, or one new "
+        "bypass incident) (ADR-0076 D6)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

@@ -195,6 +195,31 @@ def _load_trace_v3():
     except Exception:
         return None
 
+
+def _v3_trace_log_exists() -> bool:
+    """Whether the canonical v3 trace log currently exists on disk.
+
+    Root-cause fix (discovered wiring CHECK 22 into CI, slice #1136): the
+    v3 trace log is a gitignored LOCAL runtime artifact — GitHub Actions'
+    fresh checkout structurally never has it (same class as a genuinely
+    fresh repo before the first span is ever emitted). Every
+    RECORD-VS-GH-pattern reconciler (check_record_vs_gh,
+    check_slice_vs_pr, check_merged_without_verdict,
+    check_closed_prd_vs_qa) MUST check this BEFORE reconciling — reading
+    an absent log returns an empty span list indistinguishable from "every
+    single artifact's span was individually dropped", which would
+    fabricate a FAIL against ALL historical artifacts at once rather than
+    degrading honestly to WARN. Mirrors the existing trace_exists idiom
+    already used by check_stream_liveness.
+    """
+    try:
+        trace_mod = _load_trace_v3()
+        path = trace_mod.trace_log_path() if trace_mod is not None else None
+    except Exception:
+        path = None
+    return bool(path) and os.path.exists(path)
+
+
 # Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
 _KNOWN_CRITICS = {
     "reviewer",
@@ -3348,6 +3373,20 @@ def check_record_vs_gh() -> dict:
             "detail": f"unverifiable — anchor timestamp unparsable: {exc}",
         }
 
+    # --- Step 1.5: trace log existence check (root-cause fix, slice #1136) ---
+    # A structurally-absent trace log (gitignored local file; ALWAYS absent
+    # in a CI fresh checkout) must degrade to WARN, never fabricate a FAIL
+    # naming every historical PR as "missing" at once.
+    if not _v3_trace_log_exists():
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": (
+                "unverifiable — trace-v3.jsonl not found in this "
+                "environment (gitignored local log; always absent in CI "
+                "checkouts)"
+            ),
+        }
+
     # --- Step 2: fetch merged PRs on develop, routed through gh_cache ---
     rc, out = _health_gh_fetch(
         ["pr", "list", "--base", "develop", "--state", "merged",
@@ -3534,6 +3573,17 @@ def check_slice_vs_pr() -> dict:
     if anchor_dt is None:
         return {"id": "SLICE-VS-PR", "result": "WARN",
                 "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical slice PR at once.
+    if not _v3_trace_log_exists():
+        return {"id": "SLICE-VS-PR", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
 
     rc, out = _health_gh_fetch(
         ["pr", "list", "--base", "develop", "--state", "merged",
@@ -3679,6 +3729,17 @@ def check_merged_without_verdict() -> dict:
     if anchor_dt is None:
         return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
                 "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical merged PR at once.
+    if not _v3_trace_log_exists():
+        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
 
     rc, out = _health_gh_fetch(
         ["pr", "list", "--base", "develop", "--state", "merged",
@@ -3790,6 +3851,17 @@ def check_closed_prd_vs_qa() -> dict:
     if anchor_dt is None:
         return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
                 "detail": f"unverifiable — {anchor_err}"}
+    # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
+    # a structurally-absent trace log (gitignored local file; CI checkouts
+    # never have it) must degrade to WARN, never fabricate a FAIL against
+    # every historical closed PRD at once.
+    if not _v3_trace_log_exists():
+        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
+                "detail": (
+                    "unverifiable — trace-v3.jsonl not found in this "
+                    "environment (gitignored local log; always absent in "
+                    "CI checkouts)"
+                )}
 
     rc, out = _health_gh_fetch(
         ["issue", "list", "--label", "prd", "--state", "closed",

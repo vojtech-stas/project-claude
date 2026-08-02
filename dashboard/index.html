@@ -4903,9 +4903,15 @@ function _firingBadgeText(ev) {
 // #1082, PRD #1075 criterion 9). _recordedPrSet is populated on every
 // fetchTraceRuns() resolve and consulted by _renderFiringPr() below so the
 // demoted reconstructed panel can honestly flag PRs with no recorded
-// counterpart ("no recorded trace — pre-v3").
+// counterpart ("no recorded trace — pre-v3"). _recordedRunsLoaded gates that
+// annotation: the two panels fetch independently (recorded is sqlite-only
+// and usually resolves first, but gh_cache can occasionally already be warm
+// and resolve faster) — without this gate a reconstructed PR that IS
+// recorded could render the "no recorded trace" annotation prematurely if
+// its card paints before the recorded fetch has resolved even once.
 let _traceRunsLoaded = false;
 let _recordedPrSet = new Set();
+let _recordedRunsLoaded = false;
 
 function _renderTraceRun(run) {
   try {
@@ -4965,6 +4971,7 @@ function renderTraceRuns(data) {
 
     const runs = data.runs || [];
     _recordedPrSet = new Set(runs.map(function(r) { return String(r.pr); }));
+    _recordedRunsLoaded = true;
     const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
     if (statusEl) statusEl.textContent = runs.length + ' recorded chains' + fetchedAt;
 
@@ -5028,9 +5035,11 @@ function _renderFiringPr(pr) {
     const closes = (pr.closes_issues || []).map(function(n) { return '#' + n; }).join(', ');
     const events = pr.events || [];
     // Honest cross-check annotation (slice #1082): a PR absent from the
-    // recorded (primary) panel predates the v3 trace store.
+    // recorded (primary) panel predates the v3 trace store. Gated on
+    // _recordedRunsLoaded so an in-flight (not-yet-resolved) recorded fetch
+    // can never cause a false "no recorded trace" on a PR that IS recorded.
     const recorded = _recordedPrSet.has(String(num));
-    const recordedNote = recorded ? '' :
+    const recordedNote = (!_recordedRunsLoaded || recorded) ? '' :
       '<span class="firing-pr-closes" style="color:var(--muted);">no recorded trace — pre-v3</span>';
 
     let eventsHtml = '';

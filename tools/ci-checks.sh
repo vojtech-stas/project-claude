@@ -1042,6 +1042,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 22: RECORD-VS-GH — recorded pr_merged spans vs gh's merged-PR ground
+# truth on develop, promoted into CI per PRD #1127 §2 criterion 11a / slice
+# #1136 (ADR-0076 D6: the reconciler family "promoted into CI" contributes to
+# the recorded-evidence trigger for the deferred sequencing-as-code
+# executor). Delegated to health.py registry — same shape as CHECK 4/5;
+# health.py's own gh-unavailable handling already degrades to WARN (exit 0)
+# so no separate soft-degrade branch is needed here beyond python3/health.py
+# availability.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 22: RECORD-VS-GH — recorded pr_merged spans vs gh ground truth ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 22 — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK22_OUTPUT=$(python3 dashboard/health.py --check RECORD-VS-GH 2>&1)
+    CHECK22_EXIT=$?
+    if [ "$CHECK22_EXIT" -eq 0 ]; then
+        pass "CHECK 22 (RECORD-VS-GH): $CHECK22_OUTPUT"
+    else
+        fail "CHECK 22 (RECORD-VS-GH): $CHECK22_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

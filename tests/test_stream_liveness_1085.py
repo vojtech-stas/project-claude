@@ -183,8 +183,15 @@ class TestStreamLivenessSilenceOneStream(unittest.TestCase):
                     {"hook": "stream-a", "ts": _iso(now - 60)},
                     {"hook": "stream-b", "ts": _iso(now - 120)},
                 ],
+                # Post-explosion (slice #1136), "all fresh" must cover every
+                # always-on v3 kind, not just pr_opened -- the aggregate
+                # "trace-v3" row no longer exists.
                 trace_lines=[
                     {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_merged"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "verdict"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch"},
+                    {"v": 3, "ts": _iso(now - 30), "kind": "dispatch_end"},
                 ],
                 now_override=now_iso,
             )
@@ -219,9 +226,12 @@ class TestStreamLivenessSilenceOneStream(unittest.TestCase):
         self.assertIn("stream-a", fail_names)
         self.assertNotIn("stream-b(", fail_names)
 
-    def test_trace_v3_stream_tracked_and_can_fail_independently(self):
-        """trace-v3 is always a registered stream; silencing it alone must FAIL
-        only trace-v3, not the (fresh) hook streams."""
+    def test_trace_v3_kinds_tracked_and_can_fail_independently(self):
+        """v3 span kinds are always registered streams (per-kind, post the
+        slice #1136 explosion of the former single aggregate "trace-v3"
+        row); an empty trace log means every always-on v3 kind has never
+        fired -- each must FAIL by name, while the (fresh) hook streams
+        stay unaffected."""
         now = time.time()
         now_iso = _iso(now)
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,12 +243,18 @@ class TestStreamLivenessSilenceOneStream(unittest.TestCase):
                     {"hook": "stream-a", "ts": _iso(now - 60)},
                     {"hook": "stream-b", "ts": _iso(now - 60)},
                 ],
-                trace_lines=[],  # trace-v3.jsonl exists but is empty — never fired
+                trace_lines=[],  # trace-v3.jsonl exists but is empty — no kind has fired
                 now_override=now_iso,
             )
         self.assertEqual("FAIL", result["result"], msg=result)
         fail_names = " ".join(result.get("fail_streams", []))
-        self.assertIn("trace-v3", fail_names)
+        self.assertIn("v3:pr_opened(never-fired)", fail_names)
+        self.assertIn("v3:pr_merged(never-fired)", fail_names)
+        self.assertIn("v3:verdict(never-fired)", fail_names)
+        self.assertIn("v3:dispatch(never-fired)", fail_names)
+        self.assertIn("v3:dispatch_end(never-fired)", fail_names)
+        self.assertNotIn("stream-a(", fail_names)
+        self.assertNotIn("stream-b(", fail_names)
 
 
 class TestStreamLivenessDegradeCases(unittest.TestCase):

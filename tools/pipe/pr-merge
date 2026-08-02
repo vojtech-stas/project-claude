@@ -64,10 +64,23 @@ BEFORE any gh side effect. On a confirmed merge, a `verdict` span (attrs:
 critic, round, verdict, pr — parsed from that same APPROVE comment) is
 appended in addition to the existing pr_merged span (criterion 3b).
 
+RECORD-GREEN CHAINING (slice #1134 / PRD #1127 criterion 4, ADR-0076 D1):
+on a FRESHLY confirmed merge (both the default path and `--confirm`
+re-entry — never on the already-recorded idempotence shortcut, which does
+zero work by design), this wrapper tail-invokes `tools/pipe/record-green`
+as a subprocess bounded by pr-merge's own REMAINING wall-clock budget for
+THIS invocation — never a fresh budget. The outcome (green recorded /
+evaluation failed / budget exhausted before or during the chained call) is
+always named on stdout/stderr, never silent. This chained call NEVER flips
+pr-merge's own exit code: the merge already succeeded and was already
+recorded before the chain runs (mirrors the #1102 non-fatal-enrichment
+posture for `tools/promote.sh`'s own span emit).
+
 Env overrides (test seam; production defaults are sane real-world values):
   PR_MERGE_BUDGET_S        (default 90) — overall wall-clock budget for ONE
                             invocation (merge attempts + BEHIND checks-poll
-                            + REST confirm-poll all share this budget)
+                            + REST confirm-poll + the chained record-green
+                            call all share this budget)
   PR_MERGE_POLL_INTERVAL_S (default 5)  — sleep between poll iterations
 """
 import importlib.util
@@ -82,6 +95,7 @@ import time
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
 _TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+_RECORD_GREEN = os.path.join(_THIS_DIR, "record-green")
 
 MAX_ATTEMPTS = 3
 BUDGET_S = float(os.environ.get("PR_MERGE_BUDGET_S", "90"))
@@ -180,6 +194,48 @@ def _existing_pr_merged_span(trace, pr):
 
 def _pending_message(pr):
     return f"MERGE-PENDING: run tools/pipe/pr-merge --confirm {pr} to finish"
+
+
+# ---------------------------------------------------------------------------
+# RECORD-GREEN CHAINING (slice #1134 / PRD #1127 criterion 4, ADR-0076 D1)
+# ---------------------------------------------------------------------------
+
+def _chain_record_green(deadline):
+    """Tail-invoke tools/pipe/record-green from a FRESHLY confirmed merge,
+    bounded by pr-merge's own REMAINING wall-clock budget for THIS
+    invocation -- never a fresh budget. Never raises; never changes the
+    caller's exit code -- the merge already succeeded and was already
+    recorded before this runs, so record-green's outcome (or the budget
+    being exhausted before/during the call) is only ever NAMED, honestly,
+    on stdout/stderr (mirrors the #1102 non-fatal-enrichment posture)."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        print(
+            "pr-merge: record-green NOT chained -- pr-merge's budget was "
+            "already exhausted confirming the merge; run "
+            "'python tools/pipe/record-green' manually to evaluate develop_green",
+            file=sys.stderr,
+        )
+        return
+    try:
+        result = subprocess.run([sys.executable, _RECORD_GREEN], timeout=remaining)
+    except subprocess.TimeoutExpired:
+        print(
+            f"pr-merge: record-green TIMED OUT after {remaining:.0f}s "
+            "(pr-merge's remaining budget exhausted) -- develop_green outcome "
+            "UNKNOWN; run 'python tools/pipe/record-green' manually",
+            file=sys.stderr,
+        )
+        return
+    if result.returncode == 0:
+        print("pr-merge: record-green chained -- develop_green recorded")
+    else:
+        print(
+            f"pr-merge: record-green chained -- evaluation FAILED "
+            f"(exit={result.returncode}); develop is NOT green (see "
+            "record-green output above)",
+            file=sys.stderr,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +343,7 @@ def _do_confirm(pr, deadline, start):
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
     trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha}")
+    _chain_record_green(deadline)
     return 0
 
 
@@ -348,6 +405,7 @@ def _do_default(pr, deadline, start):
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
     trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha} attempts={attempt} behind_retried={attempt - 1}")
+    _chain_record_green(deadline)
     return 0
 
 

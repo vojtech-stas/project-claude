@@ -133,7 +133,19 @@ echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"
 # neither is ever written on any refusal path above. tools/trace.py resolves
 # its own canonical log location (TRACE_LOG_OVERRIDE test seam, else
 # git-common-dir parent) — no extra path plumbing needed here.
-python3 "$REPO_ROOT/tools/trace.py" emit --kind promotion \
+#
+# NON-FATAL BY DESIGN (fixes #1102(a)): by the time this runs, the ff-push
+# has already happened and the one-shot PROMOTE_OK sentinel has already been
+# consumed — the promotion itself is DONE. This span is enrichment ON TOP of
+# that already-succeeded side effect, not a gate on it. Under `set -euo
+# pipefail`, letting a failing emit propagate would exit promote.sh non-zero
+# for a promotion that genuinely succeeded — a telemetry failure mislabeling
+# a real success. So the emit is wrapped in an `if`: on failure, warn loudly
+# (never silent) but do NOT let it flip the script's exit code.
+if python3 "$REPO_ROOT/tools/trace.py" emit --kind promotion \
   --trace-id "promotion-$DEVELOP_SHA" \
-  --attr from=develop --attr to=main --attr "sha=$DEVELOP_SHA" >/dev/null
-echo "INFO: v3 promotion span appended — sha=$DEVELOP_SHA"
+  --attr from=develop --attr to=main --attr "sha=$DEVELOP_SHA" >/dev/null 2>&1; then
+  echo "INFO: v3 promotion span appended — sha=$DEVELOP_SHA"
+else
+  echo "WARNING: v3 promotion span emission failed — promotion itself already succeeded (sha=$DEVELOP_SHA); span is enrichment only, not gating (#1102)" >&2
+fi

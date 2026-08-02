@@ -546,7 +546,7 @@ Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds
 `RESULT: INVALID_INPUT` on missing inputs, mode ambiguity, or route cannot be determined.
 `PRODUCTION_VERIFY: PROVISIONAL` when the table-mandated route's tooling is unavailable — never a weaker-route PASS. The calling orchestrator routes PROVISIONAL to the `needs-human-check` queue (ADR-0040 D2/D4). On PROVISIONAL, `RESULT` is also `FAIL` (gate not passed). Do NOT set `RESULT: SUCCESS` on PROVISIONAL.
 
-The orchestrator (`/build` and `/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved).
+The orchestrator (`/build` and `/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved), then records the verdict via `python tools/pipe/qa-verify --verdict <PRODUCTION_VERIFY value> --route <ROUTE value>` (repoint target, PRD #1075 criterion 1 rider / slice #1086 — this verdict was previously unrecorded outside qa-tester's own trailer).
 
 ### Tool boundaries (production-verify mode)
 

@@ -2318,6 +2318,7 @@ def check_spec_coverage() -> dict:
     # --- 5. Build PRD → cited union from slice Covers: lines ---
     prd_cited = {n: set() for n in prd_criteria}
     prd_has_covers = {n: False for n in prd_criteria}
+    prd_malformed_covers = {n: 0 for n in prd_criteria}  # bare "Covers: #N" hint (#1106)
 
     for issue in slice_issues:
         body = issue.get("body") or ""
@@ -2334,6 +2335,12 @@ def check_spec_coverage() -> dict:
             prd_has_covers[prd_num] = True
             cited_nums = set(_SPEC_COVERS_NUM.findall(cm.group(1)))
             prd_cited[prd_num] |= cited_nums
+        elif _SPEC_COVERS_BARE.search(body):
+            # Malformed-form hint (#1106): a bare "Covers: #N" line (missing the
+            # "§2" ADR-0066 D2 requires) means this slice silently does NOT
+            # count toward coverage — surfaced so it isn't mistaken for
+            # legitimate grandfathering (pre-convention: no Covers: line at all).
+            prd_malformed_covers[prd_num] += 1
 
     # --- 6. Compute per-PRD coverage ---
     fully_covered = []
@@ -2382,6 +2389,14 @@ def check_spec_coverage() -> dict:
         parts.append("gaps: " + "; ".join(gap_descs))
     if grandfathered:
         parts.append(f"grandfathered (pre-convention): {sorted(grandfathered)}")
+    malformed_hint = {
+        n: c for n, c in prd_malformed_covers.items() if c and not prd_has_covers[n]
+    }
+    if malformed_hint:
+        parts.append(
+            "malformed 'Covers: #N' (missing '§2', see ADR-0066 D2): "
+            + ", ".join(f"PRD#{n}={c}" for n, c in sorted(malformed_hint.items()))
+        )
 
     detail = " | ".join(parts)
 
@@ -2417,6 +2432,7 @@ _SPEC_CRIT_NUM = re.compile(r'^(\d+[a-z]?)\.\s+\S', re.MULTILINE)
 _SPEC_PARENT_PRD = re.compile(r'PRD\s+#(\d+)')
 _SPEC_COVERS_LINE = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
 _SPEC_COVERS_NUM = re.compile(r'#(\d+[a-z]?)')
+_SPEC_COVERS_BARE = re.compile(r'(?m)^Covers:\s+(?!§2\b)#\d')  # malformed-form hint (#1106)
 
 
 def _parse_sec2_criteria(body: str) -> set:

@@ -1017,6 +1017,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 21: DEPLOY-HANDSHAKE self-test backstop (PRD #1075 slice #1079)
+#   Runs tools/deploy-handshake.sh --self-test — the CI-SAFE internal-
+#   consistency leg only (script parses, .claude/hooks/ non-empty,
+#   .claude/settings.json valid JSON, .githooks/ present). Deliberately does
+#   NOT run the full local-leg comparison (running-vs-deployed-branch content
+#   hash, attached/detached HEAD) — GitHub Actions checks out PRs in DETACHED
+#   HEAD by design, so that comparison would always false-positive in CI.
+#   The real deploy-gap invariant is asserted by the LOCAL leg only, against
+#   the real ROOT checkout (operator-run; see tools/repair-topology.md).
+#   Soft-degrades if bash or the script is unavailable.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 21: DEPLOY-HANDSHAKE self-test (CI-safe internal-consistency leg) ---"
+if ! command -v bash > /dev/null 2>&1 || [ ! -f "tools/deploy-handshake.sh" ]; then
+    echo "SKIP: CHECK 21 — bash or tools/deploy-handshake.sh not available (soft-degrade)"
+else
+    CHECK21_OUTPUT=$(bash tools/deploy-handshake.sh --self-test 2>&1)
+    CHECK21_EXIT=$?
+    if [ "$CHECK21_EXIT" -eq 0 ]; then
+        pass "CHECK 21 (DEPLOY-HANDSHAKE self-test): $CHECK21_OUTPUT"
+    else
+        fail "CHECK 21 (DEPLOY-HANDSHAKE self-test): $CHECK21_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

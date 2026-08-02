@@ -58,6 +58,28 @@ if command -v git >/dev/null 2>&1; then
   fi
 fi
 
+# ---- deploy-gap handshake (PRD #1075 criterion 4 / slice #1079) --------------
+# SPIDR-R choice (documented per the slice's own risk callout): this is the
+# highest-stakes slice in the PRD (a session-start hard block that could brick
+# every session bootstrap on a false positive, and this dispatch cannot
+# dogfood-test real session UX). We take the SAFER fallback explicitly
+# authorized by the slice body: land the handshake script (exit 1 + LOUD
+# banner) and the CI backstop as the actual BLOCKING legs now; session-start
+# stays LOUD-WARN (upgrade from the prior one-line HOOKS_WARN to the full
+# multi-line deploy-gap banner surfaced in context) rather than causing this
+# hook to exit non-zero. TODO-slice: graduate session-start to a true hard
+# block after one proven session cycle with the loud-warn behavior observed
+# live — see tools/repair-topology.md + PR body for the full rationale.
+DEPLOY_WARN=""
+HANDSHAKE_SH="$SCRIPT_DIR/../../tools/deploy-handshake.sh"
+if [ -f "$HANDSHAKE_SH" ]; then
+  DEPLOY_OUTPUT=$(bash "$HANDSHAKE_SH" 2>&1)
+  DEPLOY_EXIT=$?
+  if [ "$DEPLOY_EXIT" -ne 0 ]; then
+    DEPLOY_WARN=$(printf "\n%s\n" "$DEPLOY_OUTPUT")
+  fi
+fi
+
 # ---- gh/jq availability -------------------------------------------------------
 JQ_OK=0; GH_OK=0
 command -v jq >/dev/null 2>&1 && JQ_OK=1
@@ -125,10 +147,10 @@ except Exception as e:
 fi
 
 # ---- Build context string ---------------------------------------------------
-CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
+CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s%s\n" \
   "$BR" "$DIV" "$LOG" \
   "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" "$DASH_FRESH" \
-  "$HOOKS_WARN" "$JQ_WARN" "$GH_WARN" \
+  "$HOOKS_WARN" "$JQ_WARN" "$GH_WARN" "$DEPLOY_WARN" \
   | head -c 6144 | head -n 60)
 
 # ---- Emit session_start event (PRD #876 consolidation) ----------------------

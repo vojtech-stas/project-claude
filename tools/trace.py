@@ -35,6 +35,12 @@ skeleton schema lean; only the five wrapped transitions + enrichment spans
 exist yet (YAGNI — no schema for hypothetical future stages, per PRD #1075
 §6 rabbit-hole).
 
+Closed kind enum (PRD #1127 §2 criterion 9 / ADR-0076 D2, slice #1129):
+`emit_span` accepts ONLY `VALID_KINDS` below. An unknown kind is a hard
+error (`ValueError`, non-zero CLI exit) — NOTHING is written. This kills
+the invisible-stream class (a typo'd kind silently minting an unwatched
+stream) at the writer rather than at a reconciler.
+
 CLI:
   python tools/trace.py emit --kind pr_opened --trace-id prd-1075 \\
       [--span-id ...] [--parent ...] --attr pr=1234 --attr sha=abc \\
@@ -54,6 +60,15 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
+
+# Closed v3 kind enum (ADR-0076 D2) — the full set across PRD #1075 (five
+# wrapper-emitted kinds) + PRD #1127 (four guarded-verb kinds). STABLE and
+# closed: adding a new kind requires editing this set explicitly, never an
+# implicit new-string-just-works path.
+VALID_KINDS = frozenset({
+    "pr_opened", "pr_merged", "qa_verified", "develop_green", "promotion",
+    "dispatch", "dispatch_end", "verdict", "batch_planned",
+})
 
 
 def _git_common_dir_parent():
@@ -90,7 +105,15 @@ def emit_span(trace_id, kind, name=None, span_id=None, parent_span_id=None,
 
     Returns the record dict actually written (span_id/ts filled in).
     Raises OSError if the log path cannot be created/written.
+    Raises ValueError if `kind` is outside the closed VALID_KINDS enum —
+    this check runs BEFORE any file I/O, so an invalid kind writes nothing
+    (ADR-0076 D2 / PRD #1127 §2 criterion 9).
     """
+    if kind not in VALID_KINDS:
+        raise ValueError(
+            f"trace.py: unknown span kind {kind!r} — must be one of "
+            f"{sorted(VALID_KINDS)}"
+        )
     record = {
         "v": 3,
         "ts": _now_iso(),
@@ -174,15 +197,19 @@ def _parse_attrs(pairs):
 
 def _cmd_emit(args):
     attrs = _parse_attrs(args.attr)
-    record = emit_span(
-        trace_id=args.trace_id,
-        kind=args.kind,
-        name=args.name,
-        span_id=args.span_id,
-        parent_span_id=args.parent,
-        attrs=attrs,
-        dur_ms=args.dur_ms,
-    )
+    try:
+        record = emit_span(
+            trace_id=args.trace_id,
+            kind=args.kind,
+            name=args.name,
+            span_id=args.span_id,
+            parent_span_id=args.parent,
+            attrs=attrs,
+            dur_ms=args.dur_ms,
+        )
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     print(record["span_id"])
     return 0
 

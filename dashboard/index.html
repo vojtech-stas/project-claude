@@ -1457,18 +1457,41 @@
   </div>
 </div>
 
-<!-- FIRING TAB — per-PR workflow-firing timeline from gh (slice #871) -->
+<!-- FIRING TAB — recorded (primary) + reconstructed (cross-check) (slice #871, repointed #1082) -->
 <div id="tab-firing" class="tab">
+  <!-- RECORDED PANEL — PRIMARY renderer: v3 trace-store spans (PRD #1075 criterion 9) -->
+  <div class="section">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <h2 style="margin:0;">Recorded pipeline chains</h2>
+      <button class="refresh" onclick="reloadTraceRuns()">Refresh</button>
+      <span id="trace-runs-status" style="color:var(--muted);font-size:11px;"></span>
+    </div>
+    <p style="color:var(--muted);font-size:11px;margin-bottom:14px;">
+      PRIMARY source: recorded v3 spans from the trace store (tools/trace.py +
+      dashboard/tracestore.py) — pr_opened&rarr;pr_merged chains with real
+      timestamps/durations. Zero gh calls, zero regex reconstruction.
+    </p>
+    <div id="trace-runs-content">
+      <span style="color:var(--muted);font-size:11px;">Loading recorded chains…</span>
+    </div>
+  </div>
+
+  <!-- RECONSTRUCTED PANEL — DEMOTED cross-check: gh-derived (slice #871), never deleted -->
   <div class="section">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
       <h2 style="margin:0;">PR workflow-firing timelines</h2>
+      <span id="firing-cross-check-label" class="cross-check-label"
+            style="color:var(--amber);font-size:10px;border:1px solid var(--amber);
+                   border-radius:4px;padding:2px 6px;">reconstructed (cross-check)</span>
       <button class="refresh" onclick="reloadFiring()">Refresh</button>
       <span id="firing-status" style="color:var(--muted);font-size:11px;"></span>
     </div>
     <p style="color:var(--muted);font-size:11px;margin-bottom:14px;">
-      Per-PR agent-firing sequence derived from gh PR data (hook-independent).
-      Shows: implementer &rarr; critic verdicts (CRITIC/VERDICT/ROUND from PR comments)
-      &rarr; merge, with real timestamps.
+      DEMOTED cross-check layer: derived from gh PR data (hook-independent) —
+      never the primary source of truth. Shows implementer &rarr; critic verdicts
+      (CRITIC/VERDICT/ROUND from PR comments) &rarr; merge, with real timestamps.
+      A PR with no matching row in the recorded panel above predates the trace
+      store and is honestly labeled "no recorded trace — pre-v3".
     </p>
     <!-- PR limit picker -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
@@ -4876,12 +4899,174 @@ function _firingBadgeText(ev) {
   return label;
 }
 
+// /api/trace-runs — recorded pipeline-span chains, PRIMARY render (slice
+// #1082, PRD #1075 criterion 9). _recordedPrSet is populated on every
+// fetchTraceRuns() resolve and consulted by _renderFiringPr() below so the
+// demoted reconstructed panel can honestly flag PRs with no recorded
+// counterpart ("no recorded trace — pre-v3"). _recordedRunsLoaded gates that
+// annotation: the two panels fetch independently (recorded is sqlite-only
+// and usually resolves first, but gh_cache can occasionally already be warm
+// and resolve faster) — without this gate a reconstructed PR that IS
+// recorded could render the "no recorded trace" annotation prematurely if
+// its card paints before the recorded fetch has resolved even once.
+//
+// _recordedRunsCapped (review round 1, B2): the recorded fetch shares the
+// SAME `#firing-limit-input` value as the reconstructed fetch, but the two
+// panels enumerate DIFFERENT universes (all gh PRs vs only v3-recorded
+// ones) ordered differently, so even a shared limit doesn't guarantee the
+// reconstructed panel's window is fully covered by the recorded fetch. When
+// the recorded response's run_count equals the limit actually requested,
+// the fetch MAY be truncating a larger real set — in that case we cannot
+// safely claim "not recorded" for any PR absent from _recordedPrSet, so the
+// annotation is suppressed (never falsely claimed) until a fetch returns
+// FEWER runs than requested, proving nothing was cut off.
+let _traceRunsLoaded = false;
+let _recordedPrSet = new Set();
+let _recordedRunsLoaded = false;
+let _recordedRunsCapped = false;
+
+function _renderTraceRun(run) {
+  try {
+    const pr     = run.pr || '?';
+    const dur    = (run.dur_ms != null) ? (run.dur_ms + 'ms') : '';
+    const spans  = run.spans || [];
+
+    let eventsHtml = '';
+    if (spans.length === 0) {
+      eventsHtml = '<span style="color:var(--muted);font-size:10px;">no spans</span>';
+    } else {
+      spans.forEach(function(s) {
+        const label = escHtml(s.kind || '?');
+        const ts    = escHtml(_firingFmtTs(s.ts));
+        eventsHtml +=
+          '<div class="firing-event">' +
+          '<span class="firing-badge firing-badge-implementer">' + label + '</span>' +
+          '<span class="firing-event-ts">' + ts + '</span>' +
+          '</div>';
+      });
+    }
+
+    return (
+      '<div class="firing-pr-card firing-recorded-card">' +
+        '<div class="firing-pr-header">' +
+          '<span class="firing-pr-number">PR #' + escHtml(String(pr)) + '</span>' +
+          (dur ? '<span class="firing-pr-closes">' + escHtml(dur) + '</span>' : '') +
+        '</div>' +
+        '<div class="firing-timeline">' + eventsHtml + '</div>' +
+      '</div>'
+    );
+  } catch(e) {
+    return '<div class="firing-pr-card"><span style="color:var(--muted);font-size:10px;">render error</span></div>';
+  }
+}
+
+function _firingSharedLimit() {
+  const limitEl = document.getElementById('firing-limit-input');
+  return (limitEl && parseInt(limitEl.value, 10) > 0) ? parseInt(limitEl.value, 10) : 20;
+}
+
+function renderTraceRuns(data, requestedLimit) {
+  try {
+    const el = document.getElementById('trace-runs-content');
+    const statusEl = document.getElementById('trace-runs-status');
+    if (!el) return;
+
+    if (!data || data.error) {
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">' +
+        'Error: ' + escHtml((data && data.error) || 'unknown error') + '</span>';
+      return;
+    }
+
+    if (data.status === 'computing') {
+      if (statusEl) statusEl.textContent = 'computing…';
+      if (!el.innerHTML.includes('firing-recorded-card')) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:11px;">computing… (folding trace store)</span>';
+      }
+      setTimeout(fetchTraceRuns, 2000);
+      return;
+    }
+
+    const runs = data.runs || [];
+    _recordedPrSet = new Set(runs.map(function(r) { return String(r.pr); }));
+    _recordedRunsLoaded = true;
+    // Capped when the response is exactly the requested limit — the fetch
+    // MAY be truncating a larger real set (review round 1, B2).
+    _recordedRunsCapped = requestedLimit != null && runs.length >= requestedLimit;
+    const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
+    if (statusEl) statusEl.textContent = runs.length + ' recorded chains' + fetchedAt;
+
+    if (runs.length === 0) {
+      // Honest empty-state (slice #1082): pre-v3 PRs have no recorded spans.
+      el.innerHTML = '<span style="color:var(--muted);font-size:11px;">no recorded trace — pre-v3</span>';
+      return;
+    }
+
+    let html = '';
+    runs.forEach(function(r) { html += _renderTraceRun(r); });
+    el.innerHTML = html;
+  } catch(e) {
+    try {
+      const el = document.getElementById('trace-runs-content');
+      if (el) el.innerHTML = '<span style="color:var(--red);font-size:11px;">Render error: ' + escHtml(e.message) + '</span>';
+    } catch(_) {}
+  }
+}
+
+function fetchTraceRuns() {
+  try {
+    // Shares the SAME limit as the reconstructed fetch's picker (review
+    // round 1, B2) — was hardcoded to 20, drifting from the 1..100 picker.
+    const limit = _firingSharedLimit();
+    fetch('/api/trace-runs?limit=' + limit)
+      .then(function(r) { return r.json(); })
+      .then(function(data) { renderTraceRuns(data, limit); })
+      .catch(function(e) {
+        try {
+          const el = document.getElementById('trace-runs-content');
+          if (el && !el.innerHTML.includes('firing-recorded-card')) {
+            el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Failed to fetch /api/trace-runs: ' + escHtml(e.message) + '</span>';
+          }
+        } catch(_) {}
+      });
+  } catch(e) { /* outermost defensive catch */ }
+}
+
+function reloadTraceRuns() {
+  _traceRunsLoaded = false;
+  startTraceRuns();
+}
+
+function startTraceRuns() {
+  if (_traceRunsLoaded) return;
+  _traceRunsLoaded = true;
+  fetchTraceRuns();
+  // Auto-refresh every 30s while the Firing tab is visible (mirrors startFiring()).
+  setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    const tab = document.getElementById('tab-firing');
+    if (!tab || !tab.classList.contains('active')) return;
+    fetchTraceRuns();
+  }, 30000);
+}
+
+registerTabHook('firing', startTraceRuns);
+
 function _renderFiringPr(pr) {
   try {
     const num    = pr.pr_number || '?';
     const title  = escHtml((pr.pr_title || '').slice(0, 80));
     const closes = (pr.closes_issues || []).map(function(n) { return '#' + n; }).join(', ');
     const events = pr.events || [];
+    // Honest cross-check annotation (slice #1082): a PR absent from the
+    // recorded (primary) panel predates the v3 trace store. Gated on
+    // _recordedRunsLoaded so an in-flight (not-yet-resolved) recorded fetch
+    // can never cause a false "no recorded trace" on a PR that IS recorded,
+    // AND on !_recordedRunsCapped (review round 1, B2) so a PR that merely
+    // falls outside the fetched recorded window (larger real set than the
+    // limit) is never falsely claimed absent — suppress, never assert wrong.
+    const recorded = _recordedPrSet.has(String(num));
+    const recordedNote = (!_recordedRunsLoaded || _recordedRunsCapped || recorded) ? '' :
+      '<span class="firing-pr-closes" style="color:var(--muted);">no recorded trace — pre-v3</span>';
 
     let eventsHtml = '';
     if (events.length === 0) {
@@ -4905,6 +5090,7 @@ function _renderFiringPr(pr) {
           '<span class="firing-pr-number">PR #' + num + '</span>' +
           '<span class="firing-pr-title">' + title + '</span>' +
           (closes ? '<span class="firing-pr-closes">closes ' + escHtml(closes) + '</span>' : '') +
+          recordedNote +
         '</div>' +
         '<div class="firing-timeline">' + eventsHtml + '</div>' +
       '</div>'

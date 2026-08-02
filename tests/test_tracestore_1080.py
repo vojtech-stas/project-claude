@@ -21,10 +21,11 @@ Covers:
   (b) disposability: delete the db file, re-query (which re-folds), get the
       IDENTICAL answer — the store is refoldable-from-log, never a second
       source of truth (ADR-0075 D2).
-  (c) mtime-based freshness semantics: fold(force=False) SKIPS the rebuild
-      when the JSONL's mtime is unchanged since the last fold, and performs
-      a FULL refold (never row-level incremental) once the mtime changes —
-      documents+proves the module's stated full-refold-or-skip semantics.
+  (c) size+mtime composite freshness semantics (updated #1101 prereq 5):
+      fold(force=False) SKIPS the rebuild only when BOTH the JSONL's size
+      and mtime are unchanged since the last fold, and performs a FULL
+      refold (never row-level incremental) once either changes — including
+      the "stale-tick" edge where content changes at an identical mtime.
   (d) unknown PR -> loud fail: both the Python API (returns None, matching
       tools/trace.py's None) and the CLI (`path --pr <n>` exits non-zero
       with an explicit "no recorded trace" stderr message) preserve the
@@ -160,15 +161,37 @@ class TestTracestoreFoldQueryParity(unittest.TestCase):
         )
         self.assertEqual(before, after)
 
-    def test_mtime_freshness_skip_then_full_refold_on_change(self):
+    def test_freshness_skip_when_fingerprint_truly_unchanged(self):
+        """size+mtime composite unchanged (#1101 prereq 5) -> SKIP the
+        rebuild entirely (freshness check, not incremental) and report the
+        OLD count."""
         first_count = self.tracestore.fold(
             log_path=self.log_path, db_path_=self.db_path, force=True
         )
         self.assertEqual(first_count, len(_FIXTURE_SPANS))
 
-        # Overwrite the fixture with MORE spans but preserve the exact
-        # mtime -> fold(force=False) must SKIP the rebuild (freshness check,
-        # not incremental) and report the OLD count.
+        skipped_count = self.tracestore.fold(
+            log_path=self.log_path, db_path_=self.db_path, force=False
+        )
+        self.assertEqual(
+            skipped_count, first_count,
+            "unchanged size+mtime fingerprint must SKIP the rebuild",
+        )
+
+    def test_freshness_composite_key_refolds_on_stale_tick_edge(self):
+        """#1101 prereq 5 repro: a pure-mtime freshness check misses a
+        same-second rewrite on low-resolution filesystems (the "stale-tick"
+        edge) — a REAL content change (more spans) that happens to land at
+        the identical mtime must still be detected via the size half of the
+        size+mtime composite fingerprint and trigger a FULL refold, never a
+        stale SKIP that would silently strand the new spans unindexed."""
+        first_count = self.tracestore.fold(
+            log_path=self.log_path, db_path_=self.db_path, force=True
+        )
+        self.assertEqual(first_count, len(_FIXTURE_SPANS))
+
+        # Overwrite the fixture with MORE spans (different size) but
+        # preserve the exact mtime — the stale-tick edge case.
         extra_spans = _FIXTURE_SPANS + [
             {
                 "v": 3, "ts": "2026-08-02T12:00:00Z", "trace_id": "pr-9003",
@@ -179,23 +202,23 @@ class TestTracestoreFoldQueryParity(unittest.TestCase):
         _write_fixture_log(self.log_path, extra_spans)
         os.utime(self.log_path, (stat_before.st_atime, stat_before.st_mtime))
 
-        skipped_count = self.tracestore.fold(
-            log_path=self.log_path, db_path_=self.db_path, force=False
-        )
-        self.assertEqual(
-            skipped_count, first_count,
-            "same-mtime fold(force=False) must SKIP the rebuild, not refold",
-        )
-
-        # Now bump the mtime -> fold(force=False) must detect staleness and
-        # perform a FULL refold (never row-level incremental), reflecting
-        # every span present in the file at that point.
-        newer = stat_before.st_mtime + 5
-        os.utime(self.log_path, (newer, newer))
         refolded_count = self.tracestore.fold(
             log_path=self.log_path, db_path_=self.db_path, force=False
         )
-        self.assertEqual(refolded_count, len(extra_spans))
+        self.assertEqual(
+            refolded_count, len(extra_spans),
+            "same-mtime + changed size must still trigger a FULL refold "
+            "(size+mtime composite fingerprint, not mtime alone)",
+        )
+
+        # Now bump the mtime too -> fold(force=False) must still detect
+        # staleness and perform a FULL refold (never row-level incremental).
+        newer = stat_before.st_mtime + 5
+        os.utime(self.log_path, (newer, newer))
+        refolded_again = self.tracestore.fold(
+            log_path=self.log_path, db_path_=self.db_path, force=False
+        )
+        self.assertEqual(refolded_again, len(extra_spans))
 
     def test_unknown_pr_returns_none_matching_trace_py(self):
         expected = self.trace.acid_path(424242, log_path=self.log_path)

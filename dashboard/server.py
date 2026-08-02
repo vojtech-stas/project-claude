@@ -21,6 +21,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/runtime-reading      -> JSON current-session runtime reading from transcript (slice #928)
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
+        GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Firing tab's PRIMARY renderer (slice #1082, PRD #1075 criterion 9)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -86,6 +87,7 @@ from events import serve_runs as _serve_runs_fn  # noqa: E402
 from workitems import fetch_workitems  # noqa: E402
 from readme_gen import generate_readme, render_pipeline_mermaid  # noqa: E402
 import prd_firing as _prd_firing_mod  # noqa: E402
+import tracestore as _tracestore_mod  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Server identity — captured once at import/startup time (ADR-0056/0057/0058).
@@ -953,6 +955,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(_prd_firing_mod.serve_prd_firing(limit))
             except Exception as exc:
                 self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
+
+        elif path == "/api/trace-runs":
+            # GET /api/trace-runs[?limit=N] — recorded pipeline-span chains
+            # from the v3 trace store: the Firing tab's PRIMARY renderer
+            # (slice #1082, PRD #1075 criterion 9). Non-blocking
+            # background-warm serve, mirrors /api/prd-firing's house
+            # pattern (issue #962) — zero gh calls, sqlite+JSONL only.
+            limit_raw = (query.get("limit") or ["20"])[0]
+            try:
+                limit = int(limit_raw) if str(limit_raw).isdigit() else 20
+            except (ValueError, AttributeError):
+                limit = 20
+            limit = max(1, min(limit, 100))
+            try:
+                self._send_json(_tracestore_mod.serve_trace_runs(limit=limit))
+            except Exception as exc:
+                self._send_json({"error": str(exc), "runs": [], "run_count": 0}, 500)
 
         elif path == "/api/runtime-reading":
             # GET /api/runtime-reading — current-session runtime reading from transcript

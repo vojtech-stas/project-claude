@@ -12,11 +12,11 @@ START of EACH dispatch-loop iteration, recording the current batch state
 (pending / ready / blocked slice numbers for that iteration) as one atomic
 span. Emit-only by design (PRD #1127 §2 criterion 6a) — no query or resume
 feature ships here (W2 owns run-board consumption of this stream). This is
-the mechanized replacement for the never-honored `ship-state-<prd>.json`
-checkpoint prose (CLAUDE.md rule #23 / ADR-0076 D5 prose-shrink contract):
-zero ship-state files were ever written against that standing mandate over
-its entire lifetime, while this verb's spans land atomically with the CLI
-call itself.
+the mechanized replacement for the retired ship-state checkpoint contract
+(CLAUDE.md rule #23 / ADR-0076 D5 prose-shrink contract): that per-PRD
+state-checkpoint JSON file was never once written against its standing
+mandate over its entire lifetime, while this verb's spans land atomically
+with the CLI call itself.
 
 Comma-separated lists (not JSON) for the three set args — the clean form for
 a single-line shell invocation from ship/SKILL.md's dispatch loop; an empty

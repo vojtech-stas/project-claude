@@ -2,7 +2,16 @@
 # PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
 # Covers ADR-0023 D4 (push-to-main) and the ADR-0076 D4 deny-guard funnel
 # (PRD #1127 criteria 7a-7c, slice #1133): three raw forms below, each with
-# a working sanctioned alternative.
+# a working sanctioned alternative; plus criterion 7d (slice #1135): an
+# advisory-only warn (never deny) for `gh issue create --label slice|prd` --
+# no sanctioned posting verb exists yet, so /to-issues and /to-prd legitimately
+# invoke this raw form and the call must proceed. Criterion 7e (also slice
+# #1135, no code here) is a pass-through demo, covered by
+# tests/test_deny_guard_advisory_1135.py: every sanctioned `tools/pipe/*` verb
+# form (plus the already-covered orchestrator-context tools/promote.sh) is
+# untouched by any check below because none of their clause-head tokens are
+# `gh`/`git`/a `tools/promote.sh` invocation -- their Bash-tool command line
+# is `python tools/pipe/<verb> ...`, so no new allowlist code was needed.
 # Reads tool-call JSON on stdin; inspects tool_input.command.
 #
 # INVOCATION-ANCHORED, NOT SUBSTRING (reviewer round-1 BLOCK on PR #1141,
@@ -47,6 +56,14 @@
 # Warns (systemMessage, NOT denied):
 #   - `git commit ... -m ... WIP` (convention nudge; same clause-anchoring
 #     applied per rule #19 class-sweep).
+#   - `gh issue create --label slice` or `--label prd` (as the actual
+#     invocation, clause-anchored) -- ADR-0076 D4 7d advisory nudge naming
+#     /to-issues and /to-prd. Deliberately NOT a deny: no sanctioned posting
+#     verb exists yet and /to-issues/to-prd legitimately run this exact raw
+#     form in main-agent context (a hard deny would break the sanctioned
+#     pipeline itself -- the #1038 untested-gate class). The #918
+#     hand-created-slice class keeps its deterministic lane via CI CHECK 19
+#     (slicer-provenance) + the SLICE-VS-PR reconciler.
 # Soft-degrades if `jq` OR `python3` missing → ERROR beacon + exit 0 (cannot
 # classify; let Claude's built-in classifier handle. jq itself is still
 # required for the earlier `tool_input.command` extraction and for the
@@ -154,6 +171,7 @@ def _strip_env_prefix(tokens):
 
 def classify(cmd):
     deny_gh_merge = deny_push_main = deny_promote_invocation = warn_wip = False
+    warn_issue_create_label = False
     for tokens in _clauses(cmd):
         t = _strip_env_prefix(tokens)
         if not t:
@@ -170,11 +188,19 @@ def classify(cmd):
         if head == "git" and len(t) >= 2 and t[1] == "commit":
             if "-m" in t[2:] and any("WIP" in tok for tok in t[2:]):
                 warn_wip = True
+        if head == "gh" and len(t) >= 3 and t[1] == "issue" and t[2] == "create":
+            rest = t[3:]
+            for i, tok in enumerate(rest):
+                if tok == "--label" and i + 1 < len(rest):
+                    parts = rest[i + 1].split(",")
+                    if "slice" in parts or "prd" in parts:
+                        warn_issue_create_label = True
     return {
         "deny_gh_merge": deny_gh_merge,
         "deny_push_main": deny_push_main,
         "deny_promote_invocation": deny_promote_invocation,
         "warn_wip": warn_wip,
+        "warn_issue_create_label": warn_issue_create_label,
     }
 
 
@@ -206,6 +232,17 @@ fi
 # `git commit -m "... WIP ..."` → warn-only (convention, not danger).
 if [ "$(_flag warn_wip)" = "true" ]; then
   emit_warn 'WIP commit detected — CLAUDE.md rule #5 discourages WIP messages; prefer Conventional Commits.'
+fi
+
+# `gh issue create --label slice|prd` (as the actual invocation) → warn-only,
+# NEVER deny (ADR-0076 D4 7d). No sanctioned posting verb exists yet, and
+# /to-issues / /to-prd legitimately run this exact raw form in main-agent
+# context -- a hard deny here would break the sanctioned pipeline itself
+# (the #1038 untested-gate class). The call proceeds; the #918
+# hand-created-slice class keeps its deterministic enforcement via CI
+# CHECK 19 (slicer-provenance) + the SLICE-VS-PR reconciler.
+if [ "$(_flag warn_issue_create_label)" = "true" ]; then
+  emit_warn 'gh issue create --label slice|prd detected — slices and PRDs are normally posted via /to-issues or /to-prd (which gate through slicer-critic/prd-critic); this raw call still proceeds. The #918 hand-created-slice class is caught deterministically via CI CHECK 19 + the SLICE-VS-PR reconciler.'
 fi
 
 # `tools/promote.sh` invoked (as the actual command) from a SUBAGENT context

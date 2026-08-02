@@ -207,14 +207,17 @@ class TestHookTrioComposite:
 # AC4: --list count invariant (must equal 46)
 # ---------------------------------------------------------------------------
 class TestListCountInvariant:
-    def test_list_count_is_50(self):
-        """python dashboard/health.py --list | wc -l must stay 50.
+    def test_list_count_is_53(self):
+        """python dashboard/health.py --list | wc -l must stay 53.
 
         Bumped from 47 to 50 by slice #1085 (PRD #1075 criteria 8/10c/10d),
         which legitimately registers THREE new checks: STREAM-LIVENESS,
         DEPLOY-HANDSHAKE, and CRITIC-HEALTH (function existed since slice
         #779 but was never added to CHECK_REGISTRY — a registry-closure fix,
-        not a new check). This invariant guards against ACCIDENTAL registry
+        not a new check). Bumped again from 50 to 53 by slice #1136 (PRD
+        #1127 §2 criterion 11b / ADR-0076 D6), which legitimately registers
+        THREE new reconciler checks: SLICE-VS-PR, MERGED-WITHOUT-VERDICT,
+        CLOSED-PRD-VS-QA. This invariant guards against ACCIDENTAL registry
         drift (duplicate/dropped IDs) — deliberate additions bump the
         literal in the same PR that adds the check, per the established
         pattern for this test.
@@ -227,9 +230,9 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 50, (
-            f"--list count changed! Expected 50, got {count}. "
-            "Conservation violated (slice #968 §2 #8 / bumped by slice #1085)."
+        assert count == 53, (
+            f"--list count changed! Expected 53, got {count}. "
+            "Conservation violated (slice #968 §2 #8 / bumped by slice #1085, #1136)."
         )
 
 

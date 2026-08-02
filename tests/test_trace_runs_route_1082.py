@@ -101,6 +101,16 @@ class TestIndexHtmlRendersBothPanels(unittest.TestCase):
         self.assertIn("fetchFiring", self.html_src)
         self.assertIn('id="firing-content"', self.html_src)
 
+    def test_cross_check_annotation_gated_on_recorded_load(self):
+        """Live QA (headless Playwright against real PRs 1095-1105) caught a
+        race: the recorded and reconstructed panels fetch independently, and
+        when gh_cache is already warm, the reconstructed panel can paint
+        BEFORE the recorded fetch resolves — a PR that IS recorded would
+        then show a false "no recorded trace" annotation. The annotation
+        must be gated on a loaded-flag so it never renders on an in-flight
+        (not-yet-resolved) recorded fetch."""
+        self.assertIn("_recordedRunsLoaded", self.html_src)
+
 
 if __name__ == "__main__":
     unittest.main()

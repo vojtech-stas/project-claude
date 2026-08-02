@@ -207,14 +207,17 @@ class TestHookTrioComposite:
 # AC4: --list count invariant (must equal 46)
 # ---------------------------------------------------------------------------
 class TestListCountInvariant:
-    def test_list_count_is_47(self):
-        """python dashboard/health.py --list | wc -l must stay 47.
+    def test_list_count_is_50(self):
+        """python dashboard/health.py --list | wc -l must stay 50.
 
-        Bumped from 46 to 47 by slice #1081 (PRD #1075 criterion 3), which
-        legitimately registers a new check (RECORD-VS-GH). This invariant
-        guards against ACCIDENTAL registry drift (duplicate/dropped IDs) —
-        deliberate additions bump the literal in the same PR that adds the
-        check, per the established pattern for this test.
+        Bumped from 47 to 50 by slice #1085 (PRD #1075 criteria 8/10c/10d),
+        which legitimately registers THREE new checks: STREAM-LIVENESS,
+        DEPLOY-HANDSHAKE, and CRITIC-HEALTH (function existed since slice
+        #779 but was never added to CHECK_REGISTRY — a registry-closure fix,
+        not a new check). This invariant guards against ACCIDENTAL registry
+        drift (duplicate/dropped IDs) — deliberate additions bump the
+        literal in the same PR that adds the check, per the established
+        pattern for this test.
         """
         result = subprocess.run(
             [sys.executable, os.path.join(HEALTH_DIR, "health.py"), "--list"],
@@ -224,9 +227,9 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 47, (
-            f"--list count changed! Expected 47, got {count}. "
-            "Conservation violated (slice #968 §2 #8 / bumped by slice #1081)."
+        assert count == 50, (
+            f"--list count changed! Expected 50, got {count}. "
+            "Conservation violated (slice #968 §2 #8 / bumped by slice #1085)."
         )
 
 

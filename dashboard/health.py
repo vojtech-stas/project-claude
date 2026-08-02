@@ -1464,6 +1464,7 @@ PURPOSE_GROUP_MAP: dict = {
     "CAPTURE-SLO":    "Telemetry live",
     "HOOK-INTEGRITY": "Telemetry live",
     "HOOK-LIVENESS":  "Telemetry live",
+    "STREAM-LIVENESS": "Telemetry live",
     # --- Verification integrity ---
     # Proof-presence, merge-integrity, capture-shape, green-main
     "PROOF-PRESENCE":  "Verification integrity",
@@ -1483,6 +1484,7 @@ PURPOSE_GROUP_MAP: dict = {
     "SESSION-INJECTION": "Isolation/hygiene",
     "STALE-BRANCHES":    "Isolation/hygiene",
     "TESTS-COLLECTED":   "Isolation/hygiene",
+    "DEPLOY-HANDSHAKE":  "Isolation/hygiene",
     # --- Release gates ---
     # Promotion lag, R-SENSITIVE-DETECTOR advisory
     "PROMOTION-LAG":        "Release gates",
@@ -2305,23 +2307,7 @@ def check_spec_coverage() -> dict:
         return {"id": "SPEC-COVERAGE", "result": "WARN",
                 "detail": "gh API unavailable for slice issues"}
 
-    # --- 3. Parse §2 criteria from each PRD ---
-    _sec2_start = re.compile(r'^## 2\.', re.MULTILINE)
-    _next_h2 = re.compile(r'^## [^2]', re.MULTILINE)
-    _crit_num = re.compile(r'^(\d+)\.\s+\S', re.MULTILINE)
-
-    def _parse_sec2_criteria(body: str) -> set:
-        """Return the set of numbered criterion IDs from PRD §2."""
-        if not body:
-            return set()
-        m = _sec2_start.search(body)
-        if not m:
-            return set()
-        nh2 = _next_h2.search(body, m.end())
-        end = m.end() + nh2.start() if nh2 else len(body)
-        sec2 = body[m.start():end]
-        return {int(n) for n in _crit_num.findall(sec2)}
-
+    # --- 3. Parse §2 criteria from each PRD (module-level helper — #1077 fix) ---
     # --- 4. Build PRD → criteria map ---
     prd_criteria = {}
     for issue in prd_issues:
@@ -2330,27 +2316,23 @@ def check_spec_coverage() -> dict:
         prd_criteria[n] = criteria
 
     # --- 5. Build PRD → cited union from slice Covers: lines ---
-    _parent_prd = re.compile(r'PRD\s+#(\d+)')
-    _covers_line = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
-    _covers_num = re.compile(r'#(\d+)')
-
     prd_cited = {n: set() for n in prd_criteria}
     prd_has_covers = {n: False for n in prd_criteria}
 
     for issue in slice_issues:
         body = issue.get("body") or ""
         # Find parent PRD
-        pm = _parent_prd.search(body)
+        pm = _SPEC_PARENT_PRD.search(body)
         if not pm:
             continue
         prd_num = int(pm.group(1))
         if prd_num not in prd_criteria:
             continue
         # Find Covers: line
-        cm = _covers_line.search(body)
+        cm = _SPEC_COVERS_LINE.search(body)
         if cm:
             prd_has_covers[prd_num] = True
-            cited_nums = {int(x) for x in _covers_num.findall(cm.group(1))}
+            cited_nums = set(_SPEC_COVERS_NUM.findall(cm.group(1)))
             prd_cited[prd_num] |= cited_nums
 
     # --- 6. Compute per-PRD coverage ---
@@ -2373,7 +2355,11 @@ def check_spec_coverage() -> dict:
         if not orphans and not phantoms:
             fully_covered.append(prd_num)
         else:
-            partial.append((prd_num, sorted(orphans), sorted(phantoms)))
+            partial.append((
+                prd_num,
+                sorted(orphans, key=_crit_sort_key),
+                sorted(phantoms, key=_crit_sort_key),
+            ))
 
     # --- 7. Build summary detail ---
     total_post_conv = len(fully_covered) + len(partial)
@@ -2414,6 +2400,46 @@ def check_spec_coverage() -> dict:
         "partial": partial,
         "grandfathered": sorted(grandfathered),
     }
+
+
+# ---------------------------------------------------------------------------
+# SPEC-COVERAGE regexes + helpers — module-level for direct unit-testability
+# (issue #1077 / ADR-0066 D2): the prior digit-only regexes silently dropped
+# the trailing letter on lettered sub-criteria (e.g. PRD #1075's `2a.`/`2b.`/
+# `10a.`-`10d.`), collapsing distinct criteria onto one digit and producing
+# false phantoms/orphans against a PRD with complete semantic coverage.
+# Criterion IDs are now strings (e.g. "2", "2a", "10b") — never ints, so "2"
+# and "2a" cannot collide as they would under an int model.
+# ---------------------------------------------------------------------------
+_SPEC_SEC2_START = re.compile(r'^## 2\.', re.MULTILINE)
+_SPEC_NEXT_H2 = re.compile(r'^## [^2]', re.MULTILINE)
+_SPEC_CRIT_NUM = re.compile(r'^(\d+[a-z]?)\.\s+\S', re.MULTILINE)
+_SPEC_PARENT_PRD = re.compile(r'PRD\s+#(\d+)')
+_SPEC_COVERS_LINE = re.compile(r'(?m)^Covers:\s+§2\s+(.*)')
+_SPEC_COVERS_NUM = re.compile(r'#(\d+[a-z]?)')
+
+
+def _parse_sec2_criteria(body: str) -> set:
+    """Return the set of §2 criterion-ID strings (e.g. {"1", "2a", "2b"})
+    found in a PRD body's §2 section. Empty set if §2 is absent/empty."""
+    if not body:
+        return set()
+    m = _SPEC_SEC2_START.search(body)
+    if not m:
+        return set()
+    nh2 = _SPEC_NEXT_H2.search(body, m.end())
+    end = m.end() + nh2.start() if nh2 else len(body)
+    sec2 = body[m.start():end]
+    return set(_SPEC_CRIT_NUM.findall(sec2))
+
+
+def _crit_sort_key(cid: str):
+    """Sort key for criterion-ID strings: (numeric part, letter suffix) so
+    "10a" sorts after "2a" — a bare string sort would put "10a" first."""
+    m = re.match(r'(\d+)([a-z]?)', cid)
+    if not m:
+        return (0, cid)
+    return (int(m.group(1)), m.group(2))
 
 
 # ---------------------------------------------------------------------------
@@ -5639,6 +5665,259 @@ def check_hook_liveness() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# STREAM-LIVENESS — per-registered-stream dark detection (PRD #1075 criterion 8,
+# slice #1085). Complements (does NOT replace) HOOK-LIVENESS and HOOK-INTEGRITY,
+# read in full before writing this:
+#   - HOOK-LIVENESS compares the SINGLE newest beacon across the whole hook
+#     layer against activity — one healthy stream masks every dead sibling
+#     (aggregate-newest-beacon blindness).
+#   - HOOK-INTEGRITY skips any stream with zero recent attempt beacons
+#     entirely ("no attempt beacons ... deferred to HOOK-LIVENESS") — but
+#     HOOK-LIVENESS never looks per-stream either, so a stream that goes
+#     fully dark is invisible to BOTH checks (circular deferral).
+# STREAM-LIVENESS closes that gap: enumerate every REGISTERED stream (each
+# distinct telemetry key discoverable from .claude/settings.json — mirroring
+# discovery.py's AUTO-MODE _auto_mode_derived_keys aggregation plus the
+# filename-stem fallback for hooks that beacon directly, e.g. "session-start"
+# — PLUS the trace-v3 span stream) and check EACH one against its OWN
+# last-fired timestamp. A stream with no fresh beacon in its window is a
+# NAMED FAIL for that stream alone; live siblings still PASS.
+# ---------------------------------------------------------------------------
+
+_STREAM_LIVENESS_DARK_MINUTES = 60  # mirrors _HOOK_LIVENESS_DARK_MINUTES
+
+
+def _stream_liveness_registered_streams(settings_path: Path) -> set:
+    """Enumerate every distinct stream telemetry key registered in
+    .claude/settings.json's hook configs, mirroring discover_hooks()'s own
+    key-selection: literal event-type arg > AUTO-MODE derived-key set >
+    filename-stem fallback (for hooks that beacon directly, bypassing
+    log-tool-event.sh). Returns an empty set (never raises) on any failure —
+    callers degrade to WARN rather than fabricate a stream list.
+    """
+    import json as _json
+    try:
+        _insert_dashboard_sys_path()
+        from discovery import (  # noqa: PLC0415
+            _auto_mode_derived_keys,
+            _event_type_from_cmd,
+            _read_hook_name,
+        )
+    except Exception:
+        return set()
+    if not settings_path.exists():
+        return set()
+    streams: set = set()
+    try:
+        data = _json.loads(settings_path.read_text(encoding="utf-8"))
+        for event, entries in data.get("hooks", {}).items():
+            for entry in entries:
+                matcher = entry.get("matcher", "")
+                for hook in entry.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    event_type_arg = _event_type_from_cmd(cmd)
+                    if event_type_arg == "auto":
+                        streams.update(_auto_mode_derived_keys(event, matcher))
+                    elif event_type_arg:
+                        streams.add(event_type_arg)
+                    else:
+                        clean_name = _read_hook_name(cmd)
+                        if clean_name:
+                            streams.add(clean_name)
+    except Exception:
+        return set()
+    return streams
+
+
+def check_stream_liveness() -> dict:
+    """STREAM-LIVENESS: see module comment above (PRD #1075 criterion 8).
+
+    Env overrides (test seam, mirrors check_hook_liveness's override pattern):
+      _STREAM_LIVENESS_SETTINGS_OVERRIDE — path to a synthetic settings.json
+      _STREAM_LIVENESS_FIRES_OVERRIDE    — path to a synthetic hook-fires.jsonl
+      _STREAM_LIVENESS_TRACE_OVERRIDE    — path to a synthetic trace-v3.jsonl
+      _STREAM_LIVENESS_NOW_OVERRIDE      — ISO-8601 ts to use as "now"
+
+    PASS when every registered stream has a beacon within the window.
+    FAIL naming each stream that has none (never-fired or gone dark) — other
+    streams still PASS individually (no aggregate blindness).
+    WARN when settings.json can't be parsed, no streams are discoverable, or
+    neither hook-fires.jsonl nor trace-v3.jsonl exists yet (nothing to assert).
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    def _parse_ts(ts_str: str) -> float:
+        if not ts_str:
+            return 0.0
+        try:
+            return _dt.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    settings_override = os.environ.get("_STREAM_LIVENESS_SETTINGS_OVERRIDE", "")
+    settings_path = (
+        Path(settings_override) if settings_override
+        else _HEALTH_REPO_ROOT / ".claude" / "settings.json"
+    )
+    fires_override = os.environ.get("_STREAM_LIVENESS_FIRES_OVERRIDE", "")
+    fires_log = (
+        Path(fires_override) if fires_override
+        else _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
+    )
+    trace_override = os.environ.get("_STREAM_LIVENESS_TRACE_OVERRIDE", "")
+    now_override = os.environ.get("_STREAM_LIVENESS_NOW_OVERRIDE", "")
+    now_ts = _parse_ts(now_override) if now_override else _dt.now(_tz.utc).timestamp()
+
+    stream_names = _stream_liveness_registered_streams(settings_path)
+    if not stream_names:
+        return {
+            "id": "STREAM-LIVENESS", "result": "WARN",
+            "detail": f"no registered streams discoverable from {settings_path}",
+        }
+    stream_names.add("trace-v3")
+
+    # --- last-fired per hook stream, from hook-fires.jsonl ---
+    last_fired: dict = {}
+    fires_exists = fires_log.exists()
+    if fires_exists:
+        try:
+            with fires_log.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    hook = obj.get("hook", "")
+                    if not hook:
+                        continue
+                    ts_val = _parse_ts(obj.get("ts", ""))
+                    if ts_val > last_fired.get(hook, 0.0):
+                        last_fired[hook] = ts_val
+        except Exception:
+            pass
+
+    # --- last-fired for the trace-v3 stream, from the canonical trace log ---
+    if trace_override:
+        trace_path = trace_override
+    else:
+        try:
+            trace_mod = _load_trace_v3()
+            trace_path = trace_mod.trace_log_path() if trace_mod is not None else None
+        except Exception:
+            trace_path = None
+    trace_exists = bool(trace_path) and os.path.exists(trace_path)
+    trace_ts = 0.0
+    if trace_exists:
+        try:
+            with open(trace_path, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    ts_val = _parse_ts(obj.get("ts", ""))
+                    if ts_val > trace_ts:
+                        trace_ts = ts_val
+        except Exception:
+            pass
+    last_fired["trace-v3"] = trace_ts
+
+    if not fires_exists and not trace_exists:
+        return {
+            "id": "STREAM-LIVENESS", "result": "WARN",
+            "detail": "no beacon data available yet (hook-fires.jsonl and trace-v3.jsonl both absent)",
+        }
+
+    fail_streams = []
+    pass_streams = []
+    for name in sorted(stream_names):
+        ts_val = last_fired.get(name, 0.0)
+        if ts_val == 0.0:
+            fail_streams.append(f"{name}(never-fired)")
+            continue
+        delta_min = (now_ts - ts_val) / 60.0
+        if delta_min > _STREAM_LIVENESS_DARK_MINUTES:
+            fail_streams.append(f"{name}({delta_min:.0f}m)")
+        else:
+            pass_streams.append(name)
+
+    detail_parts = [f"window={_STREAM_LIVENESS_DARK_MINUTES}m"]
+    if pass_streams:
+        detail_parts.append(f"live: {', '.join(pass_streams)}")
+    if fail_streams:
+        detail_parts.append(f"dark: {', '.join(fail_streams)}")
+
+    return {
+        "id": "STREAM-LIVENESS",
+        "result": "FAIL" if fail_streams else "PASS",
+        "detail": " | ".join(detail_parts),
+        "streams": sorted(stream_names),
+        "fail_streams": fail_streams,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DEPLOY-HANDSHAKE — health-row wrapper over tools/deploy-handshake.sh's
+# NON-MUTATING --check-only leg (PRD #1075 slice #1085).
+# DRY: zero duplicated hash-comparison logic — the shell script owns the
+# single source of truth for the running-vs-deployed content-hash comparison
+# (the same code path the session-start LOUD-WARN and CI CHECK 21 self-test
+# use); this check only shells out and parses the script's structured
+# STATUS:/detail: output. --check-only never blocks (always exits 0) so a
+# real MISMATCH surfaces as a named FAIL row here instead of a subprocess error.
+# ---------------------------------------------------------------------------
+
+_DEPLOY_HANDSHAKE_STATUS_RE = re.compile(r'^STATUS:\s*(\w+)', re.MULTILINE)
+_DEPLOY_HANDSHAKE_DETAIL_RE = re.compile(r'^detail:\s*(.*)', re.MULTILINE)
+
+
+def check_deploy_handshake() -> dict:
+    """DEPLOY-HANDSHAKE: shells to `tools/deploy-handshake.sh --check-only`
+    and surfaces its structured PASS/FAIL + detail as a health row.
+    """
+    script = _HEALTH_REPO_ROOT / "tools" / "deploy-handshake.sh"
+    if not script.exists():
+        return {"id": "DEPLOY-HANDSHAKE", "result": "WARN",
+                "detail": "tools/deploy-handshake.sh not found"}
+    try:
+        result = subprocess.run(
+            ["bash", str(script), "--check-only"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+    except Exception as exc:
+        return {"id": "DEPLOY-HANDSHAKE", "result": "WARN",
+                "detail": f"deploy-handshake.sh --check-only invocation error: {exc}"}
+
+    out = result.stdout.strip()
+    status_m = _DEPLOY_HANDSHAKE_STATUS_RE.search(out)
+    detail_m = _DEPLOY_HANDSHAKE_DETAIL_RE.search(out)
+    status = status_m.group(1) if status_m else None
+    detail_text = detail_m.group(1).strip() if detail_m else ""
+    if not detail_text:
+        detail_text = out or result.stderr.strip()
+
+    if status == "PASS":
+        return {"id": "DEPLOY-HANDSHAKE", "result": "PASS", "detail": detail_text}
+    if status == "FAIL":
+        return {"id": "DEPLOY-HANDSHAKE", "result": "FAIL", "detail": detail_text}
+    return {
+        "id": "DEPLOY-HANDSHAKE", "result": "WARN",
+        "detail": (
+            f"unparsable --check-only output (exit={result.returncode}): "
+            f"{detail_text[:300]}"
+        ),
+    }
+
+
 CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-1":  check_docs1_adr_index_forward,
     "DOCS-2":  check_docs2_adr_index_reverse,
@@ -5656,9 +5935,14 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SLO":     check_capture_slo,
     "HOOK-INTEGRITY":  check_hook_integrity,
     "HOOK-LIVENESS":   check_hook_liveness,
+    "STREAM-LIVENESS": check_stream_liveness,
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
+    "DEPLOY-HANDSHAKE": check_deploy_handshake,
+    # Registry-closure fix (PRD #1075 slice #1085 / ADR-0064 D3): function
+    # existed since slice #779 but was never added to the registry.
+    "CRITIC-HEALTH":   check_critic_health,
     # Memory checks (ADR-0067 wave 4)
     "TESTS-COLLECTED":  check_tests_collected,
     "TEST-ORDERING":    check_test_ordering,
@@ -5865,6 +6149,7 @@ def _build_health_data() -> dict:
         slo_result,
         integ_result,
         live_result,
+        check_stream_liveness(),
         check_isolation_group(),
         check_rule_coverage(),
         check_spec_coverage(),
@@ -5897,6 +6182,7 @@ def _build_health_data() -> dict:
         check_required_labels(),
         check_dead_routes(),
         check_session_injection(),
+        check_deploy_handshake(),
     ])
     promotion_checks = _enrich_all([
         check_branch_topology(),

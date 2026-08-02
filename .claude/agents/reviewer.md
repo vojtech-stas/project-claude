@@ -389,7 +389,7 @@ Subjective items (style, refactoring, doc-improvement, future architectural sugg
 
 ## Output format
 
-Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 12 hard-block rules above. Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
+Reviewer-specific instance: 5 body sections (Header → Subject of review → Rubric → Findings → Summary), then permitted extensions in order — R-META override notice (only if R-META is `[OVERRIDE]`), Recommendations (non-blocking), Merge status (only on APPROVE) — then the CRITIC trailer. The Rubric line items map 1:1 to the 16 hard-block rules above (17 `### R-` headings minus the retired R-SENSITIVE; see PRD #1075 slice #1085). Post the comment via `gh pr comment <PR> --body-file <tempfile>` (PowerShell single-line `--body` mangles multiline). The **return-block** to the calling agent is the trailer-only summary (no body sections); the **posted comment** is the full body + extensions + trailer. Both carry the same CRITIC-trailer fields verbatim.
 
 The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in each agent's system prompt per CLAUDE.md rule #9 (DRY).
 

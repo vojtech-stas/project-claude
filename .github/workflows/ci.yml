@@ -7,6 +7,13 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-latest
+    # Read-only scopes for CHECK 19 (tools/check-slicer-provenance.py's `gh
+    # issue list`) and any other gh-dependent health checks CHECK 4/5/9/18
+    # delegate to. Least-privilege: read-only, no write scopes needed.
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
     steps:
       - name: Checkout (full history for commit-range check)
         uses: actions/checkout@v4
@@ -19,4 +26,11 @@ jobs:
           python-version: "3.x"
 
       - name: Run CI checks
+        # GH_TOKEN authenticates the gh CLI for CHECK 19 (slicer-provenance
+        # guard) — without it, gh is unauthenticated in Actions and CHECK 19
+        # silently soft-degrades to a vacuous PASS on every PR (slice #1084 /
+        # PRD #1075 criterion 7: the provenance gate must actually surface at
+        # PR time, not just exist in the script).
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash tools/ci-checks.sh

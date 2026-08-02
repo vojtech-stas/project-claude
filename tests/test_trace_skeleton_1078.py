@@ -103,6 +103,17 @@ elif sub0 == "pr" and sub1 == "checks":
     if out:
         print(out)
     sys.exit(exit_code)
+elif sub0 == "pr" and sub1 == "view":
+    # slice #1130: pr-merge's verdict-assertion precondition calls this same
+    # gh form (mirrors .claude/hooks/stop-reviewer-gate.sh). Default fixture
+    # carries a matching reviewer APPROVE comment so pre-#1130 pr-merge tests
+    # keep passing unmodified; override via FAKE_GH_VIEW_JSON to exercise the
+    # refusal path.
+    default_view = json.dumps({"comments": [{"body": "VERDICT: APPROVE\\nROUND: 1\\nCRITIC: reviewer"}]})
+    out = os.environ.get("FAKE_GH_VIEW_JSON", default_view)
+    exit_code = int(os.environ.get("FAKE_GH_VIEW_EXIT", "0"))
+    print(out)
+    sys.exit(exit_code)
 elif sub0 == "api":
     out = os.environ.get("FAKE_GH_API_JSON", "{}")
     print(out)
@@ -342,11 +353,21 @@ class TestPrMerge(unittest.TestCase):
         result = self._run(["777"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
         lines = _read_jsonl(log_path)
-        self.assertEqual(len(lines), 1, f"expected exactly 1 pr_merged span, got {lines}")
-        span = lines[0]
+        # slice #1130: a confirmed merge now also appends a verdict span
+        # alongside pr_merged (ADR-0076 D3 criterion 3b).
+        self.assertEqual(len(lines), 2, f"expected pr_merged + verdict spans, got {lines}")
+        merged_spans = [l for l in lines if l["kind"] == "pr_merged"]
+        self.assertEqual(len(merged_spans), 1, f"expected exactly 1 pr_merged span, got {lines}")
+        span = merged_spans[0]
         self.assertEqual(span["kind"], "pr_merged")
         self.assertEqual(span["attrs"]["pr"], "777")
         self.assertEqual(span["attrs"]["sha"], "deadbeef123")
+        verdict_spans = [l for l in lines if l["kind"] == "verdict"]
+        self.assertEqual(len(verdict_spans), 1, f"expected exactly 1 verdict span, got {lines}")
+        self.assertEqual(verdict_spans[0]["attrs"]["pr"], "777")
+        self.assertEqual(verdict_spans[0]["attrs"]["verdict"], "APPROVE")
+        self.assertEqual(verdict_spans[0]["attrs"]["critic"], "reviewer")
+        self.assertEqual(verdict_spans[0]["attrs"]["round"], "1")
 
     def test_not_merged_after_retries_no_span(self):
         fake_gh_dir = _write_fake_gh(self.tmp)
@@ -463,13 +484,18 @@ class TestPrMergePendingConfirm(unittest.TestCase):
         r2 = self._run(["--confirm", "902"], confirm_env)
         self.assertEqual(r2.returncode, 0, f"step2: stdout={r2.stdout!r} stderr={r2.stderr!r}")
         lines_after_confirm = _read_jsonl(log_path)
-        self.assertEqual(len(lines_after_confirm), 1, f"step2: expected exactly 1 span, got {lines_after_confirm}")
-        self.assertEqual(lines_after_confirm[0]["kind"], "pr_merged")
-        self.assertEqual(lines_after_confirm[0]["attrs"]["pr"], "902")
-        self.assertEqual(lines_after_confirm[0]["attrs"]["sha"], "feedface42")
+        # slice #1130: a confirmed merge now also appends a verdict span
+        # alongside pr_merged (ADR-0076 D3 criterion 3b).
+        self.assertEqual(len(lines_after_confirm), 2, f"step2: expected pr_merged + verdict spans, got {lines_after_confirm}")
+        merged_after_confirm = [l for l in lines_after_confirm if l["kind"] == "pr_merged"]
+        self.assertEqual(len(merged_after_confirm), 1, f"step2: expected exactly 1 pr_merged span, got {lines_after_confirm}")
+        self.assertEqual(merged_after_confirm[0]["attrs"]["pr"], "902")
+        self.assertEqual(merged_after_confirm[0]["attrs"]["sha"], "feedface42")
+        verdict_after_confirm = [l for l in lines_after_confirm if l["kind"] == "verdict"]
+        self.assertEqual(len(verdict_after_confirm), 1, f"step2: expected exactly 1 verdict span, got {lines_after_confirm}")
 
         # Step 3: --confirm AGAIN (idempotent re-invoke) -> 'already recorded',
-        # exit 0, and critically STILL exactly one span (no duplicate).
+        # exit 0, and critically STILL exactly the same 2 spans (no duplicate).
         r3 = self._run(["--confirm", "902"], confirm_env)
         self.assertEqual(r3.returncode, 0, f"step3: stdout={r3.stdout!r} stderr={r3.stderr!r}")
         self.assertIn(
@@ -478,8 +504,8 @@ class TestPrMergePendingConfirm(unittest.TestCase):
         )
         lines_final = _read_jsonl(log_path)
         self.assertEqual(
-            len(lines_final), 1,
-            f"IDEMPOTENCE GUARD violated: expected still exactly 1 pr_merged span after re-invoke, got {lines_final}",
+            len(lines_final), 2,
+            f"IDEMPOTENCE GUARD violated: expected still exactly 1 pr_merged + 1 verdict span after re-invoke, got {lines_final}",
         )
 
 
@@ -544,11 +570,16 @@ class TestPrMergeRestChecksOnNonzeroGhExit(unittest.TestCase):
         result = self._run(["1095"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
         lines = _read_jsonl(log_path)
-        self.assertEqual(len(lines), 1, f"expected exactly 1 pr_merged span, got {lines}")
-        span = lines[0]
+        # slice #1130: a confirmed merge now also appends a verdict span
+        # alongside pr_merged (ADR-0076 D3 criterion 3b).
+        merged_spans = [l for l in lines if l["kind"] == "pr_merged"]
+        self.assertEqual(len(merged_spans), 1, f"expected exactly 1 pr_merged span, got {lines}")
+        span = merged_spans[0]
         self.assertEqual(span["kind"], "pr_merged")
         self.assertEqual(span["attrs"]["pr"], "1095")
         self.assertEqual(span["attrs"]["sha"], "abc999real")
+        verdict_spans = [l for l in lines if l["kind"] == "verdict"]
+        self.assertEqual(len(verdict_spans), 1, f"expected exactly 1 verdict span, got {lines}")
 
     def test_genuinely_unmerged_nonzero_exit_still_fails_no_span(self):
         """Contrast case: gh exits nonzero AND the REST API confirms the PR

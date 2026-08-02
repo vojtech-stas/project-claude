@@ -158,6 +158,7 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   - `static-check` route: `PROOF:` MUST contain `grep count=`. A static assertion with no grep-count proof is not 'done'.
   - If `PROOF:` is non-empty and matches the expected shape for the route, proceed to proof-posting. If proof-absent block occurs, log the failure and loop: re-dispatch `qa-tester` (round incremented); treat as a FAIL for the loop counter (up to 3 rounds per ADR-0037 D5).
 - Surface the proof to the user: print `PROOF:` + `ASSERTIONS_CHECKED:` from qa-tester's trailer.
+- Record the verdict via the sanctioned wrapper (repoint target, PRD #1075 criterion 1 rider / slice #1086 — previously unrecorded outside qa-tester's own trailer): `python tools/pipe/qa-verify --verdict PASS --route <ROUTE value> --prd <PRD_NUMBER>`.
 - Log a confirmation line: `"Production gate PASS (round <N>): feature verified in production."`
 - **Proof-posting (per ADR-0049 D3 — orchestrator owns commit + comment; qa-tester stays read-only):**
   If qa-tester's `ARTIFACTS` trailer contains a proof image path (a `.png` or `.jpg` file), commit it to the PR branch and post a PR comment so the reviewer and user see the rendered proof inline:
@@ -188,9 +189,9 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
 - **Post-merge green-develop step (ADR-0062 D3):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged develop:
   1. `bash tools/ci-checks.sh` — must exit 0.
   2. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
-  3. On success, append a `develop_green` event to the workflow event log via the canonical logger pattern:
+  3. On success, record the `develop_green` checkpoint via the sanctioned wrapper (repoint target, PRD #1075 criterion 1 rider / slice #1086 — absorbs `tools/record-green.sh`'s own CI+pytest verification and additionally appends a v3 `develop_green` trace span in the same run):
      ```bash
-     python3 -c "import json,datetime,subprocess; sha=subprocess.check_output(['git','rev-parse','origin/develop']).decode().strip(); line=json.dumps({'v':2,'ts':datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),'event':'develop_green','sha':sha,'src':'orchestrator'}); open('$(git rev-parse --show-toplevel)/.claude/logs/workflow-events.jsonl','a').write(line+'\n')"
+     python tools/pipe/record-green
      ```
   4. On failure: the suspect set = squash commits since the last `develop_green` event (≤300 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
   Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3.

@@ -4909,9 +4909,21 @@ function _firingBadgeText(ev) {
 // and resolve faster) — without this gate a reconstructed PR that IS
 // recorded could render the "no recorded trace" annotation prematurely if
 // its card paints before the recorded fetch has resolved even once.
+//
+// _recordedRunsCapped (review round 1, B2): the recorded fetch shares the
+// SAME `#firing-limit-input` value as the reconstructed fetch, but the two
+// panels enumerate DIFFERENT universes (all gh PRs vs only v3-recorded
+// ones) ordered differently, so even a shared limit doesn't guarantee the
+// reconstructed panel's window is fully covered by the recorded fetch. When
+// the recorded response's run_count equals the limit actually requested,
+// the fetch MAY be truncating a larger real set — in that case we cannot
+// safely claim "not recorded" for any PR absent from _recordedPrSet, so the
+// annotation is suppressed (never falsely claimed) until a fetch returns
+// FEWER runs than requested, proving nothing was cut off.
 let _traceRunsLoaded = false;
 let _recordedPrSet = new Set();
 let _recordedRunsLoaded = false;
+let _recordedRunsCapped = false;
 
 function _renderTraceRun(run) {
   try {
@@ -4948,7 +4960,12 @@ function _renderTraceRun(run) {
   }
 }
 
-function renderTraceRuns(data) {
+function _firingSharedLimit() {
+  const limitEl = document.getElementById('firing-limit-input');
+  return (limitEl && parseInt(limitEl.value, 10) > 0) ? parseInt(limitEl.value, 10) : 20;
+}
+
+function renderTraceRuns(data, requestedLimit) {
   try {
     const el = document.getElementById('trace-runs-content');
     const statusEl = document.getElementById('trace-runs-status');
@@ -4972,6 +4989,9 @@ function renderTraceRuns(data) {
     const runs = data.runs || [];
     _recordedPrSet = new Set(runs.map(function(r) { return String(r.pr); }));
     _recordedRunsLoaded = true;
+    // Capped when the response is exactly the requested limit — the fetch
+    // MAY be truncating a larger real set (review round 1, B2).
+    _recordedRunsCapped = requestedLimit != null && runs.length >= requestedLimit;
     const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
     if (statusEl) statusEl.textContent = runs.length + ' recorded chains' + fetchedAt;
 
@@ -4994,9 +5014,12 @@ function renderTraceRuns(data) {
 
 function fetchTraceRuns() {
   try {
-    fetch('/api/trace-runs?limit=20')
+    // Shares the SAME limit as the reconstructed fetch's picker (review
+    // round 1, B2) — was hardcoded to 20, drifting from the 1..100 picker.
+    const limit = _firingSharedLimit();
+    fetch('/api/trace-runs?limit=' + limit)
       .then(function(r) { return r.json(); })
-      .then(renderTraceRuns)
+      .then(function(data) { renderTraceRuns(data, limit); })
       .catch(function(e) {
         try {
           const el = document.getElementById('trace-runs-content');
@@ -5037,9 +5060,12 @@ function _renderFiringPr(pr) {
     // Honest cross-check annotation (slice #1082): a PR absent from the
     // recorded (primary) panel predates the v3 trace store. Gated on
     // _recordedRunsLoaded so an in-flight (not-yet-resolved) recorded fetch
-    // can never cause a false "no recorded trace" on a PR that IS recorded.
+    // can never cause a false "no recorded trace" on a PR that IS recorded,
+    // AND on !_recordedRunsCapped (review round 1, B2) so a PR that merely
+    // falls outside the fetched recorded window (larger real set than the
+    // limit) is never falsely claimed absent — suppress, never assert wrong.
     const recorded = _recordedPrSet.has(String(num));
-    const recordedNote = (!_recordedRunsLoaded || recorded) ? '' :
+    const recordedNote = (!_recordedRunsLoaded || _recordedRunsCapped || recorded) ? '' :
       '<span class="firing-pr-closes" style="color:var(--muted);">no recorded trace — pre-v3</span>';
 
     let eventsHtml = '';

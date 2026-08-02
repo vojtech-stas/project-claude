@@ -111,6 +111,29 @@ class TestIndexHtmlRendersBothPanels(unittest.TestCase):
         (not-yet-resolved) recorded fetch."""
         self.assertIn("_recordedRunsLoaded", self.html_src)
 
+    def test_recorded_fetch_shares_reconstructed_limit_not_hardcoded(self):
+        """(review round 1, B2) fetchTraceRuns() must NOT hard-code
+        `?limit=20` — it must share the same `#firing-limit-input` value the
+        reconstructed fetch uses, so both panels enumerate the same window
+        size."""
+        self.assertNotIn(
+            "/api/trace-runs?limit=20", self.html_src,
+            "fetchTraceRuns() must not hard-code ?limit=20 (drifts from the "
+            "1..100 #firing-limit-input picker) — B2 from review round 1",
+        )
+        self.assertIn(
+            "_firingSharedLimit", self.html_src,
+            "fetchTraceRuns() must read the shared #firing-limit-input value",
+        )
+
+    def test_capped_recorded_window_suppresses_not_falsifies_annotation(self):
+        """(review round 1, B2) A PR outside the recorded fetch's window
+        (when the real recorded set exceeds the requested limit) must
+        SUPPRESS the "no recorded trace" annotation, never assert it falsely
+        — closes the second axis of the "never render WRONG" guarantee
+        (rule #19: the whole flagged class, not just the race-fix axis)."""
+        self.assertIn("_recordedRunsCapped", self.html_src)
+
 
 if __name__ == "__main__":
     unittest.main()

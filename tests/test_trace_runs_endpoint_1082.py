@@ -115,6 +115,39 @@ class TestBuildRecordedRuns(unittest.TestCase):
         )
         self.assertEqual(len(runs), 1)
 
+    def test_limit_below_total_signals_capped_response(self):
+        """(review round 1, B2) Data-layer proof of the "capped" scenario the
+        client's _recordedRunsCapped heuristic depends on: 25 real recorded
+        chains, limit=20 -> exactly 20 returned (run_count == limit), so a
+        client sees `runs.length >= requestedLimit` and must NOT assume the
+        5 chains outside the window (e.g. a hypothetical PR #21) are
+        genuinely absent from the trace store — only that they're outside
+        THIS fetch's window."""
+        many_spans = []
+        for i in range(25):
+            pr = str(9200 + i)
+            many_spans.append({
+                "v": 3, "ts": f"2026-08-02T{10 + (i // 60):02d}:{i % 60:02d}:00Z",
+                "trace_id": f"pr-{pr}", "span_id": f"open-{pr}",
+                "kind": "pr_opened", "attrs": {"pr": pr},
+            })
+            many_spans.append({
+                "v": 3, "ts": f"2026-08-02T{11 + (i // 60):02d}:{i % 60:02d}:00Z",
+                "trace_id": f"pr-{pr}", "span_id": f"merge-{pr}",
+                "kind": "pr_merged", "dur_ms": 100, "attrs": {"pr": pr},
+            })
+        big_log = os.path.join(self.tmpdir.name, "big25.jsonl")
+        _write_fixture_log(big_log, spans=many_spans)
+
+        runs = self.tracestore._build_recorded_runs(
+            limit=20, log_path=big_log, db_path_=self.db_path
+        )
+        self.assertEqual(
+            len(runs), 20,
+            "25 real recorded chains with limit=20 must return exactly 20 "
+            "(the capped case) — proves the >limit scenario is representable",
+        )
+
     def test_no_spans_returns_empty_list(self):
         empty_log = os.path.join(self.tmpdir.name, "empty.jsonl")
         _write_fixture_log(empty_log, spans=[])

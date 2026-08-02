@@ -41,9 +41,19 @@ half-succeeds: validation runs entirely before the only file write.
 (attrs: slice, result) unconditionally — no precondition re-check (a
 dispatch's outcome must always be recordable, even on an unusual failure
 path). Repeated `--end` calls for the same slice are legal (append-only
-ledger, mirrors every other v3 writer here) — the tracestore "running now"
-query (`dashboard/tracestore.py running`) treats ANY matching dispatch_end
-as terminating the trace_id.
+ledger, mirrors every other v3 writer here).
+
+**`--end`-without-a-prior-`dispatch` posture (decided explicitly, PR #1137
+round-1 fix):** recording a stray `dispatch_end` with no matching prior
+`dispatch` is HARMLESS and always allowed — it is simply the chronologically
+last event for that trace_id until a REAL `dispatch` follows it. Because
+both the mutex (`_running_dispatch_exists` above) and the tracestore
+"running now" query (`dashboard/tracestore.py running` /
+`running_dispatches()`) decide "active" by the chronologically LAST
+dispatch/dispatch_end event per trace_id (never by trace_id set membership),
+a stray leading `dispatch_end` can never disarm a mutex for a dispatch that
+hasn't happened yet, nor mask a later real one — the next `dispatch` simply
+becomes the new last event and the mutex re-arms normally.
 
 Session identity: `CLAUDE_SESSION_ID` env var with a stable "orchestrator"
 fallback — the SAME convention already used by tools/pipe/qa-verify,
@@ -159,23 +169,38 @@ def _extract_prd(body):
 
 
 def _running_dispatch_exists(trace, slice_num):
-    """1d mutex: True iff the ledger holds a `dispatch` span for this slice
-    (by trace_id) with no matching `dispatch_end` span sharing that same
-    trace_id — an active, unterminated dispatch."""
+    """1d mutex: True iff, for this slice, the chronologically LAST
+    dispatch/dispatch_end event — ordered by `ts`, then file/append order
+    as the tiebreak (mirrors dashboard/tracestore.py's `ORDER BY ts,
+    rowid` convention for the exact same query) — is a `dispatch`: i.e.
+    an active, unterminated dispatch.
+
+    Per-trace_id EVENT-ORDER semantics, NOT a trace_id-membership set
+    difference (reviewer round-1 BLOCK on PR #1137, rule #19 fix):
+    `dispatched_trace_ids - ended_trace_ids` is permanently wrong here
+    because trace_id is constant per slice (`slice-<n>`) — the FIRST
+    `dispatch_end` ever recorded for a slice poisons that trace_id
+    forever, so every LATER round's dispatch reads as inactive and the
+    mutex never re-arms. Grouping by trace_id and taking each group's
+    chronological LAST event correctly re-arms the mutex every round, and
+    is immune to a stray leading `dispatch_end` with no prior `dispatch`
+    (the last-event-wins model ignores it once a real dispatch follows)."""
     slice_str = str(slice_num)
     spans = trace.read_spans()
-    dispatched_trace_ids = set()
-    ended_trace_ids = set()
-    for s in spans:
-        if s.get("kind") != "dispatch" and s.get("kind") != "dispatch_end":
-            continue
-        if str(s.get("attrs", {}).get("slice")) != slice_str:
-            continue
-        if s.get("kind") == "dispatch":
-            dispatched_trace_ids.add(s.get("trace_id"))
-        else:
-            ended_trace_ids.add(s.get("trace_id"))
-    return bool(dispatched_trace_ids - ended_trace_ids)
+    relevant = [
+        s for s in spans
+        if s.get("kind") in ("dispatch", "dispatch_end")
+        and str(s.get("attrs", {}).get("slice")) == slice_str
+    ]
+    if not relevant:
+        return False
+    # Stable sort by ts; equal-ts entries keep their original file/append
+    # order — the same tiebreak tracestore's `ORDER BY ts, rowid` uses.
+    relevant.sort(key=lambda s: s.get("ts", ""))
+    last_by_trace = {}
+    for s in relevant:
+        last_by_trace[s.get("trace_id")] = s  # ascending scan -> last write wins
+    return any(s.get("kind") == "dispatch" for s in last_by_trace.values())
 
 
 def _cmd_dispatch(slice_num):

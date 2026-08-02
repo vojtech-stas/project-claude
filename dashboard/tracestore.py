@@ -336,29 +336,40 @@ def acid_path(pr_number, log_path=None, db_path_=None):
 
 def running_dispatches(log_path=None, db_path_=None):
     """"Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
-    `dispatch` span whose trace_id has NO matching `dispatch_end` span —
-    i.e. every dispatch still in flight. Generic over trace_id (not
-    slice-specific parsing): a `dispatch_end` "terminates" any `dispatch`
-    sharing its exact trace_id, mirroring `tools/pipe/dispatch`'s own
-    trace_id convention (`slice-<n>`) without hardcoding it here."""
+    trace_id whose chronologically LAST dispatch/dispatch_end event (ordered
+    by `ts`, then `rowid` as the tiebreak — the same ordering `acid_path`/
+    `span_tree` already use) is a `dispatch` — i.e. every dispatch still in
+    flight, once per trace_id. Generic over trace_id (not slice-specific
+    parsing): mirrors `tools/pipe/dispatch`'s own trace_id convention
+    (`slice-<n>`) without hardcoding it here.
+
+    Per-trace_id EVENT-ORDER semantics, NOT a trace_id-membership check
+    (reviewer round-1 BLOCK on PR #1137, rule #19 fix — the SAME model as
+    `tools/pipe/dispatch`'s `_running_dispatch_exists` mutex): "exclude any
+    trace_id that ever has a dispatch_end" is permanently wrong because
+    trace_id is constant per slice — a slice's first-ever `dispatch_end`
+    would hide EVERY later round's dispatch, including a genuinely
+    unterminated one. Taking each trace_id's chronological LAST event
+    instead correctly surfaces round 2+ as running and is immune to a
+    stray leading `dispatch_end` with no prior `dispatch`."""
     resolved_db = db_path_ or db_path()
     fold(log_path=log_path, db_path_=resolved_db, force=False)
     conn = _connect(resolved_db)
     try:
-        dispatch_rows = conn.execute(
-            "SELECT * FROM spans WHERE kind = 'dispatch' ORDER BY ts, rowid"
+        rows = conn.execute(
+            "SELECT * FROM spans WHERE kind IN ('dispatch', 'dispatch_end') "
+            "ORDER BY ts, rowid"
         ).fetchall()
-        ended_trace_ids = {
-            r["trace_id"] for r in conn.execute(
-                "SELECT DISTINCT trace_id FROM spans WHERE kind = 'dispatch_end'"
-            ).fetchall()
-        }
     finally:
         conn.close()
-    return [
-        _row_to_span(r) for r in dispatch_rows
-        if r["trace_id"] not in ended_trace_ids
+    last_by_trace = {}
+    for r in rows:
+        last_by_trace[r["trace_id"]] = r  # ascending scan -> last write wins
+    running = [
+        _row_to_span(r) for r in last_by_trace.values() if r["kind"] == "dispatch"
     ]
+    running.sort(key=lambda s: s.get("ts", ""))
+    return running
 
 
 def span_tree(trace_id, log_path=None, db_path_=None):

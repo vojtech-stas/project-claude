@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/record-green — atomic wrapper: tools/record-green.sh + develop_green
+v3 trace span, in the same execution (PRD #1075 criterion 1 rider, slice #1086).
+
+Usage:
+  python tools/pipe/record-green [--dry-run]
+
+ABSORBS the existing tools/record-green.sh verification (GitHub `ci` conclusion
+via PR-mergeCommit lookup + `python -m pytest tests/` green) as the ONE
+canonical event-writing path — this wrapper does NOT duplicate that logic, it
+re-invokes tools/record-green.sh via subprocess, preserving every existing
+test seam (RECORD_GREEN_CI_STATUS, RECORD_GREEN_GH_CMD, RECORD_GREEN_PYTEST_CMD,
+RECORD_GREEN_TEST_LOG_PATH — untouched env passthrough) and its RELEASE-READY
+preflight edge-cases (the script's own --dry-run contract, its refusal-writes-
+nothing invariant).
+
+Repoint target for ship/SKILL.md's post-merge green-develop step (previously
+an inline `python3 -c "..."` one-liner appending the v2 develop_green event
+directly, bypassing tools/record-green.sh's own CI+pytest verification).
+
+Atomic intent: on a GREEN verification (tools/record-green.sh exits 0 and has
+therefore ALREADY appended its v2 develop_green event), this wrapper
+additionally appends a v3 span (kind=develop_green) in the SAME execution —
+never a silent half-record. On any refusal (record-green.sh exits non-zero:
+CI not green, pytest red) NO v3 span is written and this wrapper propagates
+the same non-zero exit. On --dry-run (record-green.sh's own dry-run contract
+writes no v2 event), this wrapper likewise writes no v3 span.
+"""
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+_RECORD_GREEN_SH = os.path.join(_TOOLS_DIR, "record-green.sh")
+
+
+def _load_trace():
+    # Loaded under a distinct module name — never "trace" (stdlib collision).
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolve_develop_sha():
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "origin/develop"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        return None
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    dry_run = "--dry-run" in argv
+
+    bash = shutil.which("bash") or "bash"
+    result = subprocess.run([bash, _RECORD_GREEN_SH] + argv)
+    # No capture_output — record-green.sh's own INFO/ERROR lines stream live,
+    # a drop-in replacement for direct invocation.
+
+    if result.returncode != 0:
+        # record-green.sh refused (not green) — no v2 event was written, so
+        # no v3 span either. Propagate the same exit code (never a silent
+        # half-record on either side).
+        return result.returncode
+
+    if dry_run:
+        # record-green.sh's own --dry-run contract writes no v2 event; mirror
+        # that here — no v3 span on a dry-run either.
+        return 0
+
+    sha = _resolve_develop_sha() or "unknown"
+    trace = _load_trace()
+    trace.emit_span(trace_id=f"green-{sha}", kind="develop_green", attrs={"sha": sha})
+    print(f"record-green: v3 develop_green span appended sha={sha}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

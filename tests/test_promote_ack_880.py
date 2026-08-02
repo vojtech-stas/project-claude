@@ -103,6 +103,16 @@ def _make_working_repo(tmp_dir, bare_url):
     _git("-C", work, "commit", "-m", "dev commit")
     _git("-C", work, "push", "-u", "origin", "develop")
 
+    # Copy the real tools/trace.py in so promote.sh's v3 span emission
+    # (slice #1083) can resolve $REPO_ROOT/tools/trace.py from this
+    # synthetic repo's own show-toplevel.
+    import shutil
+    os.makedirs(os.path.join(work, "tools"), exist_ok=True)
+    shutil.copy(
+        os.path.join(REPO_ROOT, "tools", "trace.py"),
+        os.path.join(work, "tools", "trace.py"),
+    )
+
     return work
 
 

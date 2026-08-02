@@ -1484,6 +1484,7 @@ PURPOSE_GROUP_MAP: dict = {
     "SESSION-INJECTION": "Isolation/hygiene",
     "STALE-BRANCHES":    "Isolation/hygiene",
     "TESTS-COLLECTED":   "Isolation/hygiene",
+    "DEPLOY-HANDSHAKE":  "Isolation/hygiene",
     # --- Release gates ---
     # Promotion lag, R-SENSITIVE-DETECTOR advisory
     "PROMOTION-LAG":        "Release gates",
@@ -5863,6 +5864,60 @@ def check_stream_liveness() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# DEPLOY-HANDSHAKE — health-row wrapper over tools/deploy-handshake.sh's
+# NON-MUTATING --check-only leg (PRD #1075 slice #1085).
+# DRY: zero duplicated hash-comparison logic — the shell script owns the
+# single source of truth for the running-vs-deployed content-hash comparison
+# (the same code path the session-start LOUD-WARN and CI CHECK 21 self-test
+# use); this check only shells out and parses the script's structured
+# STATUS:/detail: output. --check-only never blocks (always exits 0) so a
+# real MISMATCH surfaces as a named FAIL row here instead of a subprocess error.
+# ---------------------------------------------------------------------------
+
+_DEPLOY_HANDSHAKE_STATUS_RE = re.compile(r'^STATUS:\s*(\w+)', re.MULTILINE)
+_DEPLOY_HANDSHAKE_DETAIL_RE = re.compile(r'^detail:\s*(.*)', re.MULTILINE)
+
+
+def check_deploy_handshake() -> dict:
+    """DEPLOY-HANDSHAKE: shells to `tools/deploy-handshake.sh --check-only`
+    and surfaces its structured PASS/FAIL + detail as a health row.
+    """
+    script = _HEALTH_REPO_ROOT / "tools" / "deploy-handshake.sh"
+    if not script.exists():
+        return {"id": "DEPLOY-HANDSHAKE", "result": "WARN",
+                "detail": "tools/deploy-handshake.sh not found"}
+    try:
+        result = subprocess.run(
+            ["bash", str(script), "--check-only"],
+            capture_output=True, text=True, timeout=15,
+            cwd=str(_HEALTH_REPO_ROOT),
+        )
+    except Exception as exc:
+        return {"id": "DEPLOY-HANDSHAKE", "result": "WARN",
+                "detail": f"deploy-handshake.sh --check-only invocation error: {exc}"}
+
+    out = result.stdout.strip()
+    status_m = _DEPLOY_HANDSHAKE_STATUS_RE.search(out)
+    detail_m = _DEPLOY_HANDSHAKE_DETAIL_RE.search(out)
+    status = status_m.group(1) if status_m else None
+    detail_text = detail_m.group(1).strip() if detail_m else ""
+    if not detail_text:
+        detail_text = out or result.stderr.strip()
+
+    if status == "PASS":
+        return {"id": "DEPLOY-HANDSHAKE", "result": "PASS", "detail": detail_text}
+    if status == "FAIL":
+        return {"id": "DEPLOY-HANDSHAKE", "result": "FAIL", "detail": detail_text}
+    return {
+        "id": "DEPLOY-HANDSHAKE", "result": "WARN",
+        "detail": (
+            f"unparsable --check-only output (exit={result.returncode}): "
+            f"{detail_text[:300]}"
+        ),
+    }
+
+
 CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-1":  check_docs1_adr_index_forward,
     "DOCS-2":  check_docs2_adr_index_reverse,
@@ -5884,6 +5939,10 @@ CHECK_REGISTRY: dict[str, callable] = {
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
+    "DEPLOY-HANDSHAKE": check_deploy_handshake,
+    # Registry-closure fix (PRD #1075 slice #1085 / ADR-0064 D3): function
+    # existed since slice #779 but was never added to the registry.
+    "CRITIC-HEALTH":   check_critic_health,
     # Memory checks (ADR-0067 wave 4)
     "TESTS-COLLECTED":  check_tests_collected,
     "TEST-ORDERING":    check_test_ordering,
@@ -6123,6 +6182,7 @@ def _build_health_data() -> dict:
         check_required_labels(),
         check_dead_routes(),
         check_session_injection(),
+        check_deploy_handshake(),
     ])
     promotion_checks = _enrich_all([
         check_branch_topology(),

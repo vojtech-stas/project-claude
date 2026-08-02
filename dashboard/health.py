@@ -1464,6 +1464,7 @@ PURPOSE_GROUP_MAP: dict = {
     "CAPTURE-SLO":    "Telemetry live",
     "HOOK-INTEGRITY": "Telemetry live",
     "HOOK-LIVENESS":  "Telemetry live",
+    "STREAM-LIVENESS": "Telemetry live",
     # --- Verification integrity ---
     # Proof-presence, merge-integrity, capture-shape, green-main
     "PROOF-PRESENCE":  "Verification integrity",
@@ -5663,6 +5664,205 @@ def check_hook_liveness() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# STREAM-LIVENESS — per-registered-stream dark detection (PRD #1075 criterion 8,
+# slice #1085). Complements (does NOT replace) HOOK-LIVENESS and HOOK-INTEGRITY,
+# read in full before writing this:
+#   - HOOK-LIVENESS compares the SINGLE newest beacon across the whole hook
+#     layer against activity — one healthy stream masks every dead sibling
+#     (aggregate-newest-beacon blindness).
+#   - HOOK-INTEGRITY skips any stream with zero recent attempt beacons
+#     entirely ("no attempt beacons ... deferred to HOOK-LIVENESS") — but
+#     HOOK-LIVENESS never looks per-stream either, so a stream that goes
+#     fully dark is invisible to BOTH checks (circular deferral).
+# STREAM-LIVENESS closes that gap: enumerate every REGISTERED stream (each
+# distinct telemetry key discoverable from .claude/settings.json — mirroring
+# discovery.py's AUTO-MODE _auto_mode_derived_keys aggregation plus the
+# filename-stem fallback for hooks that beacon directly, e.g. "session-start"
+# — PLUS the trace-v3 span stream) and check EACH one against its OWN
+# last-fired timestamp. A stream with no fresh beacon in its window is a
+# NAMED FAIL for that stream alone; live siblings still PASS.
+# ---------------------------------------------------------------------------
+
+_STREAM_LIVENESS_DARK_MINUTES = 60  # mirrors _HOOK_LIVENESS_DARK_MINUTES
+
+
+def _stream_liveness_registered_streams(settings_path: Path) -> set:
+    """Enumerate every distinct stream telemetry key registered in
+    .claude/settings.json's hook configs, mirroring discover_hooks()'s own
+    key-selection: literal event-type arg > AUTO-MODE derived-key set >
+    filename-stem fallback (for hooks that beacon directly, bypassing
+    log-tool-event.sh). Returns an empty set (never raises) on any failure —
+    callers degrade to WARN rather than fabricate a stream list.
+    """
+    import json as _json
+    try:
+        _insert_dashboard_sys_path()
+        from discovery import (  # noqa: PLC0415
+            _auto_mode_derived_keys,
+            _event_type_from_cmd,
+            _read_hook_name,
+        )
+    except Exception:
+        return set()
+    if not settings_path.exists():
+        return set()
+    streams: set = set()
+    try:
+        data = _json.loads(settings_path.read_text(encoding="utf-8"))
+        for event, entries in data.get("hooks", {}).items():
+            for entry in entries:
+                matcher = entry.get("matcher", "")
+                for hook in entry.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    event_type_arg = _event_type_from_cmd(cmd)
+                    if event_type_arg == "auto":
+                        streams.update(_auto_mode_derived_keys(event, matcher))
+                    elif event_type_arg:
+                        streams.add(event_type_arg)
+                    else:
+                        clean_name = _read_hook_name(cmd)
+                        if clean_name:
+                            streams.add(clean_name)
+    except Exception:
+        return set()
+    return streams
+
+
+def check_stream_liveness() -> dict:
+    """STREAM-LIVENESS: see module comment above (PRD #1075 criterion 8).
+
+    Env overrides (test seam, mirrors check_hook_liveness's override pattern):
+      _STREAM_LIVENESS_SETTINGS_OVERRIDE — path to a synthetic settings.json
+      _STREAM_LIVENESS_FIRES_OVERRIDE    — path to a synthetic hook-fires.jsonl
+      _STREAM_LIVENESS_TRACE_OVERRIDE    — path to a synthetic trace-v3.jsonl
+      _STREAM_LIVENESS_NOW_OVERRIDE      — ISO-8601 ts to use as "now"
+
+    PASS when every registered stream has a beacon within the window.
+    FAIL naming each stream that has none (never-fired or gone dark) — other
+    streams still PASS individually (no aggregate blindness).
+    WARN when settings.json can't be parsed, no streams are discoverable, or
+    neither hook-fires.jsonl nor trace-v3.jsonl exists yet (nothing to assert).
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    def _parse_ts(ts_str: str) -> float:
+        if not ts_str:
+            return 0.0
+        try:
+            return _dt.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    settings_override = os.environ.get("_STREAM_LIVENESS_SETTINGS_OVERRIDE", "")
+    settings_path = (
+        Path(settings_override) if settings_override
+        else _HEALTH_REPO_ROOT / ".claude" / "settings.json"
+    )
+    fires_override = os.environ.get("_STREAM_LIVENESS_FIRES_OVERRIDE", "")
+    fires_log = (
+        Path(fires_override) if fires_override
+        else _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
+    )
+    trace_override = os.environ.get("_STREAM_LIVENESS_TRACE_OVERRIDE", "")
+    now_override = os.environ.get("_STREAM_LIVENESS_NOW_OVERRIDE", "")
+    now_ts = _parse_ts(now_override) if now_override else _dt.now(_tz.utc).timestamp()
+
+    stream_names = _stream_liveness_registered_streams(settings_path)
+    if not stream_names:
+        return {
+            "id": "STREAM-LIVENESS", "result": "WARN",
+            "detail": f"no registered streams discoverable from {settings_path}",
+        }
+    stream_names.add("trace-v3")
+
+    # --- last-fired per hook stream, from hook-fires.jsonl ---
+    last_fired: dict = {}
+    fires_exists = fires_log.exists()
+    if fires_exists:
+        try:
+            with fires_log.open(encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    hook = obj.get("hook", "")
+                    if not hook:
+                        continue
+                    ts_val = _parse_ts(obj.get("ts", ""))
+                    if ts_val > last_fired.get(hook, 0.0):
+                        last_fired[hook] = ts_val
+        except Exception:
+            pass
+
+    # --- last-fired for the trace-v3 stream, from the canonical trace log ---
+    if trace_override:
+        trace_path = trace_override
+    else:
+        try:
+            trace_mod = _load_trace_v3()
+            trace_path = trace_mod.trace_log_path() if trace_mod is not None else None
+        except Exception:
+            trace_path = None
+    trace_exists = bool(trace_path) and os.path.exists(trace_path)
+    trace_ts = 0.0
+    if trace_exists:
+        try:
+            with open(trace_path, encoding="utf-8", errors="replace") as fh:
+                for raw in fh:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        obj = _json.loads(raw)
+                    except Exception:
+                        continue
+                    ts_val = _parse_ts(obj.get("ts", ""))
+                    if ts_val > trace_ts:
+                        trace_ts = ts_val
+        except Exception:
+            pass
+    last_fired["trace-v3"] = trace_ts
+
+    if not fires_exists and not trace_exists:
+        return {
+            "id": "STREAM-LIVENESS", "result": "WARN",
+            "detail": "no beacon data available yet (hook-fires.jsonl and trace-v3.jsonl both absent)",
+        }
+
+    fail_streams = []
+    pass_streams = []
+    for name in sorted(stream_names):
+        ts_val = last_fired.get(name, 0.0)
+        if ts_val == 0.0:
+            fail_streams.append(f"{name}(never-fired)")
+            continue
+        delta_min = (now_ts - ts_val) / 60.0
+        if delta_min > _STREAM_LIVENESS_DARK_MINUTES:
+            fail_streams.append(f"{name}({delta_min:.0f}m)")
+        else:
+            pass_streams.append(name)
+
+    detail_parts = [f"window={_STREAM_LIVENESS_DARK_MINUTES}m"]
+    if pass_streams:
+        detail_parts.append(f"live: {', '.join(pass_streams)}")
+    if fail_streams:
+        detail_parts.append(f"dark: {', '.join(fail_streams)}")
+
+    return {
+        "id": "STREAM-LIVENESS",
+        "result": "FAIL" if fail_streams else "PASS",
+        "detail": " | ".join(detail_parts),
+        "streams": sorted(stream_names),
+        "fail_streams": fail_streams,
+    }
+
+
 CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-1":  check_docs1_adr_index_forward,
     "DOCS-2":  check_docs2_adr_index_reverse,
@@ -5680,6 +5880,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SLO":     check_capture_slo,
     "HOOK-INTEGRITY":  check_hook_integrity,
     "HOOK-LIVENESS":   check_hook_liveness,
+    "STREAM-LIVENESS": check_stream_liveness,
     "ISOLATION-GROUP": check_isolation_group,
     "RULE-COVERAGE":   check_rule_coverage,
     "SPEC-COVERAGE":   check_spec_coverage,
@@ -5889,6 +6090,7 @@ def _build_health_data() -> dict:
         slo_result,
         integ_result,
         live_result,
+        check_stream_liveness(),
         check_isolation_group(),
         check_rule_coverage(),
         check_spec_coverage(),

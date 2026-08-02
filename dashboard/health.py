@@ -220,6 +220,15 @@ _HEALTH_TTL = 300              # seconds — raised from 30s (#1012): slow-gh co
 # Set to 300s: ~3× the observed runtime, sufficient headroom for transient gh-API latency.
 _RELEASE_READY_CICHECKS_TIMEOUT_S = 300
 
+# Timeout for the pytest subprocess call inside check_release_ready() condition (b).
+# The full tests/ suite now runs ~149s on develop (726 passed in 148.65s at 5429afe) as
+# the suite has grown past 900+ tests. The former hard-coded 120s caused systematic
+# TimeoutExpired → condition (b) false-fail → RELEASE-READY gate held even though the
+# suite was genuinely green (#1120 — an incomplete #981 class revision: #981 raised the
+# sibling ci-checks.sh sub-call to a named constant but did not sweep this pytest sub-call).
+# Set to 300s: ~2× the observed runtime, sufficient headroom for growth + transient slowness.
+_RELEASE_READY_PYTEST_TIMEOUT_S = 300
+
 
 def _fetch_github_ci_conclusion(repo_root) -> tuple:
     """Query GitHub for the `ci` check conclusion on develop's HEAD commit.
@@ -5152,7 +5161,8 @@ def check_release_ready() -> dict:
                 t_result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tests_dir), "-q",
                      "--no-header", "--tb=no"],
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True, text=True,
+                    timeout=_RELEASE_READY_PYTEST_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
                 tests_pass = (t_result.returncode == 0)

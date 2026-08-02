@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/pr-merge — sanctioned merge protocol wrapper + pr_merged v3 span.
+
+Usage:
+  python tools/pipe/pr-merge <pr-number>
+  python tools/pipe/pr-merge --confirm <pr-number>
+
+Real-path repoint target for reviewer.md's APPROVE-merge action + BEHIND-
+retry loop (slice #1078 / PRD #1075 criterion 1): embodies the existing
+retry protocol (gh pr update-branch -> poll ci checks -> retry --auto,
+bounded 3 attempts total) so the reviewer's inline prose collapses to one
+wrapper call. NEVER plain `--squash` — always `--squash --auto --delete-branch`
+(preserves the existing reviewer.md merge protocol's branch cleanup).
+
+BOUNDED-BUDGET DESIGN (reviewer round-1 finding #2, PR #1089): a single
+invocation of this script — whether the default mode or --confirm mode —
+NEVER blocks past PR_MERGE_BUDGET_S (default ~90s), so it always finishes
+well inside the calling agent's tool-invocation timeout (Bash tool default
+120s / max 600s). Long CI waits are handled by RE-INVOKING the script, not
+by one process blocking for minutes:
+
+  - Default invocation: attempts the merge (with the existing bounded
+    BEHIND-retry sub-loop) and then polls the REST API for a confirmed
+    MERGED state, but only for up to the remaining budget. If confirmed
+    within budget -> appends the pr_merged span, exits 0. If the merge
+    command itself never succeeds within budget -> exits 1 (no span, no
+    "pending" — the side effect did not happen). If the merge command DID
+    succeed/queue but MERGED isn't confirmed within budget -> prints a
+    loud `MERGE-PENDING: run tools/pipe/pr-merge --confirm <n> to finish`
+    line and exits 3 (never 0, never a span — the caller must re-invoke).
+  - `--confirm <n>`: idempotent re-entry. First checks the trace log for
+    an existing pr_merged span for this PR (IDEMPOTENCE GUARD — never
+    double-append); if found, prints "already recorded" and exits 0
+    without any gh calls. Otherwise polls REST for up to the budget; on
+    confirmed MERGED, re-checks the idempotence guard (race-safety) then
+    appends the span and exits 0. If still pending, repeats the same
+    MERGE-PENDING / exit-3 contract as the default invocation.
+
+On a confirmed MERGED state (checked via the REST API — `gh api
+repos/<owner>/<repo>/pulls/<n>` — not GraphQL, per the "if gh GraphQL flakes
+use REST" guidance), appends one pr_merged span (attrs: pr, sha) with the
+elapsed duration of THIS invocation. Never a silent half-success: either a
+span is appended, or the process exits non-zero and writes nothing.
+
+Env overrides (test seam; production defaults are sane real-world values):
+  PR_MERGE_BUDGET_S        (default 90) — overall wall-clock budget for ONE
+                            invocation (merge attempts + BEHIND checks-poll
+                            + REST confirm-poll all share this budget)
+  PR_MERGE_POLL_INTERVAL_S (default 5)  — sleep between poll iterations
+"""
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+
+MAX_ATTEMPTS = 3
+BUDGET_S = float(os.environ.get("PR_MERGE_BUDGET_S", "90"))
+POLL_INTERVAL_S = float(os.environ.get("PR_MERGE_POLL_INTERVAL_S", "5"))
+
+
+def _load_trace():
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _gh():
+    return shutil.which("gh") or "gh"
+
+
+def _run_gh(args):
+    return subprocess.run([_gh()] + args, capture_output=True, text=True)
+
+
+def _remote_owner_repo():
+    """Resolve owner/repo from `git remote get-url origin` — avoids depending
+    on gh's own {owner}/{repo} api templating so this stays stubbable."""
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except Exception:
+        return None
+    m = re.search(r"[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _sleep_until(deadline):
+    """Sleep POLL_INTERVAL_S, but never past deadline."""
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        time.sleep(min(POLL_INTERVAL_S, remaining))
+
+
+def _poll_checks_until_green(pr, deadline):
+    """Bounded by the shared deadline (NOT an independent long timeout)."""
+    while True:
+        res = _run_gh(["pr", "checks", str(pr)])
+        combined = ((res.stdout or "") + (res.stderr or "")).lower()
+        if res.returncode == 0:
+            return True
+        if "fail" in combined:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        _sleep_until(deadline)
+
+
+def _check_merged_once(pr):
+    """One REST check (not GraphQL). Returns (merged: bool, sha: str|None)."""
+    owner_repo = _remote_owner_repo()
+    if not owner_repo:
+        return False, None
+    owner, repo = owner_repo
+    res = _run_gh(["api", f"repos/{owner}/{repo}/pulls/{pr}"])
+    if res.returncode == 0:
+        try:
+            data = json.loads(res.stdout)
+        except json.JSONDecodeError:
+            data = {}
+        if data.get("merged"):
+            return True, data.get("merge_commit_sha")
+    return False, None
+
+
+def _poll_confirm_merged(pr, deadline):
+    """Poll the REST API for merged state, bounded by the shared deadline."""
+    while True:
+        merged, sha = _check_merged_once(pr)
+        if merged:
+            return True, sha
+        if time.monotonic() >= deadline:
+            return False, None
+        _sleep_until(deadline)
+
+
+def _existing_pr_merged_span(trace, pr):
+    """IDEMPOTENCE GUARD: scan the trace log for an existing pr_merged span
+    for this PR number. Returns the span dict if found, else None."""
+    pr_str = str(pr)
+    for s in trace.read_spans():
+        if s.get("kind") == "pr_merged" and str(s.get("attrs", {}).get("pr")) == pr_str:
+            return s
+    return None
+
+
+def _pending_message(pr):
+    return f"MERGE-PENDING: run tools/pipe/pr-merge --confirm {pr} to finish"
+
+
+def _do_confirm(pr, deadline, start):
+    trace = _load_trace()
+
+    existing = _existing_pr_merged_span(trace, pr)
+    if existing:
+        print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
+        return 0
+
+    merged, sha = _poll_confirm_merged(pr, deadline)
+    if not merged:
+        print(_pending_message(pr), file=sys.stderr)
+        return 3
+
+    # Race-safety: re-check right before appending (another invocation may
+    # have recorded it between our first check and now).
+    existing = _existing_pr_merged_span(trace, pr)
+    if existing:
+        print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
+        return 0
+
+    dur_ms = int((time.monotonic() - start) * 1000)
+    attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
+    trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
+    print(f"pr-merge: PR #{pr} merged sha={sha}")
+    return 0
+
+
+def _do_default(pr, deadline, start):
+    merged_command_ok = False
+    last_returncode = 1
+    attempt = 0
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        # The merge command itself is a single cheap call — always attempt it
+        # at least once regardless of remaining budget. The deadline only
+        # bounds the (potentially slow) BEHIND-class retry cycle below.
+        res = _run_gh(["pr", "merge", pr, "--squash", "--auto", "--delete-branch"])
+        sys.stdout.write(res.stdout)
+        sys.stderr.write(res.stderr)
+        last_returncode = res.returncode
+        if res.returncode == 0:
+            merged_command_ok = True
+            break
+        if attempt == MAX_ATTEMPTS or time.monotonic() >= deadline:
+            break
+        # Recoverable BEHIND-class failure: update branch, wait for green CI
+        # (bounded by the SAME shared deadline as everything else), retry.
+        _run_gh(["pr", "update-branch", pr])
+        _poll_checks_until_green(pr, deadline)
+
+    if not merged_command_ok:
+        print(f"pr-merge: gh pr merge did not succeed for PR #{pr} within budget; no span written", file=sys.stderr)
+        # Exit 3 is reserved exclusively for the MERGE-PENDING contract —
+        # never let a raw gh exit code collide with that meaning.
+        return last_returncode if last_returncode not in (0, 3) else 1
+
+    trace = _load_trace()
+    existing = _existing_pr_merged_span(trace, pr)
+    if existing:
+        print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
+        return 0
+
+    merged, sha = _poll_confirm_merged(pr, deadline)
+    if not merged:
+        print(_pending_message(pr), file=sys.stderr)
+        return 3
+
+    dur_ms = int((time.monotonic() - start) * 1000)
+    attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
+    trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
+    print(f"pr-merge: PR #{pr} merged sha={sha} attempts={attempt} behind_retried={attempt - 1}")
+    return 0
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    if not argv:
+        print("usage: pr-merge [--confirm] <pr-number>", file=sys.stderr)
+        return 64
+
+    confirm_mode = False
+    if argv[0] == "--confirm":
+        confirm_mode = True
+        argv = argv[1:]
+        if not argv:
+            print("usage: pr-merge --confirm <pr-number>", file=sys.stderr)
+            return 64
+
+    pr = argv[0]
+    start = time.monotonic()
+    deadline = start + BUDGET_S
+
+    if confirm_mode:
+        return _do_confirm(pr, deadline, start)
+    return _do_default(pr, deadline, start)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

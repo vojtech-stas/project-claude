@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/pr-open — atomic wrapper: `gh pr create` + pr_opened v3 span.
+
+Usage: python tools/pipe/pr-open <passthrough gh pr create args...>
+  e.g. python tools/pipe/pr-open --title "..." --body-file /tmp/pr.md --base develop
+
+Real-path repoint target for implementer.md step 7 (slice #1078 / PRD #1075
+criterion 1): the wrapper appends a pr_opened span to the canonical trace log
+IN THE SAME EXECUTION as the `gh pr create` side effect — a PR structurally
+cannot open untraced through this wrapped path.
+
+Atomic intent (no silent half-success):
+  1. Validate the trace-log path is writable BEFORE calling gh at all. If it
+     is not, exit non-zero WITHOUT invoking gh (no PR created, no span).
+  2. Run `gh pr create` with all passthrough args, streaming its real
+     stdout/stderr through unchanged (drop-in replacement for the direct
+     `gh pr create` call it replaces).
+  3. If gh fails, exit with gh's own exit code. No span written.
+  4. If gh succeeds, parse the PR number from its stdout (the PR URL gh
+     prints), append the pr_opened span, and exit 0.
+"""
+import importlib.util
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+
+
+def _load_trace():
+    # Loaded under a distinct module name — never "trace" (stdlib collision).
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _check_log_writable(path):
+    """Raise OSError if the trace log's parent dir cannot be created/opened
+    for append. Does not write a span — only proves the path is usable."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "a", encoding="utf-8"):
+        pass
+
+
+def _extract_pr_number(text):
+    m = re.search(r"/pull/(\d+)", text or "")
+    return m.group(1) if m else None
+
+
+def _extract_arg_value(args, flag_names):
+    for i, a in enumerate(args):
+        for flag in flag_names:
+            if a == flag and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith(flag + "="):
+                return a.split("=", 1)[1]
+    return None
+
+
+def _extract_slice_issue(args):
+    body_file = _extract_arg_value(args, ["--body-file", "-F"])
+    body_text = None
+    if body_file and body_file != "-" and os.path.exists(body_file):
+        with open(body_file, "r", encoding="utf-8") as f:
+            body_text = f.read()
+    if body_text is None:
+        body_text = _extract_arg_value(args, ["--body", "-b"])
+    if not body_text:
+        return None
+    m = re.search(r"(?:closes|fixes|resolves)\s+#(\d+)", body_text, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _current_branch():
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    trace = _load_trace()
+    log_path = trace.trace_log_path()
+
+    # 1. Validate log writability BEFORE running gh at all (atomic intent —
+    #    gh is never executed if we can't record the side effect).
+    try:
+        _check_log_writable(log_path)
+    except OSError as e:
+        print(f"pr-open: trace log path unwritable ({log_path}): {e}", file=sys.stderr)
+        return 2
+
+    # 2. Run the real gh pr create, passthrough args, streamed output.
+    gh = shutil.which("gh") or "gh"
+    start = time.monotonic()
+    result = subprocess.run([gh, "pr", "create"] + argv, capture_output=True, text=True)
+    dur_ms = int((time.monotonic() - start) * 1000)
+
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+
+    if result.returncode != 0:
+        # gh itself failed — no span written.
+        return result.returncode
+
+    # 3. gh succeeded — append the pr_opened span.
+    pr_number = _extract_pr_number(result.stdout)
+    if not pr_number:
+        print("pr-open: could not parse PR number from gh output; no span written", file=sys.stderr)
+        return 3
+
+    branch = _extract_arg_value(argv, ["--head", "-H"]) or _current_branch() or "unknown"
+    slice_issue = _extract_slice_issue(argv)
+    attrs = {"pr": pr_number, "branch": branch}
+    if slice_issue:
+        attrs["slice"] = slice_issue
+
+    trace.emit_span(
+        trace_id=f"pr-{pr_number}",
+        kind="pr_opened",
+        attrs=attrs,
+        dur_ms=dur_ms,
+        log_path=log_path,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

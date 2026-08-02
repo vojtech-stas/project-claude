@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/prd-close — precondition-checked wrapper for the PRD-closure
+transition (PRD #1127 §2 criterion 5, slice #1131 / ADR-0076 D1).
+
+Usage:
+  python tools/pipe/prd-close <prd-number> [--comment <text>]
+
+Real-path repoint target for qa-plan/SKILL.md step 6's Machine-PASS action
+(previously a raw `gh issue close <N> --reason completed --comment
+<qa-pass-summary>` line).
+
+Shape-imitates tools/pipe/pr-merge's precondition-refusal pattern: all
+validation runs BEFORE the only side effect. REFUSES (non-zero exit, named
+reason on stderr, no side effect) unless the canonical v3 trace ledger
+(tools/trace.py, TRACE_LOG_OVERRIDE-honoring) holds at least one
+`qa_verified` span whose attrs carry `prd == <prd-number>` and
+`verdict == "PASS"` (the same span tools/pipe/qa-verify emits). On a
+confirmed precondition, runs `gh issue close <prd-number> --reason
+completed` (plus `--comment <text>` when supplied) as the sole side effect.
+
+Deliberately NO span emission (zero `emit_span` calls): GitHub issue-state
+IS the cross-checked ground truth here — the CLOSED-PRD-VS-QA reconciler
+(slice #1136) names any closed prd-labeled issue lacking a qa_verified PASS
+span as a FAIL, so no new trace span is needed to make this transition
+auditable. Because this wrapper never calls emit_span, it does NOT extend
+reviewer.md's R-FIXTURE emit_span exemption enumeration (ADR-0076 D1 /
+slice #1131 decomposition).
+"""
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+
+
+def _load_trace():
+    # Loaded under a distinct module name — never "trace" (stdlib collision),
+    # same defensive pattern as every sibling tools/pipe/* wrapper.
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _gh():
+    return shutil.which("gh") or "gh"
+
+
+def _run_gh(args):
+    return subprocess.run([_gh()] + args, capture_output=True, text=True)
+
+
+def _qa_verified_pass_exists(trace, prd_num):
+    """Precondition: at least one qa_verified span with attrs.prd ==
+    prd_num (string-compared) and attrs.verdict == 'PASS' (the shape
+    tools/pipe/qa-verify emits)."""
+    prd_str = str(prd_num)
+    for s in trace.read_spans():
+        if s.get("kind") != "qa_verified":
+            continue
+        attrs = s.get("attrs", {})
+        if str(attrs.get("prd")) == prd_str and attrs.get("verdict") == "PASS":
+            return True
+    return False
+
+
+def _cmd_close(prd, comment):
+    trace = _load_trace()
+
+    if not _qa_verified_pass_exists(trace, prd):
+        print(
+            f"prd-close: refused — no qa_verified PASS span recorded for "
+            f"PRD #{prd}",
+            file=sys.stderr,
+        )
+        return 1
+
+    args = ["issue", "close", str(prd), "--reason", "completed"]
+    if comment:
+        args += ["--comment", comment]
+    res = _run_gh(args)
+    sys.stdout.write(res.stdout)
+    sys.stderr.write(res.stderr)
+    if res.returncode != 0:
+        print(
+            f"prd-close: gh issue close failed for PRD #{prd} "
+            f"(exit {res.returncode})",
+            file=sys.stderr,
+        )
+        return res.returncode
+
+    print(f"prd-close: closed PRD #{prd} (qa_verified PASS span confirmed)")
+    return 0
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    if not argv:
+        print("usage: prd-close <prd-number> [--comment <text>]", file=sys.stderr)
+        return 64
+
+    prd = argv[0]
+    rest = argv[1:]
+    comment = None
+    if "--comment" in rest:
+        idx = rest.index("--comment")
+        if idx + 1 >= len(rest):
+            print("usage: prd-close <prd-number> [--comment <text>]", file=sys.stderr)
+            return 64
+        comment = rest[idx + 1]
+
+    return _cmd_close(prd, comment)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

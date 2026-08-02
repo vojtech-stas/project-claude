@@ -72,7 +72,9 @@ Python API (for dashboard reuse):
   span_tree(trace_id, log_path=None, db_path_=None) -> list[dict]
   running_dispatches(log_path=None, db_path_=None) -> list[dict]
     "Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
-    `dispatch` span lacking a terminal `dispatch_end` (same trace_id) —
+    trace_id whose chronologically LAST dispatch/dispatch_end event is a
+    `dispatch` (per-trace_id event-order semantics, not trace_id-membership
+    — see the function's own docstring for the round-1 fix rationale) —
     the duplicate-dispatch mutex's read side and the W2 run-board's future
     data model, both for free.
   serve_trace_runs(limit=30, log_path=None, db_path_=None) -> dict

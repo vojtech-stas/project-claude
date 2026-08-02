@@ -53,4 +53,11 @@ if echo "$CMD" | grep -qE 'git[[:space:]]+commit.*-m.*\bWIP\b'; then
   emit_warn 'WIP commit detected — CLAUDE.md rule #5 discourages WIP messages; prefer Conventional Commits.'
 fi
 
+# Raw `gh pr merge` → advisory nudge only (NOT a deny) toward the sanctioned
+# tools/pipe/pr-merge wrapper, which appends the atomic pr_merged v3 span a
+# raw call skips (PRD #1075 criterion 1 rider / slice #1086).
+if echo "$CMD" | grep -qE 'gh[[:space:]]+pr[[:space:]]+merge\b'; then
+  emit_warn 'Raw `gh pr merge` bypasses tools/pipe/pr-merge (no v3 pr_merged span recorded) — prefer `python tools/pipe/pr-merge <PR>` (advisory nudge, not blocked).'
+fi
+
 exit 0

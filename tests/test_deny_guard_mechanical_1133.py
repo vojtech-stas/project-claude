@@ -239,5 +239,101 @@ class TestExistingBehaviorRegression(unittest.TestCase):
         self.assertNotIn("systemMessage", out)
 
 
+@unittest.skipUnless(_jq_available_in_bash(), "jq not visible to the hook's bash context — soft-degrades without it")
+class TestReviewerRound1FalsePositiveFixtures(unittest.TestCase):
+    """Reviewer round-1 BLOCK on PR #1141 (comment 5159763786): two
+    independently-confirmed false-positive regressions in the 7a/7c hard-deny
+    paths, reproduced here as fixtures BEFORE the clause-anchoring fix
+    (ADR-0067 D2/D3 test-first ordering — these FAIL against the pre-fix
+    substring-matching code and PASS after).
+
+    F1 — 7a matched the PHRASE `gh pr merge` anywhere in the command string,
+    not the actual invocation; a commit message containing that phrase (this
+    PR's own commit-message shape) was wrongly denied.
+
+    F2 — 7c's push-to-main check decoupled the `git push` clause from the
+    main-refspec match across compound commands (`&&`), so an unrelated
+    `refs/heads/main` mention in a LATER clause (e.g. inside an `echo`)
+    wrongly denied a push to a non-main branch.
+    """
+
+    # --- F1 reproduction: substring-vs-invocation for 7a ---
+
+    def test_f1_commit_message_mentioning_gh_pr_merge_not_denied(self):
+        """Reviewer's exact repro: this PR's own commit-message shape."""
+        result = _run_hook(
+            'git commit -m "raw gh pr merge upgrades from advisory warn to a hard deny"'
+        )
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn(
+            "hookSpecificOutput", out,
+            msg=f"a commit message merely CONTAINING the phrase 'gh pr merge' must never be denied: {out}",
+        )
+
+    def test_f1_echo_mentioning_gh_pr_merge_not_denied(self):
+        result = _run_hook('echo "reminder: never run gh pr merge directly"')
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn("hookSpecificOutput", out, msg=f"echo mention must not be denied: {out}")
+
+    def test_f1_grep_pattern_mentioning_gh_pr_merge_not_denied(self):
+        result = _run_hook("grep -rn 'gh pr merge' tests/")
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn("hookSpecificOutput", out, msg=f"grep pattern mention must not be denied: {out}")
+
+    def test_f1_real_gh_pr_merge_invocation_still_denied(self):
+        """Regression: the actual invocation (not a mention) must still deny."""
+        result = _run_hook("gh pr merge 123 --squash --auto")
+        self.assertEqual(result.returncode, 0)
+        decision, out = _decision(result)
+        self.assertEqual(decision, "deny", msg=f"real invocation must still deny: {out}")
+
+    # --- F2 reproduction: clause-decoupling for 7c ---
+
+    def test_f2_push_develop_with_unrelated_main_mention_not_denied(self):
+        """Reviewer's exact repro: push to develop, unrelated refs/heads/main
+        mention in a LATER, separate compound-command clause."""
+        result = _run_hook('git push origin develop && echo "closing the refs/heads/main evasion"')
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn(
+            "hookSpecificOutput", out,
+            msg=f"push to develop must not be denied by an unrelated main-mention in a later clause: {out}",
+        )
+
+    def test_f2_push_feature_branch_with_unrelated_main_mention_not_denied(self):
+        result = _run_hook('git push origin feat/foo; echo "see refs/heads/main for context"')
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn("hookSpecificOutput", out, msg=f"must not be denied: {out}")
+
+    def test_f2_real_push_to_main_still_denied_within_compound_command(self):
+        """Regression: an ACTUAL push-to-main clause must still deny even
+        when it appears alongside other clauses in a compound command."""
+        result = _run_hook('echo "about to push" && git push origin main')
+        self.assertEqual(result.returncode, 0)
+        decision, out = _decision(result)
+        self.assertEqual(decision, "deny", msg=f"real push-to-main clause must still deny: {out}")
+
+    # --- Rule #19 class sweep: 7b promote.sh mention-vs-invocation ---
+
+    def test_7b_echo_mentioning_promote_sh_not_denied_even_in_subagent_context(self):
+        result = _run_hook(
+            'echo "tools/promote.sh must never run from a subagent context"',
+            extra_env={"CLAUDE_AGENT_TYPE": "implementer"},
+        )
+        self.assertEqual(result.returncode, 0)
+        out = json.loads(result.stdout) if result.stdout.strip() else {}
+        self.assertNotIn("hookSpecificOutput", out, msg=f"mention-only must not be denied: {out}")
+
+    def test_7b_real_promote_sh_invocation_still_denied_in_subagent_context(self):
+        result = _run_hook("bash tools/promote.sh", extra_env={"CLAUDE_AGENT_TYPE": "implementer"})
+        self.assertEqual(result.returncode, 0)
+        decision, out = _decision(result)
+        self.assertEqual(decision, "deny", msg=f"real invocation must still deny in subagent context: {out}")
+
+
 if __name__ == "__main__":
     unittest.main()

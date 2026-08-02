@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+tools/pipe/batch-plan — emit-only wrapper: one `batch_planned` v3 span per
+dispatch-loop iteration checkpoint (PRD #1127 §2 criterion 6a / ADR-0076 D1,
+slice #1132).
+
+Usage:
+  python tools/pipe/batch-plan <prd> --pending 1134,1135 --ready 1130,1131 --blocked ""
+
+Repoint target for ship/SKILL.md step 5b: the orchestrator runs this at the
+START of EACH dispatch-loop iteration, recording the current batch state
+(pending / ready / blocked slice numbers for that iteration) as one atomic
+span. Emit-only by design (PRD #1127 §2 criterion 6a) — no query or resume
+feature ships here (W2 owns run-board consumption of this stream). This is
+the mechanized replacement for the never-honored `ship-state-<prd>.json`
+checkpoint prose (CLAUDE.md rule #23 / ADR-0076 D5 prose-shrink contract):
+zero ship-state files were ever written against that standing mandate over
+its entire lifetime, while this verb's spans land atomically with the CLI
+call itself.
+
+Comma-separated lists (not JSON) for the three set args — the clean form for
+a single-line shell invocation from ship/SKILL.md's dispatch loop; an empty
+string (`--blocked ""`) is a legal empty set. Whitespace around commas is
+stripped; empty tokens (e.g. a trailing comma) are dropped. Input order is
+preserved (caller-meaningful: DAG-ready order) — no dedup/sort.
+
+Session identity: `CLAUDE_SESSION_ID` env var with an "orchestrator"
+fallback — the same convention every other tools/pipe/* wrapper uses
+(dispatch, qa-verify, tools/promote.sh, tools/record-green.sh all read
+`os.environ.get("CLAUDE_SESSION_ID", "orchestrator")`).
+
+`trace_id` groups every batch_planned span for one PRD under `prd-<n>`
+(mirrors tools/pipe/pr-open's `pr-<n>` grouping) so tools/trace.py's `path`
+query can thread a PRD's whole planning history together.
+
+Env overrides (test seam; mirrors every other tools/pipe/* wrapper):
+  TRACE_LOG_OVERRIDE — tools/trace.py's own override (test seam)
+"""
+import argparse
+import importlib.util
+import os
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_TOOLS_DIR = os.path.dirname(_THIS_DIR)
+_TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+
+
+def _load_trace():
+    # Loaded under a distinct module name — never "trace" (stdlib
+    # collision), same defensive pattern as every sibling tools/pipe/*
+    # wrapper.
+    spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _parse_list(raw):
+    """Comma-separated string -> list[str]; empty/whitespace-only tokens
+    dropped. `None`/"" -> []."""
+    if not raw:
+        return []
+    return [tok.strip() for tok in raw.split(",") if tok.strip()]
+
+
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv[1:])
+    parser = argparse.ArgumentParser(prog="batch-plan")
+    parser.add_argument("prd", help="PRD issue number")
+    parser.add_argument("--pending", default="", help="comma-separated slice numbers")
+    parser.add_argument("--ready", default="", help="comma-separated slice numbers")
+    parser.add_argument("--blocked", default="", help="comma-separated slice numbers")
+    args = parser.parse_args(argv)
+
+    trace = _load_trace()
+    session_id = os.environ.get("CLAUDE_SESSION_ID", "orchestrator")
+    attrs = {
+        "prd": str(args.prd),
+        "pending": _parse_list(args.pending),
+        "ready": _parse_list(args.ready),
+        "blocked": _parse_list(args.blocked),
+        "session_id": session_id,
+    }
+    trace.emit_span(trace_id=f"prd-{args.prd}", kind="batch_planned", attrs=attrs)
+    print(
+        f"batch-plan: recorded prd={args.prd} "
+        f"pending={len(attrs['pending'])} ready={len(attrs['ready'])} "
+        f"blocked={len(attrs['blocked'])} session={session_id}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

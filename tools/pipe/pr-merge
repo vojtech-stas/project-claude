@@ -54,6 +54,16 @@ use REST" guidance), appends one pr_merged span (attrs: pr, sha) with the
 elapsed duration of THIS invocation. Never a silent half-success: either a
 span is appended, or the process exits non-zero and writes nothing.
 
+VERDICT ASSERTION (slice #1130 / PRD #1127 criterion 3a, ADR-0076 D3): before
+any merge attempt (default mode) or any confirm-poll (--confirm mode, unless
+already idempotently recorded), this wrapper refuses to proceed unless the PR
+carries a reviewer comment matching the exact `VERDICT:\s*APPROVE` signal
+`.claude/hooks/stop-reviewer-gate.sh` already greps (via `gh pr view <n>
+--json comments`). Refusal is non-zero exit with a named reason on stderr,
+BEFORE any gh side effect. On a confirmed merge, a `verdict` span (attrs:
+critic, round, verdict, pr — parsed from that same APPROVE comment) is
+appended in addition to the existing pr_merged span (criterion 3b).
+
 Env overrides (test seam; production defaults are sane real-world values):
   PR_MERGE_BUDGET_S        (default 90) — overall wall-clock budget for ONE
                             invocation (merge attempts + BEHIND checks-poll
@@ -172,13 +182,93 @@ def _pending_message(pr):
     return f"MERGE-PENDING: run tools/pipe/pr-merge --confirm {pr} to finish"
 
 
+# ---------------------------------------------------------------------------
+# VERDICT ASSERTION (slice #1130 / PRD #1127 criterion 3a/3b, ADR-0076 D3)
+# ---------------------------------------------------------------------------
+
+# The exact signal `.claude/hooks/stop-reviewer-gate.sh` greps:
+#   gh pr view "$N" --json comments --jq '.comments | map(select(.body |
+#     test("VERDICT:\\s*APPROVE"))) | length'
+_VERDICT_APPROVE_RE = re.compile(r"VERDICT:\s*APPROVE")
+_CRITIC_ATTR_RE = re.compile(r"^CRITIC:\s*(\S+)", re.MULTILINE)
+_ROUND_ATTR_RE = re.compile(r"^ROUND:\s*(\S+)", re.MULTILINE)
+
+
+def _fetch_pr_comments(pr):
+    """Fetch PR comments via `gh pr view <pr> --json comments` — the same gh
+    call stop-reviewer-gate.sh uses. Returns a list of comment dicts, or None
+    if gh failed or returned unparseable output."""
+    res = _run_gh(["pr", "view", str(pr), "--json", "comments"])
+    if res.returncode != 0:
+        return None
+    try:
+        data = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+    return data.get("comments", [])
+
+
+def _find_approve_comment(comments):
+    """Return the most recent comment matching the exact `VERDICT:\\s*APPROVE`
+    signal stop-reviewer-gate.sh greps, or None if no comment matches."""
+    matches = [c for c in comments if _VERDICT_APPROVE_RE.search(c.get("body", "") or "")]
+    return matches[-1] if matches else None
+
+
+def _verdict_attrs(pr, comment):
+    """Derive verdict span attrs (critic, round, verdict, pr) from the body
+    of the APPROVE comment that satisfied the precondition."""
+    body = comment.get("body", "") or ""
+    critic_m = _CRITIC_ATTR_RE.search(body)
+    round_m = _ROUND_ATTR_RE.search(body)
+    return {
+        "pr": pr,
+        "critic": critic_m.group(1) if critic_m else "unknown",
+        "round": round_m.group(1) if round_m else "unknown",
+        "verdict": "APPROVE",
+    }
+
+
+def _assert_verdict_or_refuse(pr):
+    """Precondition (ADR-0076 D3 / PRD #1127 criterion 3a): refuse (return
+    None) unless the PR carries a reviewer comment matching the exact
+    `VERDICT:\\s*APPROVE` signal `.claude/hooks/stop-reviewer-gate.sh` greps.
+    A named reason is printed to stderr; the caller exits non-zero having
+    performed NO merge attempt and written NO span. On success, returns the
+    matched comment dict — `_verdict_attrs` derives the verdict span from it."""
+    comments = _fetch_pr_comments(pr)
+    if comments is None:
+        print(
+            f"pr-merge: could not fetch PR #{pr} comments to verify a reviewer "
+            "VERDICT: APPROVE -- refusing to merge",
+            file=sys.stderr,
+        )
+        return None
+    comment = _find_approve_comment(comments)
+    if comment is None:
+        print(
+            f"pr-merge: PR #{pr} carries no reviewer comment matching "
+            "'VERDICT: APPROVE' -- refusing to merge",
+            file=sys.stderr,
+        )
+        return None
+    return comment
+
+
 def _do_confirm(pr, deadline, start):
     trace = _load_trace()
 
     existing = _existing_pr_merged_span(trace, pr)
     if existing:
+        # IDEMPOTENCE GUARD (unchanged contract): no gh calls at all on the
+        # already-recorded path — the verdict was already verified when the
+        # original merge was recorded, so it is NOT re-checked here.
         print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
         return 0
+
+    approve_comment = _assert_verdict_or_refuse(pr)
+    if approve_comment is None:
+        return 1
 
     merged, sha = _poll_confirm_merged(pr, deadline)
     if not merged:
@@ -195,11 +285,19 @@ def _do_confirm(pr, deadline, start):
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
+    trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha}")
     return 0
 
 
 def _do_default(pr, deadline, start):
+    # VERDICT ASSERTION (ADR-0076 D3 / criterion 3a): refuse BEFORE any merge
+    # attempt -- not just before recording -- when the PR lacks a reviewer
+    # comment matching VERDICT: APPROVE.
+    approve_comment = _assert_verdict_or_refuse(pr)
+    if approve_comment is None:
+        return 1
+
     merged_command_ok = False
     last_returncode = 1
     attempt = 0
@@ -248,6 +346,7 @@ def _do_default(pr, deadline, start):
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
+    trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha} attempts={attempt} behind_retried={attempt - 1}")
     return 0
 

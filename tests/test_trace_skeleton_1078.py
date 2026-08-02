@@ -349,6 +349,15 @@ class TestPrMerge(unittest.TestCase):
             "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "deadbeef123"}),
             "PR_MERGE_POLL_TIMEOUT_S": "0",
             "PR_MERGE_CONFIRM_TIMEOUT_S": "0",
+            # slice #1134: a confirmed merge now tail-chains tools/pipe/
+            # record-green. A PATH-only fake-gh stub does NOT reliably reach
+            # record-green.sh's OWN nested gh calls (bash -> python3 ->
+            # gh_cache) on Windows/Git-Bash -- RECORD_GREEN_CI_STATUS is the
+            # dedicated env-var seam record-green.sh documents, and it
+            # short-circuits before any real gh/pytest call. "fail" keeps
+            # this test's own span-count assertion (2, not 3) valid.
+            "RECORD_GREEN_CI_STATUS": "fail",
+            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
         }
         result = self._run(["777"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
@@ -461,6 +470,11 @@ class TestPrMergePendingConfirm(unittest.TestCase):
         base_env = {
             "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
             "TRACE_LOG_OVERRIDE": log_path,
+            # slice #1134: see test_merged_appends_pr_merged_span's comment --
+            # deterministic fast refusal of the chained record-green call in
+            # step 2's fresh confirm success, never real gh/pytest.
+            "RECORD_GREEN_CI_STATUS": "fail",
+            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
         }
 
         # Step 1: default invocation — merge command queues, REST says not
@@ -566,6 +580,12 @@ class TestPrMergeRestChecksOnNonzeroGhExit(unittest.TestCase):
             "FAKE_GH_CHECKS_EXIT": "0",
             "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "abc999real"}),
             "PR_MERGE_BUDGET_S": "0",
+            # slice #1134: see test_merged_appends_pr_merged_span's comment --
+            # PR_MERGE_BUDGET_S=0 also means the chain sees an already-
+            # exhausted budget and skips entirely (belt-and-suspenders with
+            # the explicit refusal override below).
+            "RECORD_GREEN_CI_STATUS": "fail",
+            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
         }
         result = self._run(["1095"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")

@@ -216,6 +216,16 @@ class TestVerdictSpanOnConfirmedMerge(PrMergeVerdictTestBase):
             "FAKE_GH_MERGE_EXIT": "0",
             "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "cafef00d"}),
             "PR_MERGE_BUDGET_S": "5",
+            # slice #1134: a confirmed merge now tail-chains tools/pipe/record-green.
+            # RECORD_GREEN_CI_STATUS short-circuits record-green.sh's own real
+            # gh-based CI lookup + pytest run (a PATH-only fake-gh stub does NOT
+            # reliably reach record-green.sh's nested bash/python3 gh calls --
+            # this explicit env-var seam is the one record-green.sh itself
+            # documents). "fail" guarantees a fast, harmless refusal so this
+            # test's own span-count assertions (this slice's concern, not
+            # record-green's) stay unaffected.
+            "RECORD_GREEN_CI_STATUS": "fail",
+            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
         }
         result = self._run(["600"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
@@ -249,6 +259,11 @@ class TestVerdictSpanOnConfirmedMerge(PrMergeVerdictTestBase):
             "FAKE_GH_MERGE_EXIT": "0",
             "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "abc123"}),
             "PR_MERGE_BUDGET_S": "5",
+            # slice #1134: see test_verdict_span_appended_alongside_pr_merged's
+            # comment above -- deterministic fast refusal of the chained
+            # record-green call, never real gh/pytest.
+            "RECORD_GREEN_CI_STATUS": "fail",
+            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
         }
         result = self._run(["601"], env_updates)
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")

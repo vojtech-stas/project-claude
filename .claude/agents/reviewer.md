@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `gh pr merge --squash --auto` (queued merge-when-checks-pass per ADR-0042 D3). On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
+description: Audit a pull request (or local unpushed changes) for scope drift, missing tests, YAGNI violations, commit-format violations, and other code-review concerns. Use when a PR has been opened by an implementer subagent and needs review. On APPROVE, the reviewer auto-merges via `python tools/pipe/pr-merge <PR>` (the traced `gh pr merge --squash --auto` wrapper, queued merge-when-checks-pass per ADR-0042 D3). On BLOCK, the PR returns to the implementer. Use this proactively when the user asks to "review the PR", "check the changes", or after any implementation work that's been pushed.
 tools: Read, Glob, Grep, Bash
 model: sonnet
 ---
@@ -415,25 +415,18 @@ ESCALATION_STATUS: <applied (...)|n/a>
 Execute IMMEDIATELY after posting the comment:
 
 ```bash
-gh pr merge <PR> --squash --auto --delete-branch
+python tools/pipe/pr-merge <PR>
 ```
 
-You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). With R4 (required status checks) enabled, this queues the merge — GitHub completes it once CI passes; a red-CI PR never merges even on APPROVE; the orchestrator waits for the queued merge before production-verify. If `gh pr merge` fails, do NOT retry — populate `MERGE_STATUS: failed: <error>` in the trailer and post a follow-up comment explaining the failure.
+You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). This wrapper (per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3) embodies the full sanctioned protocol in one call: `gh pr merge --squash --auto`, and — on the BEHIND/blocked-merge condition (recoverable per ADR-0062 D1, NOT a BLOCK verdict) — `gh pr update-branch` → poll `gh pr checks` until green → retry, bounded at **3 attempts total**. On a confirmed MERGED state it appends a `pr_merged` v3 trace span atomically (never a silent half-success) and prints `pr-merge: PR #<n> merged sha=<sha> attempts=<n> behind_retried=<n-1>`. With R4 (required status checks) enabled, a red-CI PR never merges even on APPROVE.
 
-### Merge-loop: BEHIND is recoverable (ADR-0062 D1)
+Populate the trailer from the wrapper's outcome:
+- Exit 0 → parse `sha=` and `behind_retried=` from stdout; `MERGE_STATUS: merged:<sha>` (append ` behind-retried: <n>` when `behind_retried` > 0, e.g. `MERGE_STATUS: merged:abc1234 behind-retried: 2`).
+- Non-zero exit → the wrapper already exhausted its bounded attempts; do NOT retry further — populate `MERGE_STATUS: failed: <error>` (from stderr) and post a follow-up comment explaining the failure.
 
-A BEHIND/blocked merge is a recoverable condition — NOT a BLOCK verdict. When `gh pr merge --squash --delete-branch` fails because the PR is behind main, execute the retry loop:
+**Multiple APPROVE-ready sibling PRs:** When the orchestrator signals that multiple sibling PRs are simultaneously APPROVE-ready, merges MUST execute one at a time in completion order — do not merge two PRs concurrently. Each PR's `pr-merge` call completes fully before the next PR's merge begins. This serialization guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant per ADR-0062 D2).
 
-1. `gh pr update-branch <PR>` — rebases the PR branch onto current main.
-2. Await the re-triggered `ci` status check: poll `gh pr checks <PR>` until the `ci` job shows `pass` or `fail` (poll interval ~15s, timeout 10 min).
-3. Retry `gh pr merge <PR> --squash --delete-branch`.
-4. Bounded at **3 attempts total** (the initial attempt counts as attempt 1). If attempt 3 also fails, populate `MERGE_STATUS: failed: behind-unrecoverable after 3 attempts` and post a follow-up comment.
-
-**Record keeping:** When the loop ran (at least one `gh pr update-branch` call), append `behind-retried: <n>` to the `MERGE_STATUS` field in the CRITIC trailer, where `<n>` is the number of update-branch calls made. Example: `MERGE_STATUS: merged:abc1234 behind-retried: 2`.
-
-**Multiple APPROVE-ready sibling PRs:** When the orchestrator signals that multiple sibling PRs are simultaneously APPROVE-ready, merges MUST execute one at a time in completion order — do not merge two PRs concurrently. Each PR goes through the full D1 loop above before the next PR's merge begins. This serialization guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant per ADR-0062 D2).
-
-Per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge).
+Per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge); wrapper repoint per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3.
 
 ### If BLOCK: return to implementer
 
@@ -461,7 +454,7 @@ You ARE authorized to execute these specific shell commands:
 - `gh pr view`, `gh pr diff`, `gh pr list`, `gh pr checks` — read-only PR queries
 - `gh issue view`, `gh issue list` — read-only issue queries
 - `gh pr comment <PR> --body-file <tempfile>` — post your verdict
-- `gh pr merge <PR> --squash --auto --delete-branch` — ONLY when your own verdict is APPROVE; ONLY `--squash`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002)
+- `python tools/pipe/pr-merge <PR>` — ONLY when your own verdict is APPROVE; the wrapper's internal `gh pr merge` call is ONLY `--squash --auto --delete-branch`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002; wrapper repoint per ADR-0075 D3)
 - `gh pr edit <PR> --add-label needs-human` — ONLY on round-3 BLOCK escalation (per ADR-0003 D4 / I5); ONLY the `needs-human` label; never any other label
 - `gh issue comment <parent-prd-number> --body-file <tempfile>` — ONLY on round-3 BLOCK escalation, ONLY on the parent PRD issue, ONLY with the escalation summary template (per ADR-0003 D4 / I5)
 

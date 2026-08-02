@@ -137,6 +137,13 @@ class TestServeTraceRunsBackgroundWarm(unittest.TestCase):
         self.tracestore = _load_tracestore()
 
     def tearDown(self):
+        # Wait for any daemon background thread this test kicked off to
+        # finish BEFORE deleting the tmpdir — otherwise a still-running
+        # thread's open sqlite handle races tmpdir.cleanup() on Windows'
+        # stricter mandatory file locking (PermissionError/OSError).
+        deadline = time.time() + 5
+        while getattr(self.tracestore, "_runs_computing", False) and time.time() < deadline:
+            time.sleep(0.02)
         self.tmpdir.cleanup()
 
     def test_cold_start_returns_computing_immediately(self):

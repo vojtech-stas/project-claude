@@ -70,6 +70,13 @@ Python API (for dashboard reuse):
   fold(log_path=None, db_path_=None, force=False) -> int  (spans folded)
   acid_path(pr_number, log_path=None, db_path_=None) -> list[dict] | None
   span_tree(trace_id, log_path=None, db_path_=None) -> list[dict]
+  serve_trace_runs(limit=30, log_path=None, db_path_=None) -> dict
+    Background-warmed /api/trace-runs payload builder (slice #1082, PRD
+    #1075 criterion 9 — the Firing tab's PRIMARY renderer) — mirrors
+    prd_firing.py's serve_prd_firing() house pattern (issue #962):
+    stale-while-revalidate cache + daemon thread; the blocking builder
+    (`_build_recorded_runs`) is never called from the HTTP request handler
+    directly.
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
@@ -86,7 +93,9 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
+from datetime import datetime, timezone
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_THIS_DIR)
@@ -335,6 +344,122 @@ def span_tree(trace_id, log_path=None, db_path_=None):
         return [_row_to_span(r) for r in rows]
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Dashboard-facing "recorded runs" API + background-warm serve
+# (slice #1082, PRD #1075 criterion 9 — the Firing tab's PRIMARY renderer).
+# Mirrors prd_firing.py's serve_prd_firing() house pattern (issue #962):
+# stale-while-revalidate cache + daemon background thread; the HTTP handler
+# in server.py must call serve_trace_runs() only — never the blocking
+# builder directly.
+# ---------------------------------------------------------------------------
+_runs_cache: dict = {}
+_runs_cache_lock = threading.Lock()
+_RUNS_CACHE_TTL = 30  # seconds — sqlite read-model is cheap; short TTL is fine
+_runs_computing = False
+
+
+def _build_recorded_runs(limit=30, log_path=None, db_path_=None):
+    """Blocking builder: group every folded span by trace_id into ordered
+    PR-shaped chains (pr_opened -> ... -> pr_merged), newest-opened-first,
+    capped at `limit`. Pure sqlite+JSONL read (no gh calls — v3 spans ARE
+    the source of truth). Exposed as its own function so tests can call it
+    directly without going through the background thread."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    conn = _connect(resolved_db)
+    try:
+        trace_rows = conn.execute(
+            "SELECT DISTINCT trace_id FROM spans WHERE pr IS NOT NULL "
+            "ORDER BY trace_id"
+        ).fetchall()
+        trace_ids = [r["trace_id"] for r in trace_rows]
+    finally:
+        conn.close()
+
+    runs = []
+    for tid in trace_ids:
+        spans = span_tree(tid, log_path=log_path, db_path_=resolved_db)
+        if not spans:
+            continue
+        pr_num, opened_ts, merged_ts, dur_ms = None, None, None, None
+        for s in spans:
+            attrs = s.get("attrs", {}) or {}
+            if attrs.get("pr"):
+                pr_num = attrs.get("pr")
+            if s.get("kind") == "pr_opened":
+                opened_ts = s.get("ts")
+            if s.get("kind") == "pr_merged":
+                merged_ts = s.get("ts")
+                dur_ms = s.get("dur_ms")
+        runs.append({
+            "trace_id": tid,
+            "pr": pr_num,
+            "opened_ts": opened_ts,
+            "merged_ts": merged_ts,
+            "dur_ms": dur_ms,
+            "spans": spans,
+        })
+
+    runs.sort(key=lambda r: r.get("opened_ts") or "", reverse=True)
+    return runs[:limit]
+
+
+def _trace_runs_background(limit, log_path, db_path_):
+    global _runs_computing
+    try:
+        runs = _build_recorded_runs(limit=limit, log_path=log_path, db_path_=db_path_)
+        payload = {
+            "runs": runs,
+            "run_count": len(runs),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        payload = {
+            "runs": [],
+            "run_count": 0,
+            "error": str(exc),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    with _runs_cache_lock:
+        _runs_cache[limit] = {"data": payload, "ts": time.time()}
+        _runs_computing = False
+
+
+def serve_trace_runs(limit=30, log_path=None, db_path_=None):
+    """Stale-while-revalidate serve path for /api/trace-runs. ALWAYS returns
+    immediately: cached data if warm, {"status":"computing"} on true cold
+    start (kicks a daemon background thread), or last-known data with
+    "refreshing":true while a stale-TTL recompute runs in the background."""
+    global _runs_computing
+    with _runs_cache_lock:
+        cached_entry = _runs_cache.get(limit)
+        now = time.time()
+
+        if cached_entry is not None:
+            expired = (now - cached_entry.get("ts", 0)) >= _RUNS_CACHE_TTL
+            if not expired:
+                return cached_entry["data"]
+            payload = dict(cached_entry["data"])
+            payload["refreshing"] = True
+            if not _runs_computing:
+                _runs_computing = True
+                threading.Thread(
+                    target=_trace_runs_background,
+                    args=(limit, log_path, db_path_),
+                    daemon=True,
+                ).start()
+            return payload
+
+        if _runs_computing:
+            return {"status": "computing"}
+        _runs_computing = True
+
+    threading.Thread(
+        target=_trace_runs_background, args=(limit, log_path, db_path_), daemon=True
+    ).start()
+    return {"status": "computing"}
 
 
 def _cmd_fold(args):

@@ -307,7 +307,7 @@ gh pr diff <PR> --patch | grep -E '^\+.*\.claude/logs/' | grep -v '\.claude/hook
 
 **Literal pattern:** `R-FIXTURE: <file>:<line> writes to .claude/logs/ outside .claude/hooks/ — fixture/synthetic data must never enter production log stores; see CLAUDE.md rule #21`.
 
-**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed. Exemption: orchestrator-emitted `main_green` events per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3 (`{"event":"main_green","src":"orchestrator",...}` — real shas only, never fixture-patterned data) written from `ship/SKILL.md` are exempt from this prohibition; this exemption is narrow and does not extend to any other event type or skill. Exemption: orchestrator-emitted `develop_green` checkpoint events (the green-develop streak signal feeding [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D2's `RELEASE-READY` condition (d); lineage [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3, green-main→green-develop) written from `tools/record-green.sh` — real shas only, recorded ONLY after verifying develop is green (GitHub `ci`=success + `pytest` green), never fixture-patterned data — are likewise exempt; like the `main_green` exemption this is narrow and does not extend to any other event type, tool, or skill.
+**Rationale:** `.claude/logs/` is a production data store (workflow events, hook beacons). Writes from outside `.claude/hooks/` are the mechanism by which fixture/synthetic data contaminates passing QA evidence (forensics P1). The permitted write path is `.claude/hooks/<name>.sh` — the only authorized production emitters. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D3 + CLAUDE.md rule #21. Exemption: `dashboard/server.py` reading `.claude/logs/` (reads, not writes) is explicitly allowed. Exemption: orchestrator-emitted `main_green` events per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3 (`{"event":"main_green","src":"orchestrator",...}` — real shas only, never fixture-patterned data) written from `ship/SKILL.md` are exempt from this prohibition; this exemption is narrow and does not extend to any other event type or skill. Exemption: orchestrator-emitted `develop_green` checkpoint events (the green-develop streak signal feeding [ADR-0070](../../decisions/0070-two-tier-autonomous-delivery.md) D2's `RELEASE-READY` condition (d); lineage [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D3, green-main→green-develop) written from `tools/record-green.sh` — real shas only, recorded ONLY after verifying develop is green (GitHub `ci`=success + `pytest` green), never fixture-patterned data — are likewise exempt; like the `main_green` exemption this is narrow and does not extend to any other event type, tool, or skill. Exemption: v3 pipeline-trace spans (`{"v":3,...}` lines in `.claude/logs/trace-v3.jsonl`) written by `tools/trace.py`'s `emit_span` when invoked ONLY from the `tools/pipe/pr-open` / `tools/pipe/pr-merge` wrapper CLIs — real `pr_opened`/`pr_merged` events for real PR numbers/shas only, atomic with the gh side effect, never fixture-patterned data — per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3; this exemption is narrow and does not extend to any other caller of `emit_span` or any other event kind.
 
 ### R-TRAILER — Critic prompts edited without mandatory trailer keys
 
@@ -418,15 +418,33 @@ Execute IMMEDIATELY after posting the comment:
 python tools/pipe/pr-merge <PR>
 ```
 
-You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). This wrapper (per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3) embodies the full sanctioned protocol in one call: `gh pr merge --squash --auto`, and — on the BEHIND/blocked-merge condition (recoverable per ADR-0062 D1, NOT a BLOCK verdict) — `gh pr update-branch` → poll `gh pr checks` until green → retry, bounded at **3 attempts total**. On a confirmed MERGED state it appends a `pr_merged` v3 trace span atomically (never a silent half-success) and prints `pr-merge: PR #<n> merged sha=<sha> attempts=<n> behind_retried=<n-1>`. With R4 (required status checks) enabled, a red-CI PR never merges even on APPROVE.
+You are authorized to do this ONLY when your own verdict is APPROVE (per ADR-0002). This wrapper (per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3) embodies the full sanctioned protocol in one call: `gh pr merge --squash --auto --delete-branch`, and — on the BEHIND/blocked-merge condition (recoverable per ADR-0062 D1, NOT a BLOCK verdict) — `gh pr update-branch` → poll `gh pr checks` until green → retry, bounded at **3 attempts total**. With R4 (required status checks) enabled, a red-CI PR never merges even on APPROVE.
 
-Populate the trailer from the wrapper's outcome:
-- Exit 0 → parse `sha=` and `behind_retried=` from stdout; `MERGE_STATUS: merged:<sha>` (append ` behind-retried: <n>` when `behind_retried` > 0, e.g. `MERGE_STATUS: merged:abc1234 behind-retried: 2`).
-- Non-zero exit → the wrapper already exhausted its bounded attempts; do NOT retry further — populate `MERGE_STATUS: failed: <error>` (from stderr) and post a follow-up comment explaining the failure.
+**Bounded-budget contract (no single tool call can hang):** every invocation of `pr-merge` — default or `--confirm` — returns within a small bounded budget (~90s), never blocking for the full CI-wait duration inside one Bash call. It exits exactly one of three ways:
+- **Exit 0 — merged + recorded.** Confirmed MERGED within budget; a `pr_merged` v3 trace span was appended (or, on `--confirm`, was already recorded — prints `already recorded`). Stdout contains `merged sha=<sha>`.
+- **Exit 3 — `MERGE-PENDING`.** The merge command succeeded/queued but MERGED isn't confirmed yet within budget. Stderr contains the literal line `MERGE-PENDING: run tools/pipe/pr-merge --confirm <PR> to finish`. NO span was written — this is expected and recoverable, NOT a failure.
+- **Any other non-zero — genuine failure.** The `gh pr merge` command itself never succeeded within the bounded attempts. No span written.
 
-**Multiple APPROVE-ready sibling PRs:** When the orchestrator signals that multiple sibling PRs are simultaneously APPROVE-ready, merges MUST execute one at a time in completion order — do not merge two PRs concurrently. Each PR's `pr-merge` call completes fully before the next PR's merge begins. This serialization guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant per ADR-0062 D2).
+**On exit 3, re-invoke `--confirm` in a bounded loop, each re-invocation its own separate Bash call** (so no single call can hit the tool timeout):
 
-Per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge); wrapper repoint per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3.
+```bash
+python tools/pipe/pr-merge <PR>
+# exit 3 (MERGE-PENDING)? re-invoke, up to 5 times, each ITS OWN Bash call:
+python tools/pipe/pr-merge --confirm <PR>
+python tools/pipe/pr-merge --confirm <PR>
+# ... up to 5 total re-invocations across this dispatch
+```
+
+If still pending after 5 `--confirm` re-invocations, populate `MERGE_STATUS: pending — re-confirm on next dispatch` (a NEXT reviewer/orchestrator pass re-invokes `--confirm <PR>`; the merge itself is real and in-flight, not lost) rather than treating it as a BLOCK.
+
+Populate the trailer from the outcome:
+- Exit 0 → parse `sha=` from stdout; `MERGE_STATUS: merged:<sha>` (append ` behind-retried: <n>` when the default-invocation output includes `behind_retried=<n>` > 0, e.g. `MERGE_STATUS: merged:abc1234 behind-retried: 2`).
+- Exit 3 after exhausting the 5 `--confirm` re-invocations → `MERGE_STATUS: pending — re-confirm on next dispatch` (NOT a failure, NOT a BLOCK).
+- Any other non-zero exit → populate `MERGE_STATUS: failed: <error>` (from stderr) and post a follow-up comment explaining the failure. Do NOT retry beyond the bounded loop above.
+
+**Multiple APPROVE-ready sibling PRs:** When the orchestrator signals that multiple sibling PRs are simultaneously APPROVE-ready, merges MUST execute one at a time in completion order — do not merge two PRs concurrently. Each PR's `pr-merge` invocation(s) (including any `--confirm` re-invocations) complete fully before the next PR's merge begins. This serialization guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant per ADR-0062 D2).
+
+Per [ADR-0062](../../decisions/0062-merge-integrity-green-main.md) D1/D2 (bootstrap-mode: binds forward from this reviewer-prompt merge); wrapper repoint + bounded-budget/MERGE-PENDING contract per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3.
 
 ### If BLOCK: return to implementer
 
@@ -454,7 +472,7 @@ You ARE authorized to execute these specific shell commands:
 - `gh pr view`, `gh pr diff`, `gh pr list`, `gh pr checks` — read-only PR queries
 - `gh issue view`, `gh issue list` — read-only issue queries
 - `gh pr comment <PR> --body-file <tempfile>` — post your verdict
-- `python tools/pipe/pr-merge <PR>` — ONLY when your own verdict is APPROVE; the wrapper's internal `gh pr merge` call is ONLY `--squash --auto --delete-branch`; never `--merge` or `--rebase`; never on BLOCK (per ADR-0002; wrapper repoint per ADR-0075 D3)
+- `python tools/pipe/pr-merge <PR>` / `python tools/pipe/pr-merge --confirm <PR>` — ONLY when your own verdict is APPROVE; the wrapper's internal `gh pr merge` call is ONLY `--squash --auto --delete-branch`; never `--merge` or `--rebase`; `--confirm` re-invocations bounded to 5 per dispatch, each its own Bash call; never on BLOCK (per ADR-0002; wrapper repoint + bounded-budget contract per ADR-0075 D3)
 - `gh pr edit <PR> --add-label needs-human` — ONLY on round-3 BLOCK escalation (per ADR-0003 D4 / I5); ONLY the `needs-human` label; never any other label
 - `gh issue comment <parent-prd-number> --body-file <tempfile>` — ONLY on round-3 BLOCK escalation, ONLY on the parent PRD issue, ONLY with the escalation summary template (per ADR-0003 D4 / I5)
 

@@ -70,6 +70,11 @@ Python API (for dashboard reuse):
   fold(log_path=None, db_path_=None, force=False) -> int  (spans folded)
   acid_path(pr_number, log_path=None, db_path_=None) -> list[dict] | None
   span_tree(trace_id, log_path=None, db_path_=None) -> list[dict]
+  running_dispatches(log_path=None, db_path_=None) -> list[dict]
+    "Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
+    `dispatch` span lacking a terminal `dispatch_end` (same trace_id) —
+    the duplicate-dispatch mutex's read side and the W2 run-board's future
+    data model, both for free.
   serve_trace_runs(limit=30, log_path=None, db_path_=None) -> dict
     Background-warmed /api/trace-runs payload builder (slice #1082, PRD
     #1075 criterion 9 — the Firing tab's PRIMARY renderer) — mirrors
@@ -82,6 +87,7 @@ CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
   python dashboard/tracestore.py fold
   python dashboard/tracestore.py path --pr <n>
+  python dashboard/tracestore.py running
 
 utf-8: the JSONL is always read via trace.read_spans() (utf-8), and SQLite
 TEXT columns store native Python str (unicode) without any extra encoding
@@ -328,6 +334,33 @@ def acid_path(pr_number, log_path=None, db_path_=None):
         conn.close()
 
 
+def running_dispatches(log_path=None, db_path_=None):
+    """"Running now" query (PRD #1127 §2 criterion 2b / slice #1129): every
+    `dispatch` span whose trace_id has NO matching `dispatch_end` span —
+    i.e. every dispatch still in flight. Generic over trace_id (not
+    slice-specific parsing): a `dispatch_end` "terminates" any `dispatch`
+    sharing its exact trace_id, mirroring `tools/pipe/dispatch`'s own
+    trace_id convention (`slice-<n>`) without hardcoding it here."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    conn = _connect(resolved_db)
+    try:
+        dispatch_rows = conn.execute(
+            "SELECT * FROM spans WHERE kind = 'dispatch' ORDER BY ts, rowid"
+        ).fetchall()
+        ended_trace_ids = {
+            r["trace_id"] for r in conn.execute(
+                "SELECT DISTINCT trace_id FROM spans WHERE kind = 'dispatch_end'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+    return [
+        _row_to_span(r) for r in dispatch_rows
+        if r["trace_id"] not in ended_trace_ids
+    ]
+
+
 def span_tree(trace_id, log_path=None, db_path_=None):
     """Span-tree API: every span for one trace_id, ts-ordered with a
     `rowid` tie-break (#1101 prereq 4). Returns [] when the trace_id is
@@ -468,6 +501,20 @@ def _cmd_fold(args):
     return 0
 
 
+def _cmd_running(args):
+    running = running_dispatches()
+    if not running:
+        print("no running dispatches")
+        return 0
+    for s in running:
+        attrs = s.get("attrs", {})
+        print(
+            f"{s.get('ts')} trace_id={s.get('trace_id')} slice={attrs.get('slice')} "
+            f"prd={attrs.get('prd', '?')} session_id={attrs.get('session_id', '?')}"
+        )
+    return 0
+
+
 def _cmd_path(args):
     chain = acid_path(args.pr)
     if chain is None:
@@ -496,6 +543,9 @@ def main(argv=None):
     p_path = sub.add_parser("path", help="indexed acid-test causal-path query")
     p_path.add_argument("--pr", required=True, type=int)
     p_path.set_defaults(func=_cmd_path)
+
+    p_running = sub.add_parser("running", help='"running now" query: dispatch spans lacking a terminal dispatch_end')
+    p_running.set_defaults(func=_cmd_running)
 
     args = parser.parse_args(argv)
     return args.func(args)

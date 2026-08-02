@@ -369,7 +369,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 - **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
-- **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — block dangerous git ops per ADR-0023 D4.
+- **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
 - **[`auto`](.claude/hooks/log-tool-event.sh)** (`PreToolUse · Agent|Skill`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
 - **[`auto`](.claude/hooks/log-tool-event.sh)** (`PostToolUse · Agent|Bash|AskUserQuestion|Edit|MultiEdit|Write`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
 - **[`stop-reviewer-gate`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.

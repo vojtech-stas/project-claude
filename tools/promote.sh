@@ -119,11 +119,16 @@ rm -f "$SENTINEL"
 echo "INFO: human-ack sentinel removed — next promotion requires a fresh .claude/PROMOTE_OK"
 
 # --- 4. Append promotion event ---
+# "ack":true is truthful here — this line is only reachable after the
+# human-ack sentinel was verified present (step 0a) and consumed (step 3b)
+# for THIS promotion (fixes #1124: the writer previously never recorded any
+# ack marker, so check_meta_tripwire()'s retrospective ack check was
+# mechanically unpassable for every guardrail batch after the first).
 TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")"
 SESSION_ID="${CLAUDE_SESSION_ID:-orchestrator}"
 
 mkdir -p "$(dirname "$EVENTS_LOG")"
-EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"develop\",\"to\":\"main\",\"sha\":\"$DEVELOP_SHA\"}"
+EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"develop\",\"to\":\"main\",\"sha\":\"$DEVELOP_SHA\",\"ack\":true}"
 echo "$EVENT" >> "$EVENTS_LOG"
 echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"
 

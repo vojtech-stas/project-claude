@@ -903,6 +903,17 @@ def _read_promotion_events() -> list[dict]:
     return promotions
 
 
+def _resolve_promote_ok_sentinel() -> Path:
+    """Resolve the canonical PROMOTE_OK sentinel path (ADR-0070 D4 / #1124).
+
+    Mirrors tools/promote.sh's LOGROOT resolution: the sentinel lives at
+    <canonical-root>/.claude/PROMOTE_OK, where canonical-root is the
+    git-common-dir parent (see _telemetry_log_root()) — the same shared
+    root promote.sh uses so the sentinel is visible across worktrees.
+    """
+    return _telemetry_log_root() / ".claude" / "PROMOTE_OK"
+
+
 def check_meta_tripwire() -> dict:
     """META-TRIPWIRE: guardrail-machinery promotion gate (ADR-0070 D4).
 
@@ -911,8 +922,18 @@ def check_meta_tripwire() -> dict:
     paths + .claude/agents/*-critic.md + RELEASE-READY check + promote.sh +
     branch-protection config).
 
-    A guardrail-touching batch FAILS this check unless a promotion-ack is
-    present (promotion-ack label or body keyword on the promotion record).
+    A guardrail-touching batch PASSES this check if EITHER:
+      (1) the .claude/PROMOTE_OK sentinel CURRENTLY exists at the canonical
+          root — this is the current-batch ack: promote.sh's own step 0a
+          already verified an operator created it for THIS promotion
+          attempt (#1124 — the sentinel's presence at gate-check time is
+          the truthful ack signal; promote.sh only removes it after the
+          gate passes and the push completes); or
+      (2) the last promotion record carries a promotion-ack (label/body
+          keyword or "ack": true) — preserved as the retrospective
+          historical-bypass detector.
+
+    Otherwise it FAILs.
 
     Honest day-one: if no promotions have occurred yet, there is nothing to
     check — returns WARN (no-data) rather than spurious PASS or FAIL.
@@ -1021,8 +1042,31 @@ def check_meta_tripwire() -> dict:
             ),
         }
 
-    # Guardrail paths found in batch — check for promotion-ack.
+    # Guardrail paths found in batch — check for a current sentinel or a
+    # retrospective ack.
     unique_guardrail = sorted(set(guardrail_files_found))[:5]
+
+    # (1) Current-batch ack: the PROMOTE_OK sentinel exists RIGHT NOW at the
+    # canonical root.  This is checked first because it's the only signal
+    # that can ever be true for the batch actually in flight (#1124 —
+    # promote.sh's writer only records the retrospective ack AFTER a
+    # promotion completes, so the very first guardrail batch after any
+    # promotion has no retrospective ack yet; the sentinel is the truthful
+    # current-batch signal).
+    sentinel_path = _resolve_promote_ok_sentinel()
+    if sentinel_path.exists():
+        return {
+            "id": "META-TRIPWIRE",
+            "result": "PASS",
+            "detail": (
+                f"meta-tripwire: PASS — guardrail-touching batch acked by present "
+                f"PROMOTE_OK sentinel ({sentinel_path}); files: {unique_guardrail}; "
+                f"ADR-0070 D4 / #1124"
+            ),
+        }
+
+    # (2) Retrospective ack: the last promotion record itself carries an ack
+    # marker — preserved as historical-bypass detection.
     if last_ack:
         return {
             "id": "META-TRIPWIRE",
@@ -1033,7 +1077,7 @@ def check_meta_tripwire() -> dict:
             ),
         }
 
-    # Guardrail paths touched + no ack → FAIL.
+    # Guardrail paths touched + no sentinel + no ack → FAIL.
     return {
         "id": "META-TRIPWIRE",
         "result": "FAIL",

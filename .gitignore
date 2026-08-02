@@ -73,3 +73,7 @@ logs/
 
 # Eval runner output (runtime-generated, on-demand only — ADR-0067 D5)
 tests/evals/results.json
+
+# Disposable SQLite trace read-model (refoldable from trace-v3.jsonl;
+# never a second source of truth — slice #1080, ADR-0075 D2).
+.claude/state/

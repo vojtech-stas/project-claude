@@ -39,6 +39,18 @@
 #   bash tools/deploy-handshake.sh --self-test [start-dir]
 #     CI-safe internal-consistency mode (see SELF-TEST CONTRACT below).
 #
+#   bash tools/deploy-handshake.sh --check-only [start-dir]
+#     NON-MUTATING, NEVER-BLOCKING leg (PRD #1075 slice #1085): re-runs the
+#     exact same LOCAL LEG comparison below (DRY — zero duplicated hash
+#     logic) but always exits 0 and prints a machine-parseable two-line
+#     result instead of the loud banner + exit 1:
+#       STATUS: PASS|FAIL
+#       detail: <one-line summary>
+#     Consumed by dashboard/health.py's check_deploy_handshake() (DEPLOY-
+#     HANDSHAKE health row) — a health-check subprocess call must never be
+#     interpreted as "the shell command itself failed" just because the
+#     underlying comparison found a mismatch.
+#
 # SELF-TEST CONTRACT (what CI can/cannot assert):
 #   GitHub Actions checks out the PR ref in DETACHED HEAD by design — the
 #   branch-vs-HEAD comparison this script performs for the "local leg" would
@@ -52,8 +64,12 @@
 set -uo pipefail
 
 SELF_TEST=0
+CHECK_ONLY=0
 if [ "${1:-}" = "--self-test" ]; then
   SELF_TEST=1
+  shift
+elif [ "${1:-}" = "--check-only" ]; then
+  CHECK_ONLY=1
   shift
 fi
 
@@ -123,8 +139,25 @@ if [ -z "$BRANCH" ]; then
 fi
 
 HOOKS_PATH=$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || echo "__unset__")
-if [ "$HOOKS_PATH" != ".githooks" ]; then
-  BANNER_LINES+=("core.hooksPath is '$HOOKS_PATH', expected '.githooks'.")
+# Compare PATH IDENTITY, not string equality (#1093 flapper): .githooks/install.sh
+# may write an ABSOLUTE hooksPath (e.g. "F:\project_claude\.githooks" or
+# "/f/project_claude/.githooks") that resolves to the SAME directory as the
+# documented relative ".githooks" — a bare string compare false-flags that as
+# a deploy-gap even though the content and the resolved directory match.
+# Resolve both sides to a real, symlink-free absolute path via `cd ... && pwd -P`
+# before comparing; only report a genuine mismatch (unset OR resolves elsewhere).
+HOOKS_PATH_RESOLVED=""
+if [ "$HOOKS_PATH" != "__unset__" ]; then
+  case "$HOOKS_PATH" in
+    /*|[A-Za-z]:*) HOOKS_PATH_CANDIDATE="$HOOKS_PATH" ;;   # already absolute
+    *)             HOOKS_PATH_CANDIDATE="$ROOT/$HOOKS_PATH" ;;  # relative -> resolve vs ROOT
+  esac
+  HOOKS_PATH_RESOLVED=$(cd "$HOOKS_PATH_CANDIDATE" 2>/dev/null && pwd -P)
+fi
+EXPECTED_HOOKS_PATH_RESOLVED=$(cd "$ROOT/.githooks" 2>/dev/null && pwd -P)
+if [ -z "$HOOKS_PATH_RESOLVED" ] || [ -z "$EXPECTED_HOOKS_PATH_RESOLVED" ] || \
+   [ "$HOOKS_PATH_RESOLVED" != "$EXPECTED_HOOKS_PATH_RESOLVED" ]; then
+  BANNER_LINES+=("core.hooksPath is '$HOOKS_PATH' (resolved: '${HOOKS_PATH_RESOLVED:-<unresolvable>}'), expected to resolve to '$ROOT/.githooks' (resolved: '${EXPECTED_HOOKS_PATH_RESOLVED:-<unresolvable>}').")
 fi
 
 if [ -n "$BRANCH" ]; then
@@ -147,6 +180,23 @@ if [ -n "$BRANCH" ]; then
      [ "$DEPLOYED_SETTINGS_HASH" != "$RUNNING_SETTINGS_HASH" ]; then
     BANNER_LINES+=(".claude/settings.json content-hash MISMATCH — running=${RUNNING_SETTINGS_HASH:-<none>} deployed(${BRANCH})=${DEPLOYED_SETTINGS_HASH:-<none>}")
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# --check-only: NON-MUTATING, NEVER-BLOCKING leg (PRD #1075 slice #1085).
+# Reuses the exact BANNER_LINES computed above (DRY) but always exits 0 and
+# prints a machine-parseable STATUS:/detail: pair instead of the loud banner
+# + exit 1 — dashboard/health.py's check_deploy_handshake() shells to this.
+# ---------------------------------------------------------------------------
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  if [ "${#BANNER_LINES[@]}" -gt 0 ]; then
+    echo "STATUS: FAIL"
+    (IFS='; '; echo "detail: ${BANNER_LINES[*]}")
+  else
+    echo "STATUS: PASS"
+    echo "detail: branch=$BRANCH hooksPath=$HOOKS_PATH root=$ROOT"
+  fi
+  exit 0
 fi
 
 if [ "${#BANNER_LINES[@]}" -gt 0 ]; then

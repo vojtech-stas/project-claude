@@ -5701,16 +5701,53 @@ def check_hook_liveness() -> dict:
 # NAMED FAIL for that stream alone; live siblings still PASS.
 # ---------------------------------------------------------------------------
 
-_STREAM_LIVENESS_DARK_MINUTES = 60  # mirrors _HOOK_LIVENESS_DARK_MINUTES
+_STREAM_LIVENESS_DARK_MINUTES = 60  # always-on window (unchanged; mirrors
+    # _HOOK_LIVENESS_DARK_MINUTES)
+
+# Per-stream cadence classes (root-cause fix, issue #1107): a uniform 60m
+# window mathematically FAILs any once-per-session or trigger-driven stream
+# whose own natural cadence is sparser than the window — that is a false
+# alarm, not a real outage. Two narrower classes carve out of the default
+# "always-on" bucket:
+#   - "session-scoped": streams registered under the SessionStart hook event
+#     (session-start.sh, dashboard-autostart.sh today; any future once-per-
+#     session hook is picked up automatically since classification keys off
+#     the settings.json event name, not a hardcoded stream-name list). Alive
+#     iff the stream's own last beacon is within
+#     _STREAM_LIVENESS_SESSION_SKEW_MINUTES of the NEWEST beacon among all
+#     session-scoped streams (the "newest observed session" cluster) — never
+#     against wall-clock "now". A stream that lags the newest cluster by more
+#     than the skew tolerance means a newer session demonstrably started
+#     without it beaconing: the real hooks-go-dark outage class stays FAIL.
+#   - "on-demand": an explicit allow-list of trigger-driven streams
+#     (_STREAM_LIVENESS_ON_DEMAND_STREAMS) that only fire on a specific,
+#     inherently-sparse user action — grill_qa on AskUserQuestion, skill_invoke
+#     on a Skill-tool invocation; both named explicitly in issue #1107's
+#     proposed design ("on-demand (grill_qa, skill_invoke)"). Silence alone is
+#     informational ("idle (on-demand)"), never a FAIL — the check has no
+#     independent evidence a trigger occurred without its beacon, so it does
+#     not fabricate a FAIL it cannot prove.
+# "always-on" (the default; unchanged behavior) keeps the uniform 60m window.
+_STREAM_LIVENESS_SESSION_SKEW_MINUTES = 10
+_STREAM_LIVENESS_ON_DEMAND_STREAMS = frozenset({"grill_qa", "skill_invoke"})
+
+_STREAM_CADENCE_SESSION_SCOPED = "session-scoped"
+_STREAM_CADENCE_ON_DEMAND = "on-demand"
+_STREAM_CADENCE_ALWAYS_ON = "always-on"
 
 
-def _stream_liveness_registered_streams(settings_path: Path) -> set:
+def _stream_liveness_registered_streams(settings_path: Path) -> dict:
     """Enumerate every distinct stream telemetry key registered in
     .claude/settings.json's hook configs, mirroring discover_hooks()'s own
     key-selection: literal event-type arg > AUTO-MODE derived-key set >
     filename-stem fallback (for hooks that beacon directly, bypassing
-    log-tool-event.sh). Returns an empty set (never raises) on any failure —
-    callers degrade to WARN rather than fabricate a stream list.
+    log-tool-event.sh).
+
+    Returns {stream_name: cadence_class} — cadence_class is one of
+    _STREAM_CADENCE_SESSION_SCOPED / _STREAM_CADENCE_ON_DEMAND /
+    _STREAM_CADENCE_ALWAYS_ON (see module comment above, issue #1107).
+    Returns an empty dict (never raises) on any failure — callers degrade to
+    WARN rather than fabricate a stream list.
     """
     import json as _json
     try:
@@ -5721,10 +5758,18 @@ def _stream_liveness_registered_streams(settings_path: Path) -> set:
             _read_hook_name,
         )
     except Exception:
-        return set()
+        return {}
     if not settings_path.exists():
-        return set()
-    streams: set = set()
+        return {}
+
+    def _classify(name: str, event: str) -> str:
+        if event == "SessionStart":
+            return _STREAM_CADENCE_SESSION_SCOPED
+        if name in _STREAM_LIVENESS_ON_DEMAND_STREAMS:
+            return _STREAM_CADENCE_ON_DEMAND
+        return _STREAM_CADENCE_ALWAYS_ON
+
+    streams: dict = {}
     try:
         data = _json.loads(settings_path.read_text(encoding="utf-8"))
         for event, entries in data.get("hooks", {}).items():
@@ -5734,20 +5779,22 @@ def _stream_liveness_registered_streams(settings_path: Path) -> set:
                     cmd = hook.get("command", "")
                     event_type_arg = _event_type_from_cmd(cmd)
                     if event_type_arg == "auto":
-                        streams.update(_auto_mode_derived_keys(event, matcher))
+                        for key in _auto_mode_derived_keys(event, matcher):
+                            streams.setdefault(key, _classify(key, event))
                     elif event_type_arg:
-                        streams.add(event_type_arg)
+                        streams.setdefault(event_type_arg, _classify(event_type_arg, event))
                     else:
                         clean_name = _read_hook_name(cmd)
                         if clean_name:
-                            streams.add(clean_name)
+                            streams.setdefault(clean_name, _classify(clean_name, event))
     except Exception:
-        return set()
+        return {}
     return streams
 
 
 def check_stream_liveness() -> dict:
-    """STREAM-LIVENESS: see module comment above (PRD #1075 criterion 8).
+    """STREAM-LIVENESS: see module comment above (PRD #1075 criterion 8;
+    cadence classes per issue #1107).
 
     Env overrides (test seam, mirrors check_hook_liveness's override pattern):
       _STREAM_LIVENESS_SETTINGS_OVERRIDE — path to a synthetic settings.json
@@ -5755,9 +5802,19 @@ def check_stream_liveness() -> dict:
       _STREAM_LIVENESS_TRACE_OVERRIDE    — path to a synthetic trace-v3.jsonl
       _STREAM_LIVENESS_NOW_OVERRIDE      — ISO-8601 ts to use as "now"
 
-    PASS when every registered stream has a beacon within the window.
-    FAIL naming each stream that has none (never-fired or gone dark) — other
-    streams still PASS individually (no aggregate blindness).
+    Three cadence classes (see _stream_liveness_registered_streams):
+      - always-on: PASS iff beaconed within _STREAM_LIVENESS_DARK_MINUTES of
+        "now" (unchanged behavior).
+      - session-scoped: PASS iff the stream's own last beacon is within
+        _STREAM_LIVENESS_SESSION_SKEW_MINUTES of the newest beacon among ALL
+        session-scoped streams — never fails purely for being chronologically
+        old; FAILs only when a newer session-scoped beacon exists elsewhere
+        (a newer session demonstrably started) and this stream missed it.
+      - on-demand: silence alone is reported as idle (informational, listed
+        separately in "idle_streams"/detail) — never a FAIL, since the check
+        has no independent evidence a trigger occurred without its beacon.
+    "never-fired" always-on/session-scoped streams still FAIL (no beacon
+    evidence at all remains a fault, not mere sparseness).
     WARN when settings.json can't be parsed, no streams are discoverable, or
     neither hook-fires.jsonl nor trace-v3.jsonl exists yet (nothing to assert).
     """
@@ -5786,13 +5843,13 @@ def check_stream_liveness() -> dict:
     now_override = os.environ.get("_STREAM_LIVENESS_NOW_OVERRIDE", "")
     now_ts = _parse_ts(now_override) if now_override else _dt.now(_tz.utc).timestamp()
 
-    stream_names = _stream_liveness_registered_streams(settings_path)
-    if not stream_names:
+    stream_classes = _stream_liveness_registered_streams(settings_path)
+    if not stream_classes:
         return {
             "id": "STREAM-LIVENESS", "result": "WARN",
             "detail": f"no registered streams discoverable from {settings_path}",
         }
-    stream_names.add("trace-v3")
+    stream_classes.setdefault("trace-v3", _STREAM_CADENCE_ALWAYS_ON)
 
     # --- last-fired per hook stream, from hook-fires.jsonl ---
     last_fired: dict = {}
@@ -5852,10 +5909,54 @@ def check_stream_liveness() -> dict:
             "detail": "no beacon data available yet (hook-fires.jsonl and trace-v3.jsonl both absent)",
         }
 
+    # Newest observed session-start cluster: the max last-fired timestamp
+    # among ALL session-scoped streams. A lone/synchronized session-scoped
+    # stream trivially matches its own value (delta=0) regardless of its
+    # absolute age — the false-FAIL this check exists to fix. A stream that
+    # lags this reference by more than the skew tolerance means some OTHER
+    # session-scoped stream demonstrably beaconed more recently — the real
+    # outage class (a newer session started without this stream firing).
+    session_scoped_names = [
+        n for n, c in stream_classes.items() if c == _STREAM_CADENCE_SESSION_SCOPED
+    ]
+    session_reference_ts = max(
+        (last_fired.get(n, 0.0) for n in session_scoped_names), default=0.0
+    )
+    skew_minutes = _STREAM_LIVENESS_SESSION_SKEW_MINUTES
+
     fail_streams = []
     pass_streams = []
-    for name in sorted(stream_names):
+    idle_streams = []  # on-demand silence — informational only, never a FAIL
+    for name in sorted(stream_classes.keys()):
+        cadence = stream_classes[name]
         ts_val = last_fired.get(name, 0.0)
+
+        if cadence == _STREAM_CADENCE_SESSION_SCOPED:
+            if ts_val == 0.0:
+                fail_streams.append(f"{name}(never-fired)[session]")
+                continue
+            age_min = (now_ts - ts_val) / 60.0
+            skew_min = (session_reference_ts - ts_val) / 60.0
+            if skew_min > skew_minutes:
+                fail_streams.append(
+                    f"{name}({age_min:.0f}m)[session,missed newest session +{skew_min:.0f}m]"
+                )
+            else:
+                pass_streams.append(f"{name}[session,{age_min:.0f}m]")
+            continue
+
+        if cadence == _STREAM_CADENCE_ON_DEMAND:
+            if ts_val == 0.0:
+                idle_streams.append(f"{name}(never-fired)[on-demand]")
+            else:
+                age_min = (now_ts - ts_val) / 60.0
+                if age_min > _STREAM_LIVENESS_DARK_MINUTES:
+                    idle_streams.append(f"{name}({age_min:.0f}m)[on-demand]")
+                else:
+                    pass_streams.append(f"{name}[on-demand,{age_min:.0f}m]")
+            continue
+
+        # always-on (default; unchanged behavior)
         if ts_val == 0.0:
             fail_streams.append(f"{name}(never-fired)")
             continue
@@ -5868,6 +5969,8 @@ def check_stream_liveness() -> dict:
     detail_parts = [f"window={_STREAM_LIVENESS_DARK_MINUTES}m"]
     if pass_streams:
         detail_parts.append(f"live: {', '.join(pass_streams)}")
+    if idle_streams:
+        detail_parts.append(f"idle (on-demand): {', '.join(idle_streams)}")
     if fail_streams:
         detail_parts.append(f"dark: {', '.join(fail_streams)}")
 
@@ -5875,8 +5978,10 @@ def check_stream_liveness() -> dict:
         "id": "STREAM-LIVENESS",
         "result": "FAIL" if fail_streams else "PASS",
         "detail": " | ".join(detail_parts),
-        "streams": sorted(stream_names),
+        "streams": sorted(stream_classes.keys()),
+        "stream_classes": dict(stream_classes),
         "fail_streams": fail_streams,
+        "idle_streams": idle_streams,
     }
 
 

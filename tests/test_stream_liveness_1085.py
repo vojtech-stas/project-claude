@@ -62,12 +62,32 @@ def _write_settings(path: Path, hook_entries: dict) -> None:
 # Two simple direct-beacon hook entries (mirrors session-start.sh / pre-tool-bash.sh
 # style — no log-tool-event.sh, telemetry key = filename stem) — a minimal but
 # realistic settings.json fixture that STREAM-LIVENESS's discovery must parse.
+#
+# NOTE (issue #1107): stream-a is registered under "SessionStart", which
+# cadence-classifies it as "session-scoped" — its staleness-vs-"now" is no
+# longer meaningful on its own (see test_stream_liveness_1107.py for that
+# class's dedicated fixtures). Tests below that only need TWO generic
+# always-on streams use _TWO_ALWAYS_ON_STREAM_SETTINGS instead.
 _TWO_STREAM_SETTINGS = {
     "SessionStart": [
         {"matcher": "", "hooks": [{"type": "command",
          "command": 'bash "$X/.claude/hooks/stream-a.sh"'}]},
     ],
     "PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+         "command": 'bash "$X/.claude/hooks/stream-b.sh"'}]},
+    ],
+}
+
+# Two always-on (non-SessionStart) direct-beacon streams — used where a test's
+# intent is specifically the uniform-window always-on behavior, independent
+# of session-scoped cadence semantics (issue #1107).
+_TWO_ALWAYS_ON_STREAM_SETTINGS = {
+    "PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command",
+         "command": 'bash "$X/.claude/hooks/stream-a.sh"'}]},
+    ],
+    "PostToolUse": [
         {"matcher": "Bash", "hooks": [{"type": "command",
          "command": 'bash "$X/.claude/hooks/stream-b.sh"'}]},
     ],
@@ -173,7 +193,10 @@ class TestStreamLivenessSilenceOneStream(unittest.TestCase):
 
     def test_stale_beacon_beyond_window_fails_that_stream_only(self):
         """A beacon that exists but is OLDER than the dark-minutes window must
-        still FAIL that stream (not just 'never fired')."""
+        still FAIL that stream (not just 'never fired') — for an always-on
+        stream (uses _TWO_ALWAYS_ON_STREAM_SETTINGS; issue #1107 exempts
+        session-scoped streams from this uniform-window semantic, covered
+        separately by test_stream_liveness_1107.py)."""
         now = time.time()
         now_iso = _iso(now)
         dark_seconds = (_STREAM_LIVENESS_DARK_MINUTES + 10) * 60
@@ -181,7 +204,7 @@ class TestStreamLivenessSilenceOneStream(unittest.TestCase):
             tmp_dir = Path(tmp)
             result = _run_check(
                 tmp_dir,
-                _TWO_STREAM_SETTINGS,
+                _TWO_ALWAYS_ON_STREAM_SETTINGS,
                 fires_lines=[
                     {"hook": "stream-a", "ts": _iso(now - dark_seconds)},  # stale
                     {"hook": "stream-b", "ts": _iso(now - 60)},            # fresh

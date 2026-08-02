@@ -41,6 +41,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -365,6 +366,121 @@ class TestPrMerge(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         lines = _read_jsonl(log_path)
         self.assertEqual(len(lines), 0, f"unmerged PR must write NO span; got {lines}")
+
+
+class TestPrMergePendingConfirm(unittest.TestCase):
+    """Regression for reviewer round-1 finding #2 (PR #1089): the default
+    invocation must never block past a small bounded budget (a synchronous
+    ~8min/24min confirm-poll would be killed by the Bash tool's 120s-default/
+    600s-max timeout in real reviewer usage -> silent half-success). Default
+    invocation reports MERGE-PENDING (exit 3, no span) once its bounded
+    budget elapses without a confirmed merge; `--confirm <n>` is the
+    idempotent re-entry point that finishes the job on a later, separate
+    Bash call. IDEMPOTENCE GUARD: a second `--confirm` must never double-
+    append a `pr_merged` span for the same PR.
+    """
+
+    def setUp(self):
+        if not PR_MERGE.exists():
+            self.skip_reason = f"tools/pipe/pr-merge not found at {PR_MERGE}"
+        else:
+            self.skip_reason = None
+        self.tmp = tempfile.mkdtemp(prefix="pr_merge_pending_test_")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, args, env_updates, cwd=None):
+        if self.skip_reason:
+            self.fail(self.skip_reason)
+        env = os.environ.copy()
+        env.update(env_updates)
+        cmd = [sys.executable, str(PR_MERGE)] + args
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(REPO_ROOT), env=env, timeout=30)
+
+    def test_default_invocation_bounded_never_blocks_past_budget(self):
+        """Default (no --confirm) call: merge command queues (exit 0) but the
+        REST confirm-poll never sees merged:true within the bounded budget ->
+        MERGE-PENDING, exit 3, NO span written. Must return near-instantly
+        (no real sleep) given PR_MERGE_BUDGET_S=0."""
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        env_updates = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+            "FAKE_GH_MERGE_EXIT": "0",
+            "FAKE_GH_API_JSON": json.dumps({"merged": False}),
+            "PR_MERGE_BUDGET_S": "0",
+        }
+        start = time.monotonic()
+        result = self._run(["901"], env_updates)
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 10, "default invocation must not block for a long poll (budget=0)")
+        self.assertEqual(
+            result.returncode, 3,
+            f"expected exit 3 (MERGE-PENDING); got {result.returncode}. "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}",
+        )
+        combined = (result.stdout + result.stderr).lower()
+        self.assertIn("merge-pending", combined, f"expected loud MERGE-PENDING line; got {combined!r}")
+        self.assertIn("--confirm", combined, f"expected --confirm re-invocation hint; got {combined!r}")
+        self.assertIn("901", combined, "expected the PR number in the MERGE-PENDING hint")
+        lines = _read_jsonl(log_path)
+        self.assertEqual(len(lines), 0, f"pending state must write NO span; got {lines}")
+
+    def test_confirm_then_idempotent_reinvoke_full_lifecycle(self):
+        """Full lifecycle across 3 separate subprocess invocations sharing one
+        log: (1) default call sees pending -> exit 3, no span; (2) --confirm
+        with merged:true -> span appended exactly once; (3) --confirm again
+        -> 'already recorded', exit 0, STILL exactly one span (idempotence
+        guard: never double-append for the same PR)."""
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        base_env = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+        }
+
+        # Step 1: default invocation — merge command queues, REST says not
+        # merged yet, bounded budget expires -> MERGE-PENDING.
+        pending_env = dict(base_env)
+        pending_env.update({
+            "FAKE_GH_MERGE_EXIT": "0",
+            "FAKE_GH_API_JSON": json.dumps({"merged": False}),
+            "PR_MERGE_BUDGET_S": "0",
+        })
+        r1 = self._run(["902"], pending_env)
+        self.assertEqual(r1.returncode, 3, f"step1: stdout={r1.stdout!r} stderr={r1.stderr!r}")
+        self.assertEqual(len(_read_jsonl(log_path)), 0, "step1: no span yet")
+
+        # Step 2: --confirm, REST now reports merged:true -> span appended once.
+        confirm_env = dict(base_env)
+        confirm_env.update({
+            "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "feedface42"}),
+            "PR_MERGE_BUDGET_S": "5",
+        })
+        r2 = self._run(["--confirm", "902"], confirm_env)
+        self.assertEqual(r2.returncode, 0, f"step2: stdout={r2.stdout!r} stderr={r2.stderr!r}")
+        lines_after_confirm = _read_jsonl(log_path)
+        self.assertEqual(len(lines_after_confirm), 1, f"step2: expected exactly 1 span, got {lines_after_confirm}")
+        self.assertEqual(lines_after_confirm[0]["kind"], "pr_merged")
+        self.assertEqual(lines_after_confirm[0]["attrs"]["pr"], "902")
+        self.assertEqual(lines_after_confirm[0]["attrs"]["sha"], "feedface42")
+
+        # Step 3: --confirm AGAIN (idempotent re-invoke) -> 'already recorded',
+        # exit 0, and critically STILL exactly one span (no duplicate).
+        r3 = self._run(["--confirm", "902"], confirm_env)
+        self.assertEqual(r3.returncode, 0, f"step3: stdout={r3.stdout!r} stderr={r3.stderr!r}")
+        self.assertIn(
+            "already recorded", (r3.stdout + r3.stderr).lower(),
+            f"expected 'already recorded' on idempotent re-invoke; got stdout={r3.stdout!r} stderr={r3.stderr!r}",
+        )
+        lines_final = _read_jsonl(log_path)
+        self.assertEqual(
+            len(lines_final), 1,
+            f"IDEMPOTENCE GUARD violated: expected still exactly 1 pr_merged span after re-invoke, got {lines_final}",
+        )
 
 
 # ---------------------------------------------------------------------------

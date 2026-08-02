@@ -126,3 +126,14 @@ mkdir -p "$(dirname "$EVENTS_LOG")"
 EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"develop\",\"to\":\"main\",\"sha\":\"$DEVELOP_SHA\"}"
 echo "$EVENT" >> "$EVENTS_LOG"
 echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"
+
+# --- 5. Append v3 promotion trace span (PRD #1075 criterion 1 rider / #1083) ---
+# Same success path as the v2 event above (atomic intent) — the promotion
+# transition never leaves a v2 event without also leaving a v3 span, and
+# neither is ever written on any refusal path above. tools/trace.py resolves
+# its own canonical log location (TRACE_LOG_OVERRIDE test seam, else
+# git-common-dir parent) — no extra path plumbing needed here.
+python3 "$REPO_ROOT/tools/trace.py" emit --kind promotion \
+  --trace-id "promotion-$DEVELOP_SHA" \
+  --attr from=develop --attr to=main --attr "sha=$DEVELOP_SHA" >/dev/null
+echo "INFO: v3 promotion span appended — sha=$DEVELOP_SHA"

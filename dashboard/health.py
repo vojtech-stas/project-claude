@@ -35,6 +35,7 @@ Exports:
     check_merge_integrity() -> dict      (slice #783/ADR-0062 D1: BEHIND encountered/recovered)
     check_capture_shape() -> dict        (slice #783/ADR-0063 D2: 3-heading regex over root-cause issues)
     check_green_main() -> dict           (slice #783/ADR-0062 D3: last main_green sha + lag + age)
+    check_record_vs_gh() -> dict         (slice #1081/PRD #1075 cr.3: recorded pr_merged spans vs gh ground truth)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -161,6 +162,35 @@ def _telemetry_log_root() -> Path:
 # _AUDIT_SUBAGENTS_SKILL was the former source for AS-* check IDs; after PRD #919
 # slice #921, AS-* checks are registered in CHECK_REGISTRY (AS-AUDIT) — no separate source.
 _CODEBASE_CRITIC_MD = _HEALTH_REPO_ROOT / ".claude" / "agents" / "codebase-critic.md"
+
+# ---------------------------------------------------------------------------
+# tools/trace.py lazy loader — reused by check_record_vs_gh (slice #1081).
+# Loaded under a private module name (never "trace" — collides with the
+# stdlib `trace` coverage module). TRACE_LOG_OVERRIDE is read at CALL time
+# inside trace.py's own trace_log_path()/read_spans(), so caching the loaded
+# module here does not interfere with per-test log-path overrides.
+# ---------------------------------------------------------------------------
+_TRACE_V3_PY = _HEALTH_REPO_ROOT / "tools" / "trace.py"
+_trace_v3_module = None
+
+
+def _load_trace_v3():
+    """Lazily import tools/trace.py and cache the module object. Returns None
+    (never raises) if the file is missing — callers degrade honestly."""
+    global _trace_v3_module
+    if _trace_v3_module is not None:
+        return _trace_v3_module
+    if not _TRACE_V3_PY.exists():
+        return None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("trace_v3_health", str(_TRACE_V3_PY))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _trace_v3_module = mod
+        return mod
+    except Exception:
+        return None
 
 # Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
 _KNOWN_CRITICS = {
@@ -1441,6 +1471,7 @@ PURPOSE_GROUP_MAP: dict = {
     "MERGE-INTEGRITY": "Verification integrity",
     "CAPTURE-SHAPE":   "Verification integrity",
     "GREEN-MAIN":      "Verification integrity",
+    "RECORD-VS-GH":    "Verification integrity",
     "RESIDUAL-RATIO":  "Verification integrity",
     # --- Isolation/hygiene ---
     # Worktree orphans, log rotation, untracked files, session injection
@@ -3127,6 +3158,189 @@ def check_green_main() -> dict:
 
     return {"id": "GREEN-MAIN", "result": result, "detail": detail,
             "sha": sha, "lag": lag, "age_hours": age_h}
+
+
+# ---------------------------------------------------------------------------
+# RECORD-VS-GH — recorded pr_merged spans vs gh's merged-PR ground truth
+# (PRD #1075 criterion 3, slice #1081).
+# ---------------------------------------------------------------------------
+
+# Bind-forward window anchor: the walking-skeleton merge that landed the v3
+# trace emitter + pr-open/pr-merge wrappers (slice #1078). Only PRs merged
+# AFTER this commit's timestamp are expected to carry a recorded pr_merged
+# span — earlier merges predate the recording mechanism entirely and are
+# honestly grandfathered (bootstrap-mode, ADR-0004 D2: no retroactive sweep).
+_RECORD_VS_GH_ANCHOR_SHA = "0d8e6d0"
+
+# Documented sole in-window exception: PR #1089 IS the walking-skeleton PR
+# itself (the commit that first created tools/trace.py + tools/pipe/pr-open
+# + tools/pipe/pr-merge). Its gh-reported mergedAt lands a few seconds AFTER
+# its own commit's committer-date (verified against real data: anchor commit
+# committer-date 2026-08-02T02:10:59Z vs PR #1089 mergedAt 2026-08-02T02:11:00Z)
+# so a naive timestamp-only window would misclassify it as "post-window" and
+# falsely FAIL it — it structurally could not emit its own span (the wrapper
+# CLIs did not exist yet when #1089 merged via the prior raw-gh path). Any
+# OTHER post-window merge lacking a span is a real, named FAIL.
+_RECORD_VS_GH_WINDOW_EXCEPTIONS = {"1089"}
+
+
+def check_record_vs_gh() -> dict:
+    """RECORD-VS-GH: reconcile recorded pr_merged spans (trace-v3.jsonl) vs
+    gh's merged-PR ground truth on develop (PRD #1075 criterion 3 / slice #1081).
+
+    Ground truth: `gh pr list --base develop --state merged --json
+    number,mergedAt,mergeCommit`, routed through the existing
+    _health_gh_fetch/gh_cache seam (timeout-bounded; degrades honestly to
+    'unverifiable — gh unavailable' rather than fabricating PASS/FAIL).
+
+    Bind-forward window (ADR-0004 D2 grandfather): only PRs whose mergedAt is
+    strictly AFTER _RECORD_VS_GH_ANCHOR_SHA's commit timestamp (the
+    walking-skeleton merge, slice #1078) are expected to carry a recorded
+    pr_merged span; PR #1089 (the walking-skeleton PR itself) is the
+    documented sole in-window exception (see module constant above).
+
+    Identity matching: PR number is the primary key — spans carry attrs.pr
+    (a string); gh's `number` field is compared against it as a string, per
+    the slice's instruction ("match on PR number primarily — spans carry
+    it"). gh's mergeCommit.oid is fetched alongside but not required for
+    PASS/FAIL today.
+
+    Any post-window merged PR lacking a matching pr_merged span produces a
+    named FAIL row: "PR #<n> merged <ts> has no pr_merged span".
+
+    Returns dict with id='RECORD-VS-GH', result in {PASS, WARN, FAIL}.
+    """
+    import json as _json
+    from datetime import datetime
+
+    def _parse_ts(s: str):
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+    # --- Step 1: resolve the bind-forward window anchor timestamp ---
+    anchor_override = os.environ.get("_RECORD_VS_GH_ANCHOR_TS_OVERRIDE")
+    if anchor_override:
+        anchor_ts_str = anchor_override
+    else:
+        try:
+            r = subprocess.run(
+                ["git", "show", "-s", "--format=%cI", _RECORD_VS_GH_ANCHOR_SHA],
+                capture_output=True, text=True, timeout=10,
+                cwd=str(_HEALTH_REPO_ROOT),
+            )
+            anchor_ts_str = r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            anchor_ts_str = ""
+
+    if not anchor_ts_str:
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": (
+                "unverifiable — could not resolve walking-skeleton anchor "
+                f"commit {_RECORD_VS_GH_ANCHOR_SHA} timestamp"
+            ),
+        }
+    try:
+        anchor_dt = _parse_ts(anchor_ts_str)
+    except Exception as exc:
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": f"unverifiable — anchor timestamp unparsable: {exc}",
+        }
+
+    # --- Step 2: fetch merged PRs on develop, routed through gh_cache ---
+    rc, out = _health_gh_fetch(
+        ["pr", "list", "--base", "develop", "--state", "merged",
+         "--limit", "100", "--json", "number,mergedAt,mergeCommit"],
+        ttl=60.0, timeout=5.0,
+    )
+    if rc != 0 or not out.strip():
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": "unverifiable — gh unavailable (timeout or non-zero exit)",
+        }
+    try:
+        prs = _json.loads(out)
+    except Exception as exc:
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": f"unverifiable — gh unavailable (unparsable output: {exc})",
+        }
+    if not isinstance(prs, list):
+        return {
+            "id": "RECORD-VS-GH", "result": "WARN",
+            "detail": "unverifiable — gh unavailable (unexpected output shape)",
+        }
+
+    # --- Step 3: split into pre-window (grandfathered) vs post-window ---
+    post_window = []
+    grandfathered = 0
+    for pr in prs:
+        merged_at = pr.get("mergedAt") or ""
+        if not merged_at:
+            continue
+        try:
+            merged_dt = _parse_ts(merged_at)
+        except Exception:
+            continue
+        if merged_dt > anchor_dt:
+            post_window.append(pr)
+        else:
+            grandfathered += 1
+
+    # --- Step 4: read recorded pr_merged spans from the canonical trace log ---
+    try:
+        trace_mod = _load_trace_v3()
+        spans = trace_mod.read_spans() if trace_mod is not None else []
+    except Exception:
+        spans = []
+    recorded_prs = {
+        str(s.get("attrs", {}).get("pr"))
+        for s in spans
+        if s.get("kind") == "pr_merged" and s.get("attrs", {}).get("pr") is not None
+    }
+
+    # --- Step 5: reconcile post-window PRs against recorded spans ---
+    missing = []
+    exceptions_seen = []
+    for pr in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
+        num = str(pr.get("number"))
+        if num in _RECORD_VS_GH_WINDOW_EXCEPTIONS:
+            exceptions_seen.append(num)
+            continue
+        if num not in recorded_prs:
+            missing.append((num, pr.get("mergedAt", "")))
+
+    expected = len(post_window) - len(exceptions_seen)
+    covered = expected - len(missing)
+    exceptions_sorted = sorted(exceptions_seen, key=int)
+
+    if missing:
+        first_num, first_ts = missing[0]
+        detail = (
+            f"PR #{first_num} merged {first_ts} has no pr_merged span "
+            f"({covered}/{expected} post-window PRs covered since "
+            f"{_RECORD_VS_GH_ANCHOR_SHA} @ {anchor_ts_str}; "
+            f"missing={[n for n, _ in missing]}; grandfathered={grandfathered}; "
+            f"exceptions={exceptions_sorted})"
+        )
+        return {
+            "id": "RECORD-VS-GH", "result": "FAIL", "detail": detail,
+            "missing": [n for n, _ in missing], "covered": covered,
+            "expected": expected, "grandfathered": grandfathered,
+            "exceptions": exceptions_sorted,
+        }
+
+    detail = (
+        f"{covered}/{expected} post-window merged PRs covered (since "
+        f"{_RECORD_VS_GH_ANCHOR_SHA} @ {anchor_ts_str}) have recorded pr_merged "
+        f"spans; grandfathered={grandfathered} pre-window (ADR-0004 D2); "
+        f"exceptions={exceptions_sorted} (documented sole in-window)"
+    )
+    return {
+        "id": "RECORD-VS-GH", "result": "PASS", "detail": detail,
+        "missing": [], "covered": covered, "expected": expected,
+        "grandfathered": grandfathered, "exceptions": exceptions_sorted,
+    }
 
 
 def check_silent_drift() -> dict:
@@ -5468,6 +5682,7 @@ CHECK_REGISTRY: dict[str, callable] = {
     "MERGE-INTEGRITY": check_merge_integrity,
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
+    "RECORD-VS-GH":    check_record_vs_gh,
     "PROOF-PRESENCE":  check_proof_presence,
     "SILENT-DRIFT":    check_silent_drift,
     # Two-tier topology (ADR-0070 wave 5 — slice #843 full implementation)

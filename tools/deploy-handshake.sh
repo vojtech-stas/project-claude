@@ -63,8 +63,19 @@ START_DIR="${1:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 # Resolve ROOT: the git-common-dir parent, i.e. the checkout hooks actually
 # execute from (mirrors .claude/hooks/lib-root.sh + settings.json's own
 # resolution order).
+#
+# NOTE (MSYS_NO_PATHCONV trap, #1091): START_DIR may be MSYS-form (e.g.
+# "/f/project_claude", from bash's own `pwd`). Passing that string as a
+# `git -C <path>` ARGUMENT relies on Git Bash's MSYS runtime auto-converting
+# it to a real Windows path before spawning git.exe — a conversion that
+# MSYS_NO_PATHCONV=1 (this repo's own mandated env for every git invocation)
+# explicitly disables, so git.exe receives the literal "/f/..." and fails.
+# `cd` is a bash BUILTIN, not a spawned child process, so it is never subject
+# to that argv conversion step; it resolves MSYS-form and native-form paths
+# alike via bash's own internal path handling, then git runs with the
+# process's real (already-chdir'd) cwd -- no path argument involved at all.
 # ---------------------------------------------------------------------------
-COMMON=$(git -C "$START_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+COMMON=$(cd "$START_DIR" 2>/dev/null && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 if [ -z "$COMMON" ]; then
   echo "ERROR: deploy-handshake: '$START_DIR' is not inside a git repository" >&2
   exit 1

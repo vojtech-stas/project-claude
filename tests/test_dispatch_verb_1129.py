@@ -331,6 +331,103 @@ class TestRefusalActiveDispatchMutex(DispatchTestBase):
         lines = _read_jsonl(log_path)
         self.assertEqual(len(lines), 3)
 
+    def test_round_two_dispatch_reactivates_mutex_against_third(self):
+        """Regression for reviewer round-1 BLOCK on PR #1137: trace_id is
+        constant per slice ('slice-<n>'), so a naive set-difference over
+        trace_id (dispatched_trace_ids - ended_trace_ids) goes permanently
+        empty the moment ANY dispatch_end is ever recorded for that slice --
+        a round-2 dispatch reads as inactive and the mutex never re-arms.
+        The correct model is per-trace_id event ORDER: active iff the
+        chronologically LAST dispatch/dispatch_end event is a `dispatch`.
+
+        Seeds round 1 (dispatch -> dispatch_end), invokes dispatch for round
+        2 (must succeed -- last event is dispatch_end, not active), then
+        invokes dispatch AGAIN (the concurrent "third" attempt) which MUST
+        be refused because round 2's dispatch is now the last event.
+
+        FAILS before the fix: round 2 succeeds, but the third call ALSO
+        succeeds (set-difference is empty regardless of the round-2
+        dispatch, since the same trace_id already appears in both
+        dispatched_trace_ids and ended_trace_ids from round 1) -- the mutex
+        never re-arms.
+        """
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "v": 3, "ts": "2026-08-02T09:00:00Z", "trace_id": "slice-1129",
+                "span_id": "seed1", "kind": "dispatch",
+                "attrs": {"slice": "1129", "session_id": "round-one"},
+            }) + "\n")
+            f.write(json.dumps({
+                "v": 3, "ts": "2026-08-02T09:05:00Z", "trace_id": "slice-1129",
+                "span_id": "seed2", "kind": "dispatch_end",
+                "attrs": {"slice": "1129", "result": "SUCCESS"},
+            }) + "\n")
+        env_updates = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+            "FAKE_GH_ISSUE_JSON": _OPEN_PROVENANCE_ISSUE,
+        }
+
+        # Round 2: last event (seed2) is dispatch_end -> not active -> passes.
+        round_two = self._run(["1129"], env_updates)
+        self.assertEqual(round_two.returncode, 0, f"round2: stdout={round_two.stdout!r} stderr={round_two.stderr!r}")
+        self.assertEqual(len(_read_jsonl(log_path)), 3, "round 2 must append exactly one new dispatch span")
+
+        # Third (concurrent) attempt: last event is now round 2's dispatch
+        # span -> MUST be refused (mutex re-armed).
+        third = self._run(["1129"], env_updates)
+        self.assertNotEqual(
+            third.returncode, 0,
+            f"round 2's active dispatch must refuse a concurrent third dispatch; "
+            f"stdout={third.stdout!r} stderr={third.stderr!r}",
+        )
+        self.assertEqual(
+            len(_read_jsonl(log_path)), 3,
+            "the refused third attempt must append NO new span",
+        )
+
+    def test_stray_dispatch_end_then_fresh_dispatch_still_guards_duplicate(self):
+        """A stray `dispatch_end` with no prior `dispatch` for this slice must
+        not permanently disarm the mutex. After a fresh dispatch is recorded
+        following the stray end, a concurrent duplicate dispatch attempt
+        MUST still be refused (last event is the fresh dispatch).
+
+        FAILS before the fix: the stray end + the fresh dispatch share the
+        same trace_id, so dispatched_trace_ids={trace_id} (from the fresh
+        dispatch) and ended_trace_ids={trace_id} (from the stray end) --
+        set difference is empty, so the duplicate attempt wrongly succeeds.
+        """
+        fake_gh_dir = _write_fake_gh(self.tmp)
+        log_path = os.path.join(self.tmp, "trace-v3.jsonl")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "v": 3, "ts": "2026-08-02T09:00:00Z", "trace_id": "slice-1129",
+                "span_id": "stray_end", "kind": "dispatch_end",
+                "attrs": {"slice": "1129", "result": "SUCCESS"},
+            }) + "\n")
+        env_updates = {
+            "PATH": fake_gh_dir + os.pathsep + os.environ.get("PATH", ""),
+            "TRACE_LOG_OVERRIDE": log_path,
+            "FAKE_GH_ISSUE_JSON": _OPEN_PROVENANCE_ISSUE,
+        }
+
+        # Fresh dispatch: last event is the stray end -> not active -> passes.
+        fresh = self._run(["1129"], env_updates)
+        self.assertEqual(fresh.returncode, 0, f"fresh: stdout={fresh.stdout!r} stderr={fresh.stderr!r}")
+        self.assertEqual(len(_read_jsonl(log_path)), 2)
+
+        # Duplicate/concurrent attempt: last event is now the fresh dispatch
+        # -> MUST be refused.
+        duplicate = self._run(["1129"], env_updates)
+        self.assertNotEqual(
+            duplicate.returncode, 0,
+            f"a fresh dispatch after a stray dispatch_end must still guard against "
+            f"a concurrent duplicate; stdout={duplicate.stdout!r} stderr={duplicate.stderr!r}",
+        )
+        self.assertEqual(len(_read_jsonl(log_path)), 2, "the refused duplicate must append NO new span")
+
 
 # ---------------------------------------------------------------------------
 # (e) 1e: success emits dispatch span with slice/prd/session_id attrs
@@ -434,6 +531,43 @@ class TestRunningNowQuery(unittest.TestCase):
 
         running_after = ts_mod.running_dispatches(log_path=self.log_path, db_path_=self.db_path)
         self.assertEqual(running_after, [], f"expected zero running dispatches after termination, got {running_after}")
+
+    def test_last_event_ordering_round_two_dispatch_returned_exactly_once(self):
+        """Regression for reviewer round-1 BLOCK on PR #1137: trace_id is
+        constant per slice, so a naive "trace_id has a dispatch_end
+        somewhere" check makes a slice with round 1 (dispatch->end) PLUS an
+        unterminated round-2 dispatch look either fully absent (if excluding
+        any trace_id that ever had an end) or double-counted (if not) --
+        neither is right. The correct model is per-trace_id event ORDER:
+        the query must return EXACTLY the round-2 span, once, because it is
+        the chronologically LAST dispatch/dispatch_end event for that
+        trace_id.
+
+        FAILS before the fix: the old set-difference (dispatched_trace_ids
+        - ended_trace_ids) is empty for this trace_id (it's in both sets),
+        so running_dispatches() returns [] for slice X entirely -- blind to
+        the genuinely active round-2 dispatch.
+        """
+        ts_mod = self._load_tracestore_module()
+        self._write([
+            {"v": 3, "ts": "2026-08-02T09:00:00Z", "trace_id": "slice-1132",
+             "span_id": "r1d", "kind": "dispatch",
+             "attrs": {"slice": "1132", "prd": "1127", "session_id": "round-one"}},
+            {"v": 3, "ts": "2026-08-02T09:01:00Z", "trace_id": "slice-1132",
+             "span_id": "r1end", "kind": "dispatch_end",
+             "attrs": {"slice": "1132", "result": "SUCCESS"}},
+            {"v": 3, "ts": "2026-08-02T09:02:00Z", "trace_id": "slice-1132",
+             "span_id": "r2d", "kind": "dispatch",
+             "attrs": {"slice": "1132", "prd": "1127", "session_id": "round-two"}},
+        ])
+
+        running = ts_mod.running_dispatches(log_path=self.log_path, db_path_=self.db_path)
+        matching = [r for r in running if r["attrs"].get("slice") == "1132"]
+        self.assertEqual(
+            len(matching), 1,
+            f"expected exactly the round-2 dispatch for slice 1132, got {matching}",
+        )
+        self.assertEqual(matching[0]["span_id"], "r2d")
 
     def test_cli_running_subcommand_present(self):
         result = subprocess.run(

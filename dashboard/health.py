@@ -5721,13 +5721,15 @@ _STREAM_LIVENESS_DARK_MINUTES = 60  # always-on window (unchanged; mirrors
 #     without it beaconing: the real hooks-go-dark outage class stays FAIL.
 #   - "on-demand": an explicit allow-list of trigger-driven streams
 #     (_STREAM_LIVENESS_ON_DEMAND_STREAMS) that only fire on a specific,
-#     inherently-sparse user action (e.g. grill_qa on AskUserQuestion).
-#     Silence alone is informational ("idle (on-demand)"), never a FAIL —
-#     the check has no independent evidence a trigger occurred without its
-#     beacon, so it does not fabricate a FAIL it cannot prove.
+#     inherently-sparse user action — grill_qa on AskUserQuestion, skill_invoke
+#     on a Skill-tool invocation; both named explicitly in issue #1107's
+#     proposed design ("on-demand (grill_qa, skill_invoke)"). Silence alone is
+#     informational ("idle (on-demand)"), never a FAIL — the check has no
+#     independent evidence a trigger occurred without its beacon, so it does
+#     not fabricate a FAIL it cannot prove.
 # "always-on" (the default; unchanged behavior) keeps the uniform 60m window.
 _STREAM_LIVENESS_SESSION_SKEW_MINUTES = 10
-_STREAM_LIVENESS_ON_DEMAND_STREAMS = frozenset({"grill_qa"})
+_STREAM_LIVENESS_ON_DEMAND_STREAMS = frozenset({"grill_qa", "skill_invoke"})
 
 _STREAM_CADENCE_SESSION_SCOPED = "session-scoped"
 _STREAM_CADENCE_ON_DEMAND = "on-demand"

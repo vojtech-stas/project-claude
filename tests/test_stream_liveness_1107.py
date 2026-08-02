@@ -76,6 +76,11 @@ _SESSION_SCOPED_SETTINGS = {
     "PreToolUse": [
         {"matcher": "Bash", "hooks": [{"type": "command",
          "command": 'bash "$X/.claude/hooks/pre-tool-bash.sh"'}]},
+        # Skill routed through log-tool-event.sh's AUTO-MODE -> derives the
+        # "skill_invoke" on-demand stream (mirrors real settings.json's
+        # PreToolUse "Agent|Skill" matcher).
+        {"matcher": "Skill", "hooks": [{"type": "command",
+         "command": 'bash "$X/.claude/hooks/log-tool-event.sh" auto'}]},
         # AskUserQuestion routed through log-tool-event.sh's AUTO-MODE ->
         # derives the "grill_qa" on-demand stream (mirrors real settings.json).
     ],
@@ -207,9 +212,10 @@ class TestFixtureB_NewerSessionWithoutBeacon(unittest.TestCase):
 
 
 class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
-    """(c) An on-demand stream (grill_qa) silent for days is informational
-    idle, never a FAIL — the check has no independent proof a trigger
-    happened without its beacon."""
+    """(c) An on-demand stream (grill_qa, skill_invoke — both named in
+    #1107's proposed design) silent for days, or never fired, is
+    informational idle, never a FAIL — the check has no independent proof a
+    trigger happened without its beacon."""
 
     def test_grill_qa_silent_for_days_is_idle_not_fail(self):
         now = time.time()
@@ -270,6 +276,66 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
         self.assertNotIn("grill_qa", fail_names, msg=result)
         idle_names = " ".join(result.get("idle_streams", []))
         self.assertIn("grill_qa", idle_names, msg=result)
+
+    def test_skill_invoke_silent_for_days_is_idle_not_fail(self):
+        """Sibling on-demand stream skill_invoke (Skill-tool invocations) —
+        same idle-not-FAIL treatment as grill_qa."""
+        now = time.time()
+        now_iso = _iso(now)
+        days_seconds = 6 * 24 * 60 * 60  # 6 days
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            result = _run_check(
+                tmp_dir,
+                _SESSION_SCOPED_SETTINGS,
+                fires_lines=[
+                    {"hook": "session-start", "ts": _iso(now - 60)},
+                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
+                    {"hook": "skill_invoke", "ts": _iso(now - days_seconds)},
+                ],
+                trace_lines=[
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                ],
+                now_override=now_iso,
+            )
+        self.assertEqual(
+            "PASS", result["result"],
+            msg=f"a stale on-demand stream must not sink the overall verdict: {result}",
+        )
+        fail_names = " ".join(result.get("fail_streams", []))
+        self.assertNotIn("skill_invoke", fail_names, msg=result)
+        idle_names = " ".join(result.get("idle_streams", []))
+        self.assertIn(
+            "skill_invoke", idle_names,
+            msg=f"skill_invoke's silence must be reported as idle (on-demand): {result}",
+        )
+        self.assertIn("idle (on-demand)", result["detail"], msg=result)
+
+    def test_skill_invoke_never_fired_is_idle_not_fail(self):
+        now = time.time()
+        now_iso = _iso(now)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            result = _run_check(
+                tmp_dir,
+                _SESSION_SCOPED_SETTINGS,
+                fires_lines=[
+                    {"hook": "session-start", "ts": _iso(now - 60)},
+                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
+                    # skill_invoke: no entry at all -- never fired.
+                ],
+                trace_lines=[
+                    {"v": 3, "ts": _iso(now - 30), "kind": "pr_opened"},
+                ],
+                now_override=now_iso,
+            )
+        self.assertEqual("PASS", result["result"], msg=result)
+        fail_names = " ".join(result.get("fail_streams", []))
+        self.assertNotIn("skill_invoke", fail_names, msg=result)
+        idle_names = " ".join(result.get("idle_streams", []))
+        self.assertIn("skill_invoke", idle_names, msg=result)
 
 
 if __name__ == "__main__":

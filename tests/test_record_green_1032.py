@@ -5,13 +5,18 @@ Regression tests for slice #1032 — tools/record-green.sh
 verify-then-record develop_green checkpoint.
 
 Core safety property: record develop_green ONLY after verifying develop is
-genuinely green (GitHub ci=success on develop HEAD AND pytest green).
-NEVER write a false green.
+genuinely green. NEVER write a false green.
+
+NOTE (#1161 amendment): a recorded GitHub ci=pass for the exact develop-HEAD
+sha is now trusted outright (tools/ci-checks.sh — what GitHub Actions runs as
+the `ci` check — already runs pytest as a required sub-check); local pytest
+is only invoked as a fallback when no recorded ci run exists for the sha.
 
 Acceptance criteria:
-  cr.1  both stubs green → event appended to temp log + exit 0
+  cr.1  both stubs green (ci=pass path) → event appended to temp log + exit 0
   cr.2  ci stub = failure → NO event + exit != 0
-  cr.2b pytest stub = fail → NO event + exit != 0
+  cr.2b SUPERSEDED by #1161 — see tests/test_record_green_ci_trust_1161.py
+        (ci=pass now skips the local pytest sub-call entirely)
   cr.3  run with cwd in a subdir/worktree → resolves git-common-dir-root log
 
 Script is driven as a subprocess. gh + pytest layers are stubbed via env vars:
@@ -258,51 +263,16 @@ class TestCIFail(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cr.2b — pytest stub = fail → NO event + exit != 0
+# cr.2b — SUPERSEDED by #1161 (ci-trust fast path)
+#
+# Pre-#1161: RECORD_GREEN_GH_CMD="echo success" (CI_STATUS=pass) + pytest stub
+# fail → refuse (no write). Post-#1161: a recorded GitHub ci=pass for the
+# exact sha is trusted outright — the local pytest sub-call is SKIPPED
+# entirely on this path, so the stub's pass/fail outcome no longer has any
+# bearing when CI_STATUS resolves to "pass". The full ci=pass / skip-pytest /
+# still-records-green contract (plus the 'pytest genuinely never invoked'
+# spy assertion) now lives in tests/test_record_green_ci_trust_1161.py.
 # ---------------------------------------------------------------------------
-
-class TestPytestFail(unittest.TestCase):
-    """cr.2b: when pytest stub fails, no event is written and exit != 0."""
-
-    def test_pytest_fail_exits_nonzero(self):
-        """Script must exit non-zero when pytest stub fails."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_log = Path(tmpdir) / "workflow-events.jsonl"
-            result = _run_script(
-                extra_env={
-                    "RECORD_GREEN_GH_CMD": "echo success",
-                    "RECORD_GREEN_PYTEST_CMD": "false",
-                },
-                tmp_log=tmp_log,
-            )
-            self.assertNotEqual(
-                result.returncode, 0,
-                f"Expected non-zero exit when pytest stub=fail; got 0. "
-                f"stdout: {result.stdout!r}  stderr: {result.stderr!r}",
-            )
-
-    def test_pytest_fail_no_event_written(self):
-        """No develop_green event must be written when pytest fails."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_log = Path(tmpdir) / "workflow-events.jsonl"
-            _run_script(
-                extra_env={
-                    "RECORD_GREEN_GH_CMD": "echo success",
-                    "RECORD_GREEN_PYTEST_CMD": "false",
-                },
-                tmp_log=tmp_log,
-            )
-            if tmp_log.exists():
-                content = tmp_log.read_text(encoding="utf-8")
-                develop_green_lines = [
-                    l for l in content.splitlines()
-                    if '"develop_green"' in l
-                ]
-                self.assertEqual(
-                    len(develop_green_lines), 0,
-                    f"No develop_green event must be written on pytest failure; "
-                    f"found {len(develop_green_lines)} line(s): {develop_green_lines}",
-                )
 
 
 # ---------------------------------------------------------------------------

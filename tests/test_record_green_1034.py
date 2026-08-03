@@ -24,8 +24,12 @@ after the fix.
 Acceptance criteria verified by these tests:
   cr.a  RECORD_GREEN_CI_STATUS=pass + pytest green → records develop_green + exit 0
         ** FAILS on pre-fix code, PASSES on fixed code **
-  cr.b  RECORD_GREEN_CI_STATUS=pending/unavailable/fail → NO write + exit != 0
-  cr.c  RECORD_GREEN_CI_STATUS=pass + pytest stub fail → NO write + exit != 0
+  cr.b  RECORD_GREEN_CI_STATUS=pending/fail/'' → NO write + exit != 0
+        (NOTE #1161 amendment: 'unavailable' moved OUT of this refuse set —
+        it is now a "no recorded ci run for this sha" fallback-to-local-pytest
+        case, covered by tests/test_record_green_ci_trust_1161.py)
+  cr.c  SUPERSEDED by #1161 — see tests/test_record_green_ci_trust_1161.py
+        (ci=pass now skips the local pytest sub-call entirely)
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_record_green_1034.py -v
@@ -202,7 +206,16 @@ class TestSquashHeadGreenPath(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestSquashHeadNonPassRefuses(unittest.TestCase):
-    """cr.b: non-pass CI statuses must refuse to record (no-false-green)."""
+    """cr.b: non-pass, non-fallback-eligible CI statuses must refuse (no-false-green).
+
+    NOTE (#1161 amendment): 'unavailable' is NO LONGER a refuse case here — it
+    now means "no recorded ci run exists for this sha" and falls back to a
+    real local pytest verification (fresh-clone honesty preserved). That
+    behavior is covered by tests/test_record_green_ci_trust_1161.py. Only
+    'fail' (an explicit recorded failure), 'pending' (an explicit incomplete
+    run), and '' (malformed/unset) remain hard-refuse cases here — a pytest
+    fallback must never rescue an explicit fail/incomplete recorded run.
+    """
 
     def _assert_refused(self, ci_status: str) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -225,10 +238,6 @@ class TestSquashHeadNonPassRefuses(unittest.TestCase):
         """RECORD_GREEN_CI_STATUS=pending must refuse."""
         self._assert_refused("pending")
 
-    def test_ci_status_unavailable_refuses(self):
-        """RECORD_GREEN_CI_STATUS=unavailable must refuse."""
-        self._assert_refused("unavailable")
-
     def test_ci_status_fail_refuses(self):
         """RECORD_GREEN_CI_STATUS=fail must refuse."""
         self._assert_refused("fail")
@@ -239,41 +248,16 @@ class TestSquashHeadNonPassRefuses(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# cr.c — RECORD_GREEN_CI_STATUS=pass + pytest fail → refuse (no write)
+# cr.c — SUPERSEDED by #1161 (ci-trust fast path)
+#
+# Pre-#1161: RECORD_GREEN_CI_STATUS=pass + pytest fail → refuse (no write).
+# Post-#1161: a recorded GitHub ci=pass for the exact sha is trusted outright
+# — the local pytest sub-call is SKIPPED entirely on this path, so its
+# stub's pass/fail outcome no longer has any bearing on the ci=pass path.
+# The full ci=pass / skip-pytest / still-records-green contract (plus the
+# 'pytest genuinely never invoked' spy assertion) now lives in
+# tests/test_record_green_ci_trust_1161.py.
 # ---------------------------------------------------------------------------
-
-class TestSquashHeadPytestFail(unittest.TestCase):
-    """cr.c: ci=pass but pytest fails → must still refuse (no-false-green)."""
-
-    def test_ci_pass_pytest_fail_exits_nonzero(self):
-        """RECORD_GREEN_CI_STATUS=pass + pytest stub fail must exit != 0."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_log = Path(tmpdir) / "workflow-events.jsonl"
-            result = _run_script(
-                extra_env={
-                    "RECORD_GREEN_CI_STATUS": "pass",
-                    "RECORD_GREEN_PYTEST_CMD": "false",
-                },
-                tmp_log=tmp_log,
-            )
-            self.assertNotEqual(
-                result.returncode, 0,
-                f"Must exit non-zero when pytest fails; got 0. "
-                f"stdout: {result.stdout!r}  stderr: {result.stderr!r}",
-            )
-
-    def test_ci_pass_pytest_fail_no_event_written(self):
-        """RECORD_GREEN_CI_STATUS=pass + pytest stub fail must not write event."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_log = Path(tmpdir) / "workflow-events.jsonl"
-            _run_script(
-                extra_env={
-                    "RECORD_GREEN_CI_STATUS": "pass",
-                    "RECORD_GREEN_PYTEST_CMD": "false",
-                },
-                tmp_log=tmp_log,
-            )
-            _assert_no_event_written(tmp_log)
 
 
 if __name__ == "__main__":

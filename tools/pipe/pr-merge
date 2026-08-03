@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 tools/pipe/pr-merge — sanctioned merge protocol wrapper + pr_merged v3 span.
 
 Usage:

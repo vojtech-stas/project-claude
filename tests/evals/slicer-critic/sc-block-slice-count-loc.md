@@ -30,7 +30,7 @@
 
 **Covers:** PRD success criteria 1, 2
 
-**LoC estimate:** R-LOC ~650
+**LoC estimate:** R-LOC ~1300
 
 **Out-of-scope:** Nothing deferred.
 
@@ -42,8 +42,9 @@
 
 ## Analysis notes
 
-The single slice claims R-LOC ~650, which is more than double the 300 LoC cap
-defined in rule I4 / R-LOC. A 650-LoC slice is a clear SC-SLICE-COUNT-LOC violation.
+The single slice claims R-LOC ~1300, which is more than double the 600 LoC cap
+defined in rule I4 / R-LOC (raised from 300 per ADR-0077 D1). A 1300-LoC slice is a
+clear SC-SLICE-COUNT-LOC violation.
 The slicer should have split this into at least 3 slices: (1) /api/analytics endpoint
 + data computations, (2) basic chart rendering (1-2 charts as walking skeleton),
 (3) remaining charts + polish. The "Nothing deferred" out-of-scope is also a red flag

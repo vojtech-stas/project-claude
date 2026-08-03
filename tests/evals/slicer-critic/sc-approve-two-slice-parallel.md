@@ -60,5 +60,5 @@
 
 HOLDOUT case. Two independent parallel slices — neither depends on the other. Both
 can land in either order. Each covers exactly one PRD criterion and has all required
-slice-body fields. LoC estimates are well under the 300 cap. No dep cycle. Should
-APPROVE for valid parallel decomposition.
+slice-body fields. LoC estimates are well under the 600 cap (raised from 300 per
+ADR-0077 D1). No dep cycle. Should APPROVE for valid parallel decomposition.

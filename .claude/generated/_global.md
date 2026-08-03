@@ -96,6 +96,10 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 - **PIP-018:** Each verb's landing PR deletes the SKILL.md prose block it mechanizes in the same PR — reviewer-checkable via a named grep count=0 while the verb call site remains (ADR-0076 D5).
 - **PIP-019:** Sequencing between verbs stays LLM judgment this phase; a sequencing-as-code executor is commissioned only if the recorded evidence trigger fires (nonzero RECORD-VS-GH emission-gap rate after 2+ PRDs, or one new bypass incident) (ADR-0076 D6).
 
+#### Source: ADR-0077 (`decisions/0077-ceremony-overhead-reduction.md`)
+- **PIP-020:** The R-LOC cap rises from 300 to 600 LoC of runtime-artifact diff (reviewer.md remains the sole canonical definition site); the slicer targets 3-5 slices per PRD for equivalent scope, down from the ~6-9 a 300-LoC cap implied (ADR-0077 D1).
+- **PIP-021:** The reviewer dispatches immediately at PR-open, concurrent with the PR's `ci` run, instead of waiting for a terminal CI state; before any merge it polls `gh pr checks` itself and, on a CHECK-3 format-class failure, flips its own verdict to BLOCK with the same corrective message as before, reusing its own round-cap rather than a separate orchestrator-tracked counter (ADR-0077 D2).
+
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 

@@ -218,7 +218,7 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 
 ### R-LOC — slice PR exceeds runtime-artifact LoC cap
 
-**Mechanic:** BLOCK when a slice PR's diff exceeds **300 LoC of runtime-artifact code**. Count ONLY runtime-artifact paths; ignore non-runtime paths entirely.
+**Mechanic:** BLOCK when a slice PR's diff exceeds **600 LoC of runtime-artifact code** (raised from 300 per [ADR-0077](../../decisions/0077-ceremony-overhead-reduction.md) D1, operator-directed 2026-08-03; full review rigor retained — only the cap number moved). Count ONLY runtime-artifact paths; ignore non-runtime paths entirely.
 
 **Runtime artifact** (counted toward the cap):
 - `.claude/agents/*.md` — subagent prompts loaded at Agent-tool invocation time
@@ -233,9 +233,9 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 gh pr view <PR> --json files --jq '.files[] | select(.path | startswith(".claude/agents/") or startswith(".claude/skills/") or startswith(".claude/hooks/") or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
 ```
 
-If sum > 300 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 300. Split the slice or move non-runtime content out of .claude/`.
+If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 600. Split the slice or move non-runtime content out of .claude/`.
 
-**Rationale:** Slice reviewability degrades non-linearly past ~300 LoC of runtime-artifact code — R-CLOSES becomes nominal and R-YAGNI misses drift hidden in volume. Docs and ADR additions are uncapped because they are expansionary by design; counting them would force artificial splitting with no reviewability gain. Exemptions: trivial-lane PRs labeled `trivial`; PRD-tier PRs labeled `prd`.
+**Rationale:** Slice reviewability degrades non-linearly past ~600 LoC of runtime-artifact code — R-CLOSES becomes nominal and R-YAGNI misses drift hidden in volume. Docs and ADR additions are uncapped because they are expansionary by design; counting them would force artificial splitting with no reviewability gain. Exemptions: trivial-lane PRs labeled `trivial`; PRD-tier PRs labeled `prd`.
 
 ### R-CLOSES — PR body must close a valid slice issue
 
@@ -384,6 +384,31 @@ FIX_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --
 ## Recommend-only criteria
 
 Subjective items (style, refactoring, doc-improvement, future architectural suggestions, performance non-critical, spelling in non-user-facing text) surface as Recommendations — do NOT block. Meaningful non-blocking follow-ups MUST be captured as `captured`-labeled GitHub issues per ADR-0008 D8 + CLAUDE.md rule #11, with inline `/promote-to-backlog <N>` invocation per ADR-0008 D3. **Destructive shared-git tooling:** for a slice whose deliverable operates destructively on shared git state (worktree/branch removal, ref rewriting), verify the implementer used a synthetic-fixture test (not a live-tree self-test); a live self-test of such tooling is a finding — it can silently damage the orchestrator's session worktree or sibling trees (PR #543/#545 incident).
+
+---
+
+## Pre-merge CI-terminal gate (ADR-0077 D2)
+
+You are now dispatched immediately at PR-open, **concurrent** with the PR's `ci` GitHub Actions run — the rubric above is independent of CI status and applies regardless of whether `ci` has finished (this supersedes the former `ship/SKILL.md` pre-review gate that waited for a terminal `ci` state before ever dispatching you). **Only the merge action needs `ci` to be green.**
+
+Before posting your comment, if your rubric-derived verdict above is tentatively `APPROVE`, run this gate:
+
+```bash
+CI_BUCKET=$(gh pr checks <pr-number> --json name,bucket -q '.[] | select(.name=="ci") | .bucket')
+```
+
+- **`CI_BUCKET` is empty or `"pending"`:** poll with backoff (5s/15s/30s, mirroring the implementer's own auto-retry cadence) until terminal. Never merge against a still-running `ci` run.
+- **`CI_BUCKET == "fail"`:** determine whether CHECK 3 (commit-subject format) is the failing check via the testable `tools/ci-failure-kind.sh` helper (NOT a raw `grep "CHECK 3"` — `ci-checks.sh` prints the CHECK 3 section header unconditionally on every run, so a bare substring grep matches on ANY failure; see the helper's header comment and `tests/test_ci_failure_kind_1084.py`):
+  ```bash
+  CI_LINK=$(gh pr checks <pr-number> --json name,link -q '.[] | select(.name=="ci") | .link')
+  RUN_ID=$(echo "$CI_LINK" | grep -oE 'runs/[0-9]+' | grep -oE '[0-9]+')
+  FAILURE_KIND=$(bash tools/ci-failure-kind.sh "$RUN_ID")   # prints "format" or "other"
+  ```
+  - **`format`:** abort cheap — do NOT merge. Flip your final verdict to `VERDICT: BLOCK` with `REASON: CI CHECK 3 failed: commit subject '<offending subject>' violates R-CONV-COMMITS (<the specific violation quoted from the log — e.g. 'starts uppercase', 'exceeds 72 chars', 'not Conventional Commits shape'>). Amend that commit's subject to a corrected lowercase, ≤72-char, Conventional-Commits-shaped subject and force-push the same branch — do not touch any other commit or file.` Post THIS as your comment + trailer (not the tentative APPROVE). This consumes one of your own `ROUND`s — the standard round-cap (CRI-001) and the orchestrator's 5d forward-block handle the implementer round-trip exactly as before; no separate orchestrator-tracked counter is needed.
+  - **`other`:** a substantive CI failure, not the format class — this does NOT itself flip your rubric verdict; proceed to Output format / Post-verdict action normally. `pr-merge`'s own bounded retry plus `develop`'s R4 required-status-check floor (ADR-0076 D3) remain the safety net — a red-CI PR never merges regardless of your verdict.
+- **`CI_BUCKET == "pass"`, or `gh` unavailable/unauthenticated (soft-degrade):** proceed normally.
+
+If your rubric-derived verdict was already `BLOCK` on substance, skip this gate entirely — CI status is irrelevant to a verdict that already isn't merging.
 
 ---
 

@@ -130,12 +130,12 @@ SCOPE_PATHS: dict[str, str] = {
 # Rule-ID conservation baseline (PRD #937 slice #939 — §2 criterion 7).
 # This is the TOTAL number of rule_ids across all active ADR scopes as of the
 # scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
-# PIP-* ids (slice #1129).  --check verifies that the live count equals this
-# value; a mismatch means a rule was silently added or removed without
-# updating this constant.
+# PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162).
+# --check verifies that the live count equals this value; a mismatch means a
+# rule was silently added or removed without updating this constant.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(19) + REG(3) + SLI(5) + VER(8) = 80
-RULE_IDS_BASELINE: int = 80
+#            ISO(6) + OUT(5) + PIP(21) + REG(3) + SLI(5) + VER(8) = 82
+RULE_IDS_BASELINE: int = 82
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -403,6 +403,21 @@ _RULE_STATEMENTS: dict[str, str] = {
         "code executor is commissioned only if the recorded evidence trigger "
         "fires (nonzero RECORD-VS-GH emission-gap rate after 2+ PRDs, or one new "
         "bypass incident) (ADR-0076 D6)."
+    ),
+    # ADR-0077: ceremony-overhead reduction (operator-directed)
+    "PIP-020": (
+        "The R-LOC cap rises from 300 to 600 LoC of runtime-artifact diff "
+        "(reviewer.md remains the sole canonical definition site); the slicer "
+        "targets 3-5 slices per PRD for equivalent scope, down from the ~6-9 a "
+        "300-LoC cap implied (ADR-0077 D1)."
+    ),
+    "PIP-021": (
+        "The reviewer dispatches immediately at PR-open, concurrent with the "
+        "PR's `ci` run, instead of waiting for a terminal CI state; before any "
+        "merge it polls `gh pr checks` itself and, on a CHECK-3 format-class "
+        "failure, flips its own verdict to BLOCK with the same corrective "
+        "message as before, reusing its own round-cap rather than a separate "
+        "orchestrator-tracked counter (ADR-0077 D2)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

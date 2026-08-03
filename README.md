@@ -92,7 +92,7 @@ That's the full loop. Two human commands (`/grill-me`, `/qa-plan`), one orchestr
 One-line definitions of the load-bearing terms. For the full canonical glossary (with authority citations), see [CLAUDE.md `## Glossary`](CLAUDE.md#glossary).
 
 - **PRD** — feature-sized GitHub issue (label `prd`); top of the PRD → Slice → PR hierarchy.
-- **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤300 LoC diff.
+- **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤600 LoC diff.
 - **skill** — user-invocable command at `.claude/skills/<name>/SKILL.md` (e.g., `/ship`).
 - **subagent** — specialist at `.claude/agents/<name>.md` with isolated context + restricted tools.
 - **critic** — adversarial subagent judging a stage's output with APPROVE/BLOCK (≤3 rounds).
@@ -376,7 +376,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 74 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 75 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -396,7 +396,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 74 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 75 ADR(s).
 
 ## License
 

@@ -91,7 +91,7 @@ That's the full loop. Two human commands (`/grill-me`, `/qa-plan`), one orchestr
 One-line definitions of the load-bearing terms. For the full canonical glossary (with authority citations), see [CLAUDE.md `## Glossary`](CLAUDE.md#glossary).
 
 - **PRD** — feature-sized GitHub issue (label `prd`); top of the PRD → Slice → PR hierarchy.
-- **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤300 LoC diff.
+- **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤600 LoC diff.
 - **skill** — user-invocable command at `.claude/skills/<name>/SKILL.md` (e.g., `/ship`).
 - **subagent** — specialist at `.claude/agents/<name>.md` with isolated context + restricted tools.
 - **critic** — adversarial subagent judging a stage's output with APPROVE/BLOCK (≤3 rounds).

@@ -45,12 +45,12 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 - **Negotiable** — the slice body leaves room for implementer judgment; not over-prescribed.
 - **Valuable end-to-end** — the slice ships something that exercises a real path, not pure scaffolding.
 - **Estimable** — the slice has a defensible LoC estimate; if the implementer can't predict size within ~50%, it isn't estimable.
-- **Small** — fits under R-LOC (≤300 runtime-artifact LoC); estimates ≥250 LoC typically warrant a SPIDR split WARN.
+- **Small** — fits under R-LOC (≤600 runtime-artifact LoC, raised from 300 per ADR-0077 D1); estimates ≥500 LoC typically warrant a SPIDR split WARN.
 - **Testable** — acceptance criteria are mechanically verifiable; "looks good" is not testable.
 
-**Check:** For each slice: (1) Independent — does any other slice's `Depends on:` name this slice without genuine prerequisite? (2) Negotiable — does the slice body over-specify the implementation? (3) Valuable — does the slice exercise a real path end-to-end, or only build infrastructure for future slices? (4) Estimable — is the LoC estimate present and defensible? (5) Small — is the estimate ≤300 runtime-artifact LoC? (6) Testable — are acceptance criteria mechanically checkable?
+**Check:** For each slice: (1) Independent — does any other slice's `Depends on:` name this slice without genuine prerequisite? (2) Negotiable — does the slice body over-specify the implementation? (3) Valuable — does the slice exercise a real path end-to-end, or only build infrastructure for future slices? (4) Estimable — is the LoC estimate present and defensible? (5) Small — is the estimate ≤600 runtime-artifact LoC? (6) Testable — are acceptance criteria mechanically checkable?
 
-**Examples:** Slice ships an empty schema file → V FAIL; three slices in a dependency cycle → I FAIL; slice estimate is "~500 LoC" → S FAIL AND E borderline.
+**Examples:** Slice ships an empty schema file → V FAIL; three slices in a dependency cycle → I FAIL; slice estimate is "~1000 LoC" → S FAIL AND E borderline.
 
 **Rationale:** Slice quality is the upstream determinant of pipeline success. Non-Independent slices create rebase conflicts; non-Valuable slices ship scaffolding future slices must rework; non-Testable slices mean the reviewer cannot gate mechanically. Catching these at slicing time costs one revision loop; catching them at reviewer time costs a closed PR and a respin. Grouping all six letters on one criterion forces holistic evaluation rather than letter-by-letter scoring.
 
@@ -112,27 +112,27 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 ### SC-SLICE-COUNT-LOC — Slice count and per-slice LoC fit the PRD §4 appetite
 
-**Mechanic:** Two-part budget check: (a) total slice count fits within the PRD §4 appetite range; (b) every per-slice LoC estimate is ≤ 300 runtime-artifact LoC. Any violation → FAIL. Additionally, check for the dual-cap math trap: a slice can have a `wc -l` target AND an R-LOC cap; both must be jointly satisfiable.
+**Mechanic:** Two-part budget check: (a) total slice count fits within the PRD §4 appetite range; (b) every per-slice LoC estimate is ≤ 600 runtime-artifact LoC (raised from 300 per [ADR-0077](../../decisions/0077-ceremony-overhead-reduction.md) D1). Any violation → FAIL. Additionally, check for the dual-cap math trap: a slice can have a `wc -l` target AND an R-LOC cap; both must be jointly satisfiable.
 
-**Dual-cap math trap (from PRD #253 T2 retrospective, captured #268):** A thinning slice that needs 270 deletions to hit a wc-target AND ships 200 lines of replacement content totals 470 LoC and breaches R-LOC. Check: (deletions required to hit wc-target) + (new lines added as replacement) ≤ 300.
+**Dual-cap math trap (from PRD #253 T2 retrospective, captured #268):** A thinning slice that needs 540 deletions to hit a wc-target AND ships 400 lines of replacement content totals 940 LoC and breaches R-LOC. Check: (deletions required to hit wc-target) + (new lines added as replacement) ≤ 600.
 
-**Check:** (1) Count slices; verify in PRD §4 range; (2) for each slice, read the LoC estimate, verify ≤ 300 runtime-artifact LoC; (3) for thinning slices, compute (lines deleted) + (lines added as replacement) and verify ≤ 300; (4) cross-check whether the estimate is credible given the slice's workload.
+**Check:** (1) Count slices; verify in PRD §4 range; (2) for each slice, read the LoC estimate, verify ≤ 600 runtime-artifact LoC; (3) for thinning slices, compute (lines deleted) + (lines added as replacement) and verify ≤ 600; (4) cross-check whether the estimate is credible given the slice's workload.
 
-**Examples:** PRD §4 says "4-6 slices"; decomposition has 7 slices → FAIL (over appetite). Slice estimates: 80, 120, 290, 50 → PASS each. Slice thins 420 → 150 lines (270 deletions) AND adds 200 lines of synthesis → FAIL (470 absolute LoC; split needed).
+**Examples:** PRD §4 says "4-6 slices"; decomposition has 7 slices → FAIL (over appetite). Slice estimates: 80, 120, 580, 50 → PASS each. Slice thins 840 → 300 lines (540 deletions) AND adds 400 lines of synthesis → FAIL (940 absolute LoC; split needed).
 
 **Rationale:** Per-slice budgets are the autonomous pipeline's parallelism guarantee. Per ADR-0010, `/ship` dispatches slices in parallel; if a single slice exceeds the cap, the implementer must mid-PR pivot while other parallel slices may continue. The slice-count constraint exists because PRD appetite is a real budget — a 12-slice decomposition for a "4-6 slices" PRD silently expands appetite without re-grilling.
 
 ### SC-DUAL-CAP-MATH — Thinning slices satisfy both wc-target cap and R-LOC absolute-diff cap simultaneously
 
-**Mechanic:** When a candidate slice's ACs include BOTH (a) a file-size cap (`wc -l <path> ≤ X`) AND (b) the implicit R-LOC ≤300 absolute-diff cap, compute `(current_LoC_of_target_file − X) + estimated_additions`. If this sum exceeds 300, BLOCK the decomposition. (Incident: PR #267 / slice #258 — a 380→120 LoC thinning produced a ~260-line deletion floor; with additions the absolute diff was 317–321, blowing the 300 cap mid-implementation.)
+**Mechanic:** When a candidate slice's ACs include BOTH (a) a file-size cap (`wc -l <path> ≤ X`) AND (b) the implicit R-LOC ≤600 absolute-diff cap (raised from 300 per [ADR-0077](../../decisions/0077-ceremony-overhead-reduction.md) D1), compute `(current_LoC_of_target_file − X) + estimated_additions`. If this sum exceeds 600, BLOCK the decomposition. (Incident: PR #267 / slice #258 — a 380→120 LoC thinning produced a ~260-line deletion floor; with additions the absolute diff was 317–321, blowing the cap mid-implementation — the cap in effect at the time was 300; ADR-0077 D1 raised it to 600, so re-scale any fresh boundary check against the current 600 figure, not this historical value.)
 
-**BLOCK message must suggest:** (i) raise the file-size cap so the deletion floor fits under 300 minus additions; (ii) split the thinning across N sub-slices each satisfying both caps independently; or (iii) request an explicit R-LOC override via ADR amendment.
+**BLOCK message must suggest:** (i) raise the file-size cap so the deletion floor fits under 600 minus additions; (ii) split the thinning across N sub-slices each satisfying both caps independently; or (iii) request an explicit R-LOC override via ADR amendment.
 
-**Check:** (1) Identify slices whose ACs contain a `wc -l` target; (2) read the current LoC of the target file (`wc -l <path>` on `origin/main`) to establish the deletion floor `current_LoC − X`; (3) add the slice's estimated new-content additions; (4) if `(current_LoC − X) + estimated_additions > 300` → FAIL with the computed value, the deletion floor, and the three remedies above.
+**Check:** (1) Identify slices whose ACs contain a `wc -l` target; (2) read the current LoC of the target file (`wc -l <path>` on `origin/main`) to establish the deletion floor `current_LoC − X`; (3) add the slice's estimated new-content additions; (4) if `(current_LoC − X) + estimated_additions > 600` → FAIL with the computed value, the deletion floor, and the three remedies above.
 
-**Examples:** File is 200 lines; thinning target is ≤150 (50 deletions); additions estimated at 80 lines → total 130 → PASS. File is 380 lines; thinning target is ≤120 (260 deletions); additions estimated at 60 lines → total 320 → FAIL (absolute diff 320 > 300; cite remedies). File has a wc-l target but `current_LoC ≤ X` already (no deletions needed) → criterion not applicable; PASS.
+**Examples:** File is 200 lines; thinning target is ≤150 (50 deletions); additions estimated at 80 lines → total 130 → PASS. File is 760 lines; thinning target is ≤240 (520 deletions); additions estimated at 120 lines → total 640 → FAIL (absolute diff 640 > 600; cite remedies). File has a wc-l target but `current_LoC ≤ X` already (no deletions needed) → criterion not applicable; PASS.
 
-**Rationale:** A file-size cap and R-LOC are both binding caps on the same slice, but they interact non-obviously: shrinking a file drives up deletion count, which drives up absolute diff, independent of how many lines are added. A slicer who checks only "estimate ≤ 300 additions" misses the deletion contribution entirely — the gap that caused the PR #267 / slice #258 incident. This criterion forces the math to be done at slicing time, when splitting is cheap, not at reviewer time, when the implementer must mid-PR pivot.
+**Rationale:** A file-size cap and R-LOC are both binding caps on the same slice, but they interact non-obviously: shrinking a file drives up deletion count, which drives up absolute diff, independent of how many lines are added. A slicer who checks only "estimate ≤ cap additions" misses the deletion contribution entirely — the gap that caused the PR #267 / slice #258 incident. This criterion forces the math to be done at slicing time, when splitting is cheap, not at reviewer time, when the implementer must mid-PR pivot.
 
 ### SC-RISK-FRONT-LOADING — Biggest risk lands in slice 1 or 2
 

@@ -44,5 +44,5 @@ health.py itself.
 
 HOLDOUT case. Single-slice PRD: Slice 1 is the entire PRD. The walking-skeleton
 IS the complete feature. The slice covers both PRD criteria, has Covers:, Out-of-scope,
-LoC (under 300 cap), Depends-on, and branch/commit conventions. This is the minimal
-valid single-slice case. Should APPROVE.
+LoC (under the 600 cap, raised from 300 per ADR-0077 D1), Depends-on, and
+branch/commit conventions. This is the minimal valid single-slice case. Should APPROVE.

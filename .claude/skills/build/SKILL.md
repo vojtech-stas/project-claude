@@ -193,7 +193,7 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
      ```bash
      python tools/pipe/record-green
      ```
-  4. On failure: the suspect set = squash commits since the last `develop_green` event (≤300 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
+  4. On failure: the suspect set = squash commits since the last `develop_green` event (≤600 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
   Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3.
 - Mark the feature done; proceed to output.
 

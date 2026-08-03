@@ -5601,7 +5601,13 @@ def check_release_ready() -> dict:
     Evaluates develop HEAD against six conditions (ADR-0070 D2):
       (a) CI green on develop HEAD — via real GitHub ci conclusion (#986);
           falls back to local tools/ci-checks.sh when gh is unavailable
-      (b) full test suite passes (ADR-0067 D1) — via pytest exit code
+      (b) full test suite passes (ADR-0067 D1) — GREEN-FAST (#1161): when (a)
+          was satisfied by a REAL (non-override) recorded GitHub ci=pass for
+          this EXACT sha, that same evidence proves (b) too (tools/ci-checks.sh
+          — what GitHub Actions runs as the `ci` check — already runs
+          `pytest tests/` as a required sub-check, REG-001), so NO local
+          pytest re-run happens. Local pytest remains the fallback whenever
+          there is no recorded ci run for the sha (fresh clone / un-pushed sha)
       (c) latest production-verify PASS — wired to PROOF-INTEGRITY check (slice #839)
       (d) green-develop streak intact — no failing checkpoint since last promotion
           (uses main_green events in workflow-events.jsonl as the green-develop proxy
@@ -5651,6 +5657,12 @@ def check_release_ready() -> dict:
     # run found)" so the source is unambiguous in the dashboard/CLI output.
     # -----------------------------------------------------------------------
     ci_override = os.environ.get("_RELEASE_READY_CI_RESULT", "").strip().upper()
+    # gh_status is populated ONLY on the real (non-override) gh-query path
+    # below; it stays None when ci_override short-circuits the live query.
+    # Condition (b) reuses it (#1161) to decide whether a recorded GitHub
+    # ci=pass for this exact sha already proves the suite green, avoiding a
+    # duplicate local pytest run.
+    gh_status = None
     if ci_override:
         ci_pass = (ci_override == "PASS")
         ci_detail = f"CI result (injected): {ci_override}"
@@ -5698,11 +5710,34 @@ def check_release_ready() -> dict:
 
     # -----------------------------------------------------------------------
     # (b) Full test suite passes (ADR-0067 D1)
+    #
+    # GREEN-FAST (#1161 — kills the #1122 budget-bump class at the root):
+    # condition (a)'s recorded GitHub `ci` conclusion for this EXACT
+    # develop-HEAD sha already proves the full pytest suite green whenever it
+    # is a REAL (non-override) ci=pass — tools/ci-checks.sh (what GitHub
+    # Actions runs as the `ci` check, REG-001) itself runs `pytest tests/` as
+    # a required sub-check. Re-running the suite locally after already having
+    # that proof is pure duplication (~25-35 min/slice measured). So: reuse
+    # gh_status from condition (a) — when it is "pass", (b) is proven by that
+    # SAME evidence, no local pytest re-run. Local pytest remains the
+    # fallback whenever there is no recorded ci run for the sha (gh_status is
+    # None — an explicit _RELEASE_READY_CI_RESULT override was used — or
+    # "unavailable" — local-fallback-pass in condition (a), fresh clone /
+    # un-pushed sha). _RELEASE_READY_TESTS_RESULT is honored FIRST,
+    # unconditionally — the existing test-injection seam is never silently
+    # shadowed by this fast path.
     # -----------------------------------------------------------------------
     tests_override = os.environ.get("_RELEASE_READY_TESTS_RESULT", "").strip().upper()
     if tests_override:
         tests_pass = (tests_override == "PASS")
         tests_detail = f"test suite result (injected): {tests_override}"
+    elif gh_status == "pass":
+        tests_pass = True
+        tests_detail = (
+            f"proven by recorded GitHub ci=pass for this exact sha (same "
+            f"evidence as condition (a): {ci_detail}) — no local pytest "
+            f"re-run (#1161)"
+        )
     else:
         tests_dir = _HEALTH_REPO_ROOT / "tests"
         if not tests_dir.exists():

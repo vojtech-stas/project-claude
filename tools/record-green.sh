@@ -4,20 +4,28 @@
 # USAGE:
 #   bash tools/record-green.sh [--dry-run]
 #
-# What it does (slice #1032 / PRD #1031):
+# What it does (slice #1032 / PRD #1031; ci-trust fast path per #1161):
 #   1. Resolves develop HEAD sha (git rev-parse origin/develop).
-#   2. Verifies BOTH conditions:
-#        (a) GitHub 'ci' check conclusion on develop HEAD sha == 'success'
-#        (b) python -m pytest tests/ -q exit code == 0
-#   3. On BOTH pass: appends exactly one {"v":2,"event":"develop_green",...} line
-#      to the CANONICAL telemetry log (resolved via git-common-dir, not repo root)
+#   2. Fetches the GitHub 'ci' check conclusion for the EXACT develop HEAD sha.
+#      - conclusion == 'pass'        -> the recorded CI run (tools/ci-checks.sh,
+#        which itself runs `pytest tests/` as a required sub-check — REG-001)
+#        ALREADY proves the suite green for this sha. Trust it: skip the local
+#        pytest re-run entirely (kills the #1122 duplication class at the root).
+#      - conclusion == 'unavailable' (no recorded ci run for this sha — fresh
+#        clone / un-pushed sha) -> fresh-clone honesty preserved: fall back to
+#        a REAL local `python -m pytest tests/` run.
+#      - conclusion == 'fail' | 'pending' | anything else -> refuse immediately
+#        (no pytest fallback rescues an explicit fail/incomplete CI run).
+#   3. On green (either the ci-trust fast path or the local-pytest fallback):
+#      appends exactly one {"v":2,"event":"develop_green",...} line to the
+#      CANONICAL telemetry log (resolved via git-common-dir, not repo root)
 #      so worktree runs write the shared root log (#1021 lesson).
-#   4. On EITHER fail: prints reason to stderr, writes NOTHING, exits 1.
+#   4. On refusal: prints reason to stderr, writes NOTHING, exits 1.
 #      This is the core safety property: NEVER write a false green.
 #
 # --dry-run flag:
-#   Runs both verifications + prints the event it WOULD write (or the failure
-#   reason), but does NOT append to the log. Exits 0 if green, 1 if not.
+#   Runs the same verification + prints the event it WOULD write (or the
+#   failure reason), but does NOT append to the log. Exits 0 if green, 1 if not.
 #
 # Test injection (env vars, consumed only when set):
 #   RECORD_GREEN_CI_STATUS   — when set, treat this value as the CI status
@@ -28,12 +36,14 @@
 #                              the ci conclusion string to stdout ("success").
 #                              Only used when RECORD_GREEN_CI_STATUS is unset.
 #   RECORD_GREEN_PYTEST_CMD  — command run instead of 'python -m pytest tests/ -q';
-#                              must exit 0 for pass, non-zero for fail.
+#                              must exit 0 for pass, non-zero for fail. Only
+#                              invoked on the no-recorded-ci-run (unavailable)
+#                              fallback path — NEVER on the ci=pass fast path.
 #   RECORD_GREEN_TEST_LOG_PATH — when set, write to this path instead of the
 #                                canonical git-common-dir log (test isolation).
 #
 # Run by the ORCHESTRATOR after develop PRs are merged and before promoting.
-# Requires: git, gh (GitHub CLI), python -m pytest.
+# Requires: git, gh (GitHub CLI), python -m pytest (only on the fallback path).
 
 set -euo pipefail
 
@@ -58,10 +68,12 @@ echo "INFO: develop HEAD = $DEV_SHA"
 # result.  We must find the PR whose mergeCommit.oid == develop HEAD and read
 # THAT PR's ci check (the same strategy dashboard/health.py uses).
 echo "INFO: checking GitHub ci conclusion for $DEV_SHA ..."
+CI_DETAIL=""
 if [ -n "${RECORD_GREEN_CI_STATUS+x}" ]; then
   # Test injection (highest priority): RECORD_GREEN_CI_STATUS overrides everything
   # when the variable is SET (even to empty — empty means refuse, not skip).
   CI_STATUS="${RECORD_GREEN_CI_STATUS:-}"
+  CI_DETAIL="RECORD_GREEN_CI_STATUS (test injection) = '$CI_STATUS'"
   echo "INFO: CI status from RECORD_GREEN_CI_STATUS (test injection) = '$CI_STATUS'"
 elif [ -n "${RECORD_GREEN_GH_CMD:-}" ]; then
   # Legacy test injection: RECORD_GREEN_GH_CMD echoes a raw conclusion string.
@@ -72,6 +84,7 @@ elif [ -n "${RECORD_GREEN_GH_CMD:-}" ]; then
   else
     CI_STATUS="$RAW_CONCLUSION"
   fi
+  CI_DETAIL="RECORD_GREEN_GH_CMD (legacy injection) raw='$RAW_CONCLUSION'"
   echo "INFO: CI status from RECORD_GREEN_GH_CMD (legacy injection) = '$CI_STATUS'"
 else
   # Real path: delegate to dashboard/health.py::_fetch_github_ci_conclusion().
@@ -82,42 +95,67 @@ else
   # not the root repo's potentially-older copy.
   SCRIPT_REPO_ROOT="$(git rev-parse --show-toplevel)"
   COMMON_LOGROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-  CI_STATUS="$(python3 -c "
+  CI_PY_OUT="$(python3 -c "
 import sys
 sys.path.insert(0, '$SCRIPT_REPO_ROOT/dashboard')
 from health import _fetch_github_ci_conclusion
 status, detail = _fetch_github_ci_conclusion('$COMMON_LOGROOT')
 print(status)
+print(detail)
 " 2>/dev/null || echo "unavailable")"
-  echo "INFO: CI status from PR-mergeCommit lookup = '$CI_STATUS'"
+  CI_STATUS="$(printf '%s\n' "$CI_PY_OUT" | sed -n '1p')"
+  CI_DETAIL="$(printf '%s\n' "$CI_PY_OUT" | sed -n '2p')"
+  [ -z "$CI_STATUS" ] && CI_STATUS="unavailable"
+  echo "INFO: CI status from PR-mergeCommit lookup = '$CI_STATUS' ($CI_DETAIL)"
 fi
 
-if [ "$CI_STATUS" != "pass" ]; then
-  echo "ERROR: GitHub ci conclusion for develop HEAD is '$CI_STATUS' (need 'pass')" >&2
-  echo "ERROR: develop is NOT green — refusing to record develop_green (no false-green)" >&2
-  exit 1
-fi
-echo "INFO: GitHub ci = $CI_STATUS — OK"
-
-# --- 2b. Verify pytest green ---
-echo "INFO: running pytest to verify tests are green ..."
-if [ -n "${RECORD_GREEN_PYTEST_CMD:-}" ]; then
-  # Test injection: run the stub command.
-  if ! eval "$RECORD_GREEN_PYTEST_CMD" >/dev/null 2>&1; then
-    echo "ERROR: pytest (stub) exited non-zero — develop tests are NOT green" >&2
-    echo "ERROR: refusing to record develop_green (no false-green)" >&2
+# --- 2b. ci-trust gate (#1161): trust a recorded GitHub ci=pass for this EXACT
+# sha instead of re-running the full pytest suite locally.  tools/ci-checks.sh
+# (what GitHub Actions runs as the `ci` check) already runs `pytest tests/` as
+# a required sub-check (REG-001) — re-verifying it locally after GitHub already
+# proved it is pure duplication (~25-35 min/slice measured, #1161).
+#
+#   pass        -> recorded CI run already proves the suite green; SKIP local
+#                  pytest entirely.
+#   unavailable -> no recorded ci run exists for this sha (fresh clone /
+#                  un-pushed sha); fall back to a REAL local pytest run
+#                  (fresh-clone honesty preserved).
+#   fail | pending | anything else -> refuse immediately; NEVER rescue an
+#                  explicit fail/incomplete CI run with a local pytest pass.
+case "$CI_STATUS" in
+  pass)
+    echo "INFO: GitHub ci = pass for sha $DEV_SHA — proven by recorded CI run ($CI_DETAIL); skipping local pytest re-run (#1161)"
+    TESTS_EVIDENCE="recorded GitHub ci=pass for sha $DEV_SHA ($CI_DETAIL) — tools/ci-checks.sh already ran pytest as a required check (REG-001); no local pytest re-run"
+    ;;
+  unavailable)
+    echo "INFO: no recorded GitHub ci run for sha $DEV_SHA ('$CI_STATUS': $CI_DETAIL) — falling back to local pytest verification"
+    echo "INFO: running pytest to verify tests are green ..."
+    if [ -n "${RECORD_GREEN_PYTEST_CMD:-}" ]; then
+      # Test injection: run the stub command.
+      if ! eval "$RECORD_GREEN_PYTEST_CMD" >/dev/null 2>&1; then
+        echo "ERROR: pytest (stub) exited non-zero — develop tests are NOT green" >&2
+        echo "ERROR: refusing to record develop_green (no false-green)" >&2
+        exit 1
+      fi
+    else
+      # Real path: run the full test suite.
+      REPO_ROOT="$(git rev-parse --show-toplevel)"
+      if ! python -m pytest "$REPO_ROOT/tests/" -q --no-header --tb=short 2>&1; then
+        echo "ERROR: pytest exited non-zero — develop tests are NOT green" >&2
+        echo "ERROR: refusing to record develop_green (no false-green)" >&2
+        exit 1
+      fi
+    fi
+    echo "INFO: pytest green — OK (local fallback verification; no recorded ci run for this sha)"
+    TESTS_EVIDENCE="local pytest fallback (no recorded GitHub ci run for sha $DEV_SHA: $CI_DETAIL)"
+    ;;
+  *)
+    echo "ERROR: GitHub ci conclusion for develop HEAD is '$CI_STATUS' (need 'pass', or 'unavailable' for local fallback)" >&2
+    echo "ERROR: develop is NOT green — refusing to record develop_green (no false-green)" >&2
     exit 1
-  fi
-else
-  # Real path: run the full test suite.
-  REPO_ROOT="$(git rev-parse --show-toplevel)"
-  if ! python -m pytest "$REPO_ROOT/tests/" -q --no-header --tb=short 2>&1; then
-    echo "ERROR: pytest exited non-zero — develop tests are NOT green" >&2
-    echo "ERROR: refusing to record develop_green (no false-green)" >&2
-    exit 1
-  fi
-fi
-echo "INFO: pytest green — OK"
+    ;;
+esac
+echo "INFO: test-suite proof — $TESTS_EVIDENCE"
 
 # --- 3. Build the event line ---
 TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \

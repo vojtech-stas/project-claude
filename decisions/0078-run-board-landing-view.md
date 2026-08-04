@@ -4,7 +4,8 @@ title: "Run-board as the dashboard's landing view; desktop shell deferred"
 status: "accepted"
 date: "2026-08-04"
 scope: "pipeline"
-rule_ids: ["PIP-022"]
+rule_ids:
+  - "PIP-022"
 supersedes: []
 superseded_by: []
 ---

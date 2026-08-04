@@ -1177,7 +1177,8 @@
   <button onclick="switchTab('firing', this)">Firing</button>
 </nav>
 
-<!-- RUN-BOARD TAB (PRD #1170 walking skeleton, slice #1172) — rendered
+<!-- RUN-BOARD TAB (PRD #1170 walking skeleton, slice #1172; staleness flag +
+     row-level provenance + honest empty state, slice #1173) — rendered
      first at "/": what is running now, what runs next, what just finished,
      read strictly from the recorded v3 trace ledger (ADR-0078 D1). -->
 <div id="tab-runboard" class="tab active">
@@ -1191,11 +1192,13 @@
       What is running now, what runs next, what just finished — read
       strictly from the recorded v3 trace ledger (tools/trace.py +
       dashboard/tracestore.py). Never inferred; an absent record renders
-      as absent, never fabricated.
+      as absent, never fabricated. Every row below names its own data
+      source and the ledger read time.
     </p>
+    <div id="runboard-empty-banner" style="display:none;color:var(--muted);font-size:12px;margin-bottom:14px;border:1px solid #21262d;border-radius:6px;padding:10px 12px;"></div>
     <div class="runboard-grid">
       <div class="card">
-        <div class="card-title">Now</div>
+        <div class="card-title">Now <span id="runboard-stale-note" style="color:var(--muted);font-weight:normal;font-size:10px;"></span></div>
         <div id="runboard-now"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
       </div>
       <div class="card">
@@ -5092,7 +5095,8 @@ function startTraceRuns() {
 
 registerTabHook('firing', startTraceRuns);
 
-// --- Run-board tab (PRD #1170 walking skeleton, slice #1172) ---
+// --- Run-board tab (PRD #1170 walking skeleton, slice #1172; staleness
+// flag + row-level provenance + honest empty state, slice #1173) ---
 // Landing view: now/next/recent from /api/runboard, strictly read from the
 // recorded v3 trace ledger (ADR-0078 D1). Mirrors reloadTraceRuns()'s
 // fetch/render/poll house pattern.
@@ -5108,18 +5112,30 @@ function _rbFmtSecs(sec) {
   return h + 'h' + (m % 60) + 'm';
 }
 
+// Row-level provenance line (§2 #2c): every rendered row states its data
+// source AND the ledger read-freshness — never a derived value presented
+// as live truth without saying where it came from and when it was read.
+function _rbProvenance(source, fetchedAtDisplay) {
+  return '<div style="color:var(--muted);font-size:9px;">source: ' +
+    escHtml(source || 'unknown') + ' — ledger read ' +
+    escHtml(fetchedAtDisplay) + '</div>';
+}
+
 function renderRunboard(data) {
   try {
     const nowEl = document.getElementById('runboard-now');
     const nextEl = document.getElementById('runboard-next');
     const recentEl = document.getElementById('runboard-recent');
     const statusEl = document.getElementById('runboard-status');
+    const staleNoteEl = document.getElementById('runboard-stale-note');
+    const emptyBannerEl = document.getElementById('runboard-empty-banner');
     if (!nowEl || !nextEl || !recentEl) return;
 
     if (!data || data.error) {
       const msg = '<span style="color:var(--muted);font-size:11px;">Error: ' +
         escHtml((data && data.error) || 'unknown error') + '</span>';
       nowEl.innerHTML = msg; nextEl.innerHTML = msg; recentEl.innerHTML = msg;
+      if (emptyBannerEl) emptyBannerEl.style.display = 'none';
       return;
     }
     if (data.status === 'computing') {
@@ -5129,29 +5145,58 @@ function renderRunboard(data) {
     }
 
     const now = data.now || [], next = data.next || [], recent = data.recent || [];
-    const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
+    const ledger = data.ledger || '.claude/logs/trace-v3.jsonl';
+    const fetchedAtDisplay = data.fetched_at ? _firingFmtTs(data.fetched_at) : 'unknown time';
+    const fetchedAt = data.fetched_at ? ' — fetched ' + fetchedAtDisplay : '';
     if (statusEl) statusEl.textContent = now.length + ' running, ' + next.length +
       ' next, ' + recent.length + ' recent' + fetchedAt;
 
+    // Staleness threshold visible in the UI, not hidden in code (§6 OQ1 /
+    // ADR-0078 D1): read from the API response every render, never a
+    // literal baked into this template.
+    if (staleNoteEl) {
+      staleNoteEl.textContent = data.stale_threshold_seconds != null ?
+        '— flagged stale after ' + _rbFmtSecs(data.stale_threshold_seconds) : '';
+    }
+
+    // Honest empty state (§2 #2d): when all three sections are empty,
+    // replace the three independent column messages with one banner
+    // naming the ledger it read, rather than three quiet blank-looking
+    // panels.
+    const allEmpty = now.length === 0 && next.length === 0 && recent.length === 0;
+    if (emptyBannerEl) {
+      emptyBannerEl.style.display = allEmpty ? 'block' : 'none';
+      if (allEmpty) {
+        emptyBannerEl.innerHTML = 'No recorded activity — read ' + escHtml(ledger) +
+          ' (via the trace.db read-model) at ' + escHtml(fetchedAtDisplay) +
+          ' and found no dispatch, batch_planned, or termination spans.';
+      }
+    }
+
     nowEl.innerHTML = now.length ? now.map(function(e) {
-      return '<div class="runboard-row"><strong>slice #' + escHtml(e.slice) + '</strong>' +
+      const staleBadge = e.stale ?
+        ' <span style="color:var(--red);font-weight:bold;">STALE</span>' : '';
+      return '<div class="runboard-row"><strong>slice #' + escHtml(e.slice) + '</strong>' + staleBadge +
         (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') +
         '<div style="color:var(--muted);font-size:10px;">session ' + escHtml(e.session_id) +
-        ' — running ' + _rbFmtSecs(e.elapsed_seconds) + '</div></div>';
-    }).join('') : '<span style="color:var(--muted);font-size:11px;">nothing running</span>';
+        ' — running ' + _rbFmtSecs(e.elapsed_seconds) + '</div>' +
+        _rbProvenance(e.source, fetchedAtDisplay) + '</div>';
+    }).join('') : (allEmpty ? '' : '<span style="color:var(--muted);font-size:11px;">nothing running</span>');
 
     nextEl.innerHTML = next.length ? next.map(function(e) {
       return '<div class="runboard-row">slice #' + escHtml(e.slice) +
-        (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') + '</div>';
-    }).join('') : '<span style="color:var(--muted);font-size:11px;">no ready slices recorded (' +
-      escHtml(data.next_source || 'none-recorded') + ')</span>';
+        (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') +
+        _rbProvenance(e.source, fetchedAtDisplay) + '</div>';
+    }).join('') : (allEmpty ? '' : '<span style="color:var(--muted);font-size:11px;">no ready slices recorded (' +
+      escHtml(data.next_source || 'none-recorded') + ')</span>');
 
     recentEl.innerHTML = recent.length ? recent.map(function(e) {
       const label = e.kind === 'pr_merged' ? ('PR #' + escHtml(e.pr)) : ('slice #' + escHtml(e.slice));
       const durSec = e.dur_ms != null ? e.dur_ms / 1000 : null;
       return '<div class="runboard-row">' + label + ' &mdash; ' + escHtml(e.outcome || '?') +
-        '<div style="color:var(--muted);font-size:10px;">took ' + _rbFmtSecs(durSec) + '</div></div>';
-    }).join('') : '<span style="color:var(--muted);font-size:11px;">no terminated chains recorded</span>';
+        '<div style="color:var(--muted);font-size:10px;">took ' + _rbFmtSecs(durSec) + '</div>' +
+        _rbProvenance(e.source, fetchedAtDisplay) + '</div>';
+    }).join('') : (allEmpty ? '' : '<span style="color:var(--muted);font-size:11px;">no terminated chains recorded</span>');
   } catch(e) {
     try {
       const el = document.getElementById('runboard-now');
@@ -5174,6 +5219,8 @@ function fetchRunboard() {
   } catch(e) { /* outermost defensive catch */ }
 }
 
+let _runboardIntervalId = null;
+
 function reloadRunboard() {
   _runboardLoaded = false;
   startRunboard();
@@ -5183,8 +5230,13 @@ function startRunboard() {
   if (_runboardLoaded) return;
   _runboardLoaded = true;
   fetchRunboard();
-  // Auto-refresh every 15s while the Run-board tab is visible (mirrors startTraceRuns()).
-  setInterval(function() {
+  // Auto-refresh every 15s while the Run-board tab is visible (mirrors
+  // startTraceRuns()). Handle is stored + any prior one cleared first
+  // (issue #1176 rider, folded in here since it's directly adjacent to
+  // this function): repeated Refresh clicks previously left the old
+  // timer running, stacking intervals.
+  if (_runboardIntervalId != null) clearInterval(_runboardIntervalId);
+  _runboardIntervalId = setInterval(function() {
     if (document.visibilityState === 'hidden') return;
     const tab = document.getElementById('tab-runboard');
     if (!tab || !tab.classList.contains('active')) return;

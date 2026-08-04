@@ -22,7 +22,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
         GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Firing tab's PRIMARY renderer (slice #1082, PRD #1075 criterion 9)
-        GET /api/runboard             -> JSON {now, next, next_source, recent, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172)
+        GET /api/runboard             -> JSON {now, next, next_source, recent, stale_threshold_seconds, ledger, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172 + #1173 provenance/staleness)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -977,7 +977,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/runboard":
             # GET /api/runboard — now/next/recent from the recorded v3
             # ledger: the Run-board tab's landing-view renderer (PRD #1170,
-            # slice #1172). Non-blocking background-warm serve, mirrors
+            # slice #1172 + slice #1173's staleness flag + row-level
+            # provenance). Non-blocking background-warm serve, mirrors
             # /api/trace-runs's house pattern — zero gh calls, sqlite+JSONL
             # only, strictly a reader (ADR-0078 D1).
             try:
@@ -985,7 +986,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json(
                     {"error": str(exc), "now": [], "next": [],
-                     "next_source": "none-recorded", "recent": []}, 500
+                     "next_source": "none-recorded", "recent": [],
+                     "stale_threshold_seconds": _tracestore_mod.RUNBOARD_STALE_THRESHOLD_SECONDS,
+                     "ledger": _tracestore_mod._LEDGER_DISPLAY_NAME}, 500
                 )
 
         elif path == "/api/runtime-reading":

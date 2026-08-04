@@ -100,6 +100,9 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 - **PIP-020:** The R-LOC cap rises from 300 to 600 LoC of runtime-artifact diff (reviewer.md remains the sole canonical definition site); the slicer targets 3-5 slices per PRD for equivalent scope, down from the ~6-9 a 300-LoC cap implied (ADR-0077 D1).
 - **PIP-021:** The reviewer dispatches immediately at PR-open, concurrent with the PR's `ci` run, instead of waiting for a terminal CI state; before any merge it polls `gh pr checks` itself and, on a CHECK-3 format-class failure, flips its own verdict to BLOCK with the same corrective message as before, reusing its own round-cap rather than a separate orchestrator-tracked counter (ADR-0077 D2).
 
+#### Source: ADR-0078 (`decisions/0078-run-board-landing-view.md`)
+- **PIP-022:** `/api/runboard` serves now/next/recent strictly from recorded v3 spans (never inferred, backfilled, or reconstructed), rendered first at `/` with the architecture view one click away; the production check fails outright if any rendered row cannot be traced to a canonical-ledger span, the board renders normally while the ledger is unreadable, or the ledger holds no dispatch/batch_planned span in the verification window (ADR-0078 D1).
+
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 

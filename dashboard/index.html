@@ -242,6 +242,10 @@
   .badge-na      { background: var(--border); color: var(--muted); }
   /* no-data badge (slice #967 / PRD #957 §2 #4): grey, distinct from amber WARN */
   .badge-nodata  { background: #3a3f47; color: #8b9096; border: 1px solid #4a5058; }
+  /* Run-board tab (PRD #1170 slice #1172): three-column now/next/recent layout */
+  .runboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .runboard-row { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 12px; }
+  .runboard-row:last-child { border-bottom: none; }
   button.refresh {
     background: none;
     border: 1px solid var(--border);
@@ -1166,14 +1170,48 @@
 </div>
 
 <nav>
-  <button class="active" onclick="switchTab('architecture', this)">Architecture</button>
+  <button class="active" onclick="switchTab('runboard', this)">Run-board</button>
+  <button onclick="switchTab('architecture', this)">Architecture</button>
   <button onclick="switchTab('live', this)">Live</button>
   <button onclick="switchTab('health', this)">Health</button>
   <button onclick="switchTab('firing', this)">Firing</button>
 </nav>
 
+<!-- RUN-BOARD TAB (PRD #1170 walking skeleton, slice #1172) — rendered
+     first at "/": what is running now, what runs next, what just finished,
+     read strictly from the recorded v3 trace ledger (ADR-0078 D1). -->
+<div id="tab-runboard" class="tab active">
+  <div class="section">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+      <h2 style="margin:0;">Run-board</h2>
+      <button class="refresh" onclick="reloadRunboard()">Refresh</button>
+      <span id="runboard-status" style="color:var(--muted);font-size:11px;"></span>
+    </div>
+    <p style="color:var(--muted);font-size:11px;margin-bottom:14px;">
+      What is running now, what runs next, what just finished — read
+      strictly from the recorded v3 trace ledger (tools/trace.py +
+      dashboard/tracestore.py). Never inferred; an absent record renders
+      as absent, never fabricated.
+    </p>
+    <div class="runboard-grid">
+      <div class="card">
+        <div class="card-title">Now</div>
+        <div id="runboard-now"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Next</div>
+        <div id="runboard-next"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Recent</div>
+        <div id="runboard-recent"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ARCHITECTURE TAB -->
-<div id="tab-architecture" class="tab active">
+<div id="tab-architecture" class="tab">
   <!-- Pipeline diagram removed (slice #525): was hand-maintained mermaid with
        stale edges and missing codebase-critic. The Orchestration topology
        below is spec-driven (fetched from /api/pipeline — ADR-0039 D1/D2). -->
@@ -2973,8 +3011,11 @@ function closeSharedDetail() {
   document.querySelectorAll('.check-row-clickable').forEach(r => r.classList.remove('active'));
 }
 
-// Auto-load architecture tab on start; also kick off trail run picker
+// Auto-load run-board (default landing tab, PRD #1170 slice #1172) on start;
+// architecture + trail-run-picker data are still warmed eagerly in the
+// background so switching to the Architecture tab is instant (one click).
 window.addEventListener('load', () => {
+  startRunboard();
   loadArchitecture().then(() => loadTrailRuns());
 });
 
@@ -5050,6 +5091,108 @@ function startTraceRuns() {
 }
 
 registerTabHook('firing', startTraceRuns);
+
+// --- Run-board tab (PRD #1170 walking skeleton, slice #1172) ---
+// Landing view: now/next/recent from /api/runboard, strictly read from the
+// recorded v3 trace ledger (ADR-0078 D1). Mirrors reloadTraceRuns()'s
+// fetch/render/poll house pattern.
+let _runboardLoaded = false;
+
+function _rbFmtSecs(sec) {
+  if (sec == null) return 'unknown';
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + 's';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + 'm' + s + 's';
+  const h = Math.floor(m / 60);
+  return h + 'h' + (m % 60) + 'm';
+}
+
+function renderRunboard(data) {
+  try {
+    const nowEl = document.getElementById('runboard-now');
+    const nextEl = document.getElementById('runboard-next');
+    const recentEl = document.getElementById('runboard-recent');
+    const statusEl = document.getElementById('runboard-status');
+    if (!nowEl || !nextEl || !recentEl) return;
+
+    if (!data || data.error) {
+      const msg = '<span style="color:var(--muted);font-size:11px;">Error: ' +
+        escHtml((data && data.error) || 'unknown error') + '</span>';
+      nowEl.innerHTML = msg; nextEl.innerHTML = msg; recentEl.innerHTML = msg;
+      return;
+    }
+    if (data.status === 'computing') {
+      if (statusEl) statusEl.textContent = 'computing…';
+      setTimeout(fetchRunboard, 2000);
+      return;
+    }
+
+    const now = data.now || [], next = data.next || [], recent = data.recent || [];
+    const fetchedAt = data.fetched_at ? ' — fetched ' + _firingFmtTs(data.fetched_at) : '';
+    if (statusEl) statusEl.textContent = now.length + ' running, ' + next.length +
+      ' next, ' + recent.length + ' recent' + fetchedAt;
+
+    nowEl.innerHTML = now.length ? now.map(function(e) {
+      return '<div class="runboard-row"><strong>slice #' + escHtml(e.slice) + '</strong>' +
+        (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') +
+        '<div style="color:var(--muted);font-size:10px;">session ' + escHtml(e.session_id) +
+        ' — running ' + _rbFmtSecs(e.elapsed_seconds) + '</div></div>';
+    }).join('') : '<span style="color:var(--muted);font-size:11px;">nothing running</span>';
+
+    nextEl.innerHTML = next.length ? next.map(function(e) {
+      return '<div class="runboard-row">slice #' + escHtml(e.slice) +
+        (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') + '</div>';
+    }).join('') : '<span style="color:var(--muted);font-size:11px;">no ready slices recorded (' +
+      escHtml(data.next_source || 'none-recorded') + ')</span>';
+
+    recentEl.innerHTML = recent.length ? recent.map(function(e) {
+      const label = e.kind === 'pr_merged' ? ('PR #' + escHtml(e.pr)) : ('slice #' + escHtml(e.slice));
+      const durSec = e.dur_ms != null ? e.dur_ms / 1000 : null;
+      return '<div class="runboard-row">' + label + ' &mdash; ' + escHtml(e.outcome || '?') +
+        '<div style="color:var(--muted);font-size:10px;">took ' + _rbFmtSecs(durSec) + '</div></div>';
+    }).join('') : '<span style="color:var(--muted);font-size:11px;">no terminated chains recorded</span>';
+  } catch(e) {
+    try {
+      const el = document.getElementById('runboard-now');
+      if (el) el.innerHTML = '<span style="color:var(--red);font-size:11px;">Render error: ' + escHtml(e.message) + '</span>';
+    } catch(_) {}
+  }
+}
+
+function fetchRunboard() {
+  try {
+    fetch('/api/runboard')
+      .then(function(r) { return r.json(); })
+      .then(renderRunboard)
+      .catch(function(e) {
+        try {
+          const el = document.getElementById('runboard-now');
+          if (el) el.innerHTML = '<span style="color:var(--muted);font-size:11px;">Failed to fetch /api/runboard: ' + escHtml(e.message) + '</span>';
+        } catch(_) {}
+      });
+  } catch(e) { /* outermost defensive catch */ }
+}
+
+function reloadRunboard() {
+  _runboardLoaded = false;
+  startRunboard();
+}
+
+function startRunboard() {
+  if (_runboardLoaded) return;
+  _runboardLoaded = true;
+  fetchRunboard();
+  // Auto-refresh every 15s while the Run-board tab is visible (mirrors startTraceRuns()).
+  setInterval(function() {
+    if (document.visibilityState === 'hidden') return;
+    const tab = document.getElementById('tab-runboard');
+    if (!tab || !tab.classList.contains('active')) return;
+    fetchRunboard();
+  }, 15000);
+}
+
+registerTabHook('runboard', startRunboard);
 
 function _renderFiringPr(pr) {
   try {

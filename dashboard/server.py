@@ -22,6 +22,7 @@ Serves: GET /               -> dashboard/index.html
         GET /api/session-live         -> JSON current-session events from transcript (slice #899)
         GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
         GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Firing tab's PRIMARY renderer (slice #1082, PRD #1075 criterion 9)
+        GET /api/runboard             -> JSON {now, next, next_source, recent, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -972,6 +973,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(_tracestore_mod.serve_trace_runs(limit=limit))
             except Exception as exc:
                 self._send_json({"error": str(exc), "runs": [], "run_count": 0}, 500)
+
+        elif path == "/api/runboard":
+            # GET /api/runboard — now/next/recent from the recorded v3
+            # ledger: the Run-board tab's landing-view renderer (PRD #1170,
+            # slice #1172). Non-blocking background-warm serve, mirrors
+            # /api/trace-runs's house pattern — zero gh calls, sqlite+JSONL
+            # only, strictly a reader (ADR-0078 D1).
+            try:
+                self._send_json(_tracestore_mod.serve_runboard())
+            except Exception as exc:
+                self._send_json(
+                    {"error": str(exc), "now": [], "next": [],
+                     "next_source": "none-recorded", "recent": []}, 500
+                )
 
         elif path == "/api/runtime-reading":
             # GET /api/runtime-reading — current-session runtime reading from transcript

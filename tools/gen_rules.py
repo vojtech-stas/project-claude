@@ -130,12 +130,13 @@ SCOPE_PATHS: dict[str, str] = {
 # Rule-ID conservation baseline (PRD #937 slice #939 — §2 criterion 7).
 # This is the TOTAL number of rule_ids across all active ADR scopes as of the
 # scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
-# PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162).
+# PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162),
+# then by ADR-0078's 1 new PIP-* id (slice #1172).
 # --check verifies that the live count equals this value; a mismatch means a
 # rule was silently added or removed without updating this constant.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(21) + REG(3) + SLI(5) + VER(8) = 82
-RULE_IDS_BASELINE: int = 82
+#            ISO(6) + OUT(5) + PIP(22) + REG(3) + SLI(5) + VER(8) = 83
+RULE_IDS_BASELINE: int = 83
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -418,6 +419,17 @@ _RULE_STATEMENTS: dict[str, str] = {
         "failure, flips its own verdict to BLOCK with the same corrective "
         "message as before, reusing its own round-cap rather than a separate "
         "orchestrator-tracked counter (ADR-0077 D2)."
+    ),
+    # ADR-0078: run-board as the dashboard's landing view
+    "PIP-022": (
+        "`/api/runboard` serves now/next/recent strictly from recorded v3 "
+        "spans (never inferred, backfilled, or reconstructed), rendered "
+        "first at `/` with the architecture view one click away; the "
+        "production check fails outright if any rendered row cannot be "
+        "traced to a canonical-ledger span, the board renders normally "
+        "while the ledger is unreadable, or the ledger holds no "
+        "dispatch/batch_planned span in the verification window "
+        "(ADR-0078 D1)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

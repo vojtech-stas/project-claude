@@ -85,15 +85,20 @@ Python API (for dashboard reuse):
     (`_build_recorded_runs`) is never called from the HTTP request handler
     directly.
   serve_runboard(log_path=None, db_path_=None) -> dict
-    Background-warmed /api/runboard payload builder (PRD #1170 walking
-    skeleton, slice #1172) — mirrors serve_trace_runs()'s stale-while-
-    revalidate pattern. Returns {now, next, next_source, recent,
+    Background-warmed /api/runboard payload builder (PRD #1170, slice
+    #1172 walking skeleton + slice #1173 provenance/staleness) — mirrors
+    serve_trace_runs()'s stale-while-revalidate pattern. Returns {now,
+    next, next_source, recent, stale_threshold_seconds, ledger,
     fetched_at}: `now` = running_dispatches() enriched with elapsed
-    seconds; `next` = the latest `batch_planned` span's ready-set minus
-    `now` (next_source="none-recorded" when no batch_planned span exists,
-    else "batch_planned"); `recent` = at most 20 newest-first terminated
-    chains (dispatch_end / pr_merged) with outcome + duration. Strict
-    reader — never infers state the ledger does not hold (ADR-0078 D1).
+    seconds, a `stale` bool (elapsed >= stale_threshold_seconds) and a
+    `source` label; `next` = the latest `batch_planned` span's ready-set
+    minus `now`, each entry carrying a `source` label (next_source=
+    "none-recorded" when no batch_planned span exists, else
+    "batch_planned"); `recent` = at most 20 newest-first terminated
+    chains (dispatch_end / pr_merged) with outcome, duration and a
+    `source` label. `stale_threshold_seconds` and `ledger` are echoed so
+    the UI never hardcodes either (row-level provenance, ADR-0078 D1).
+    Strict reader — never infers state the ledger does not hold.
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
@@ -524,7 +529,24 @@ def serve_trace_runs(limit=30, log_path=None, db_path_=None):
 # from the recorded ledger — strictly a reader, per ADR-0078 D1. `now` reuses
 # running_dispatches() (also the duplicate-dispatch mutex's read side); `next`
 # and `recent` are new queries this slice authors.
+#
+# Staleness threshold + provenance (slice #1173, §2 criteria 1d/2c/2d):
+# RUNBOARD_STALE_THRESHOLD_SECONDS is evidence-based, not guessed. Querying
+# the canonical ledger's 10 recorded dispatch/dispatch_end pairs (as of
+# 2026-08-04) gave a MEDIAN duration of ~3472s (~58min; range 1277s-12866s
+# across 4 working sessions). 5400s (90min) sits meaningfully above that
+# median while still catching a genuinely stuck dispatch well before the
+# historical long tail. Echoed in the API response
+# (`stale_threshold_seconds`) and rendered in the UI panel header, per
+# ADR-0078 D1's provenance intent — a threshold that only lives in code is
+# not visible. `_LEDGER_DISPLAY_NAME` is the human-facing relative path
+# named in the honest empty state (§2 criterion 2d); the resolved absolute
+# path is `tools.trace.trace_log_path()`, unchanged here.
 # ---------------------------------------------------------------------------
+RUNBOARD_STALE_THRESHOLD_SECONDS = 5400
+_LEDGER_DISPLAY_NAME = ".claude/logs/trace-v3.jsonl"
+
+
 def _parse_ts(ts):
     """Parse a v3 span's UTC ISO ts (`_now_iso()`'s exact format) into an
     aware datetime. Returns None on any malformed/absent input — callers
@@ -536,9 +558,12 @@ def _parse_ts(ts):
 
 
 def _now_entries(log_path=None, db_path_=None):
-    """`now` array (§2 criterion 1a): running_dispatches() enriched with
-    elapsed_seconds (now - dispatch ts), and slice/prd/session_id lifted
-    out of attrs for a flat, board-friendly shape."""
+    """`now` array (§2 criteria 1a/1d): running_dispatches() enriched with
+    elapsed_seconds (now - dispatch ts), a `stale` bool once elapsed
+    exceeds RUNBOARD_STALE_THRESHOLD_SECONDS, a `source` provenance label,
+    and slice/prd/session_id lifted out of attrs for a flat, board-
+    friendly shape. `elapsed is None` (malformed/absent ts) never flags
+    stale — unknown duration is not evidence of staleness."""
     running = running_dispatches(log_path=log_path, db_path_=db_path_)
     now_utc = datetime.now(timezone.utc)
     entries = []
@@ -546,6 +571,7 @@ def _now_entries(log_path=None, db_path_=None):
         attrs = s.get("attrs", {}) or {}
         started = _parse_ts(s.get("ts"))
         elapsed = int((now_utc - started).total_seconds()) if started else None
+        stale = elapsed is not None and elapsed >= RUNBOARD_STALE_THRESHOLD_SECONDS
         entries.append({
             "trace_id": s.get("trace_id"),
             "slice": attrs.get("slice"),
@@ -553,6 +579,8 @@ def _now_entries(log_path=None, db_path_=None):
             "session_id": attrs.get("session_id"),
             "ts": s.get("ts"),
             "elapsed_seconds": elapsed,
+            "stale": stale,
+            "source": "dispatch span (open, no dispatch_end)",
         })
     return entries
 
@@ -575,9 +603,10 @@ def _latest_batch_planned(log_path=None, db_path_=None):
 
 
 def _next_entries(now_entries, log_path=None, db_path_=None):
-    """`next` array (§2 criteria 1b/1e): the latest batch_planned span's
-    ready-set minus anything already in `now`. No batch_planned span ->
-    ([], "none-recorded") rather than silently omitting the marker."""
+    """`next` array (§2 criteria 1b/1e/2c): the latest batch_planned span's
+    ready-set minus anything already in `now`, each entry carrying a
+    `source` provenance label. No batch_planned span -> ([], "none-
+    recorded") rather than silently omitting the marker."""
     latest = _latest_batch_planned(log_path=log_path, db_path_=db_path_)
     if latest is None:
         return [], "none-recorded"
@@ -585,7 +614,7 @@ def _next_entries(now_entries, log_path=None, db_path_=None):
     ready = attrs.get("ready") or []
     running_slices = {str(e.get("slice")) for e in now_entries if e.get("slice") is not None}
     next_list = [
-        {"slice": str(s), "prd": attrs.get("prd")}
+        {"slice": str(s), "prd": attrs.get("prd"), "source": "batch_planned ready-set"}
         for s in ready
         if str(s) not in running_slices
     ]
@@ -593,11 +622,12 @@ def _next_entries(now_entries, log_path=None, db_path_=None):
 
 
 def _recent_terminations(limit=20, log_path=None, db_path_=None):
-    """`recent` array (§2 criterion 1c): at most `limit` newest-first
+    """`recent` array (§2 criteria 1c/2c): at most `limit` newest-first
     terminated chains — a `dispatch` paired with its matching `dispatch_end`
-    (outcome=attrs.result, duration=dispatch_end.ts - dispatch.ts), or a
-    `pr_merged` span (outcome="merged", duration=its own recorded dur_ms).
-    Single ascending pass over ts,rowid order (matching every other query's
+    (outcome=attrs.result, duration=dispatch_end.ts - dispatch.ts, source=
+    "dispatch_end span"), or a `pr_merged` span (outcome="merged",
+    duration=its own recorded dur_ms, source="pr_merged span"). Single
+    ascending pass over ts,rowid order (matching every other query's
     tie-break); terminations are appended in the SAME order their terminal
     row is visited, so reversing the finished list yields newest-first
     without a second sort."""
@@ -626,12 +656,14 @@ def _recent_terminations(limit=20, log_path=None, db_path_=None):
                 "trace_id": r["trace_id"], "kind": "dispatch_end",
                 "slice": attrs.get("slice"), "outcome": attrs.get("result"),
                 "ts": r["ts"], "dur_ms": dur_ms,
+                "source": "dispatch_end span",
             })
         elif r["kind"] == "pr_merged":
             terminations.append({
                 "trace_id": r["trace_id"], "kind": "pr_merged",
                 "pr": attrs.get("pr"), "outcome": "merged",
                 "ts": r["ts"], "dur_ms": r["dur_ms"],
+                "source": "pr_merged span",
             })
     terminations.reverse()
     return terminations[:limit]
@@ -640,7 +672,10 @@ def _recent_terminations(limit=20, log_path=None, db_path_=None):
 def _build_runboard(log_path=None, db_path_=None, recent_limit=20):
     """Blocking builder — pure sqlite+JSONL read, no gh calls. Exposed
     directly so tests can call it without going through the background
-    thread (mirrors _build_recorded_runs's own house pattern)."""
+    thread (mirrors _build_recorded_runs's own house pattern). Echoes
+    `stale_threshold_seconds` and `ledger` (slice #1173, §2 criteria
+    1d/2d) so the UI reads both from the response rather than hardcoding
+    either."""
     resolved_db = db_path_ or db_path()
     fold(log_path=log_path, db_path_=resolved_db, force=False)
     now = _now_entries(log_path=log_path, db_path_=resolved_db)
@@ -651,6 +686,8 @@ def _build_runboard(log_path=None, db_path_=None, recent_limit=20):
         "next": next_list,
         "next_source": next_source,
         "recent": recent,
+        "stale_threshold_seconds": RUNBOARD_STALE_THRESHOLD_SECONDS,
+        "ledger": _LEDGER_DISPLAY_NAME,
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -668,6 +705,8 @@ def _runboard_background(log_path, db_path_):
     except Exception as exc:
         payload = {
             "now": [], "next": [], "next_source": "none-recorded", "recent": [],
+            "stale_threshold_seconds": RUNBOARD_STALE_THRESHOLD_SECONDS,
+            "ledger": _LEDGER_DISPLAY_NAME,
             "error": str(exc), "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
     with _runboard_cache_lock:
@@ -748,9 +787,10 @@ def _cmd_path(args):
 
 def _cmd_runboard(args):
     board = _build_runboard()
-    print(f"now ({len(board['now'])}):")
+    print(f"now ({len(board['now'])}, stale-threshold={board['stale_threshold_seconds']}s):")
     for e in board["now"]:
-        print(f"  slice=#{e['slice']} prd={e.get('prd', '?')} elapsed={e['elapsed_seconds']}s")
+        stale_marker = " STALE" if e.get("stale") else ""
+        print(f"  slice=#{e['slice']} prd={e.get('prd', '?')} elapsed={e['elapsed_seconds']}s{stale_marker}")
     print(f"next ({len(board['next'])}, source={board['next_source']}):")
     for e in board["next"]:
         print(f"  slice=#{e['slice']} prd={e.get('prd', '?')}")

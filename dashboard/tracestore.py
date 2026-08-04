@@ -84,12 +84,23 @@ Python API (for dashboard reuse):
     stale-while-revalidate cache + daemon thread; the blocking builder
     (`_build_recorded_runs`) is never called from the HTTP request handler
     directly.
+  serve_runboard(log_path=None, db_path_=None) -> dict
+    Background-warmed /api/runboard payload builder (PRD #1170 walking
+    skeleton, slice #1172) — mirrors serve_trace_runs()'s stale-while-
+    revalidate pattern. Returns {now, next, next_source, recent,
+    fetched_at}: `now` = running_dispatches() enriched with elapsed
+    seconds; `next` = the latest `batch_planned` span's ready-set minus
+    `now` (next_source="none-recorded" when no batch_planned span exists,
+    else "batch_planned"); `recent` = at most 20 newest-first terminated
+    chains (dispatch_end / pr_merged) with outcome + duration. Strict
+    reader — never infers state the ledger does not hold (ADR-0078 D1).
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
   python dashboard/tracestore.py fold
   python dashboard/tracestore.py path --pr <n>
   python dashboard/tracestore.py running
+  python dashboard/tracestore.py runboard
 
 utf-8: the JSONL is always read via trace.read_spans() (utf-8), and SQLite
 TEXT columns store native Python str (unicode) without any extra encoding
@@ -508,6 +519,195 @@ def serve_trace_runs(limit=30, log_path=None, db_path_=None):
     return {"status": "computing"}
 
 
+# ---------------------------------------------------------------------------
+# Run-board query (PRD #1170 walking skeleton, slice #1172): now/next/recent
+# from the recorded ledger — strictly a reader, per ADR-0078 D1. `now` reuses
+# running_dispatches() (also the duplicate-dispatch mutex's read side); `next`
+# and `recent` are new queries this slice authors.
+# ---------------------------------------------------------------------------
+def _parse_ts(ts):
+    """Parse a v3 span's UTC ISO ts (`_now_iso()`'s exact format) into an
+    aware datetime. Returns None on any malformed/absent input — callers
+    treat that as "duration unknown" rather than raising."""
+    try:
+        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _now_entries(log_path=None, db_path_=None):
+    """`now` array (§2 criterion 1a): running_dispatches() enriched with
+    elapsed_seconds (now - dispatch ts), and slice/prd/session_id lifted
+    out of attrs for a flat, board-friendly shape."""
+    running = running_dispatches(log_path=log_path, db_path_=db_path_)
+    now_utc = datetime.now(timezone.utc)
+    entries = []
+    for s in running:
+        attrs = s.get("attrs", {}) or {}
+        started = _parse_ts(s.get("ts"))
+        elapsed = int((now_utc - started).total_seconds()) if started else None
+        entries.append({
+            "trace_id": s.get("trace_id"),
+            "slice": attrs.get("slice"),
+            "prd": attrs.get("prd"),
+            "session_id": attrs.get("session_id"),
+            "ts": s.get("ts"),
+            "elapsed_seconds": elapsed,
+        })
+    return entries
+
+
+def _latest_batch_planned(log_path=None, db_path_=None):
+    """Most recent `batch_planned` span across the whole ledger (ORDER BY
+    ts, rowid DESC — the same tie-break convention as every other query in
+    this module, applied in reverse for "latest"). None when absent."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    conn = _connect(resolved_db)
+    try:
+        row = conn.execute(
+            "SELECT * FROM spans WHERE kind = 'batch_planned' "
+            "ORDER BY ts DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return _row_to_span(row) if row else None
+
+
+def _next_entries(now_entries, log_path=None, db_path_=None):
+    """`next` array (§2 criteria 1b/1e): the latest batch_planned span's
+    ready-set minus anything already in `now`. No batch_planned span ->
+    ([], "none-recorded") rather than silently omitting the marker."""
+    latest = _latest_batch_planned(log_path=log_path, db_path_=db_path_)
+    if latest is None:
+        return [], "none-recorded"
+    attrs = latest.get("attrs", {}) or {}
+    ready = attrs.get("ready") or []
+    running_slices = {str(e.get("slice")) for e in now_entries if e.get("slice") is not None}
+    next_list = [
+        {"slice": str(s), "prd": attrs.get("prd")}
+        for s in ready
+        if str(s) not in running_slices
+    ]
+    return next_list, "batch_planned"
+
+
+def _recent_terminations(limit=20, log_path=None, db_path_=None):
+    """`recent` array (§2 criterion 1c): at most `limit` newest-first
+    terminated chains — a `dispatch` paired with its matching `dispatch_end`
+    (outcome=attrs.result, duration=dispatch_end.ts - dispatch.ts), or a
+    `pr_merged` span (outcome="merged", duration=its own recorded dur_ms).
+    Single ascending pass over ts,rowid order (matching every other query's
+    tie-break); terminations are appended in the SAME order their terminal
+    row is visited, so reversing the finished list yields newest-first
+    without a second sort."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    conn = _connect(resolved_db)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM spans WHERE kind IN ('dispatch', 'dispatch_end', 'pr_merged') "
+            "ORDER BY ts, rowid"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    active_start = {}  # trace_id -> most recent open dispatch's ts
+    terminations = []
+    for r in rows:
+        attrs = json.loads(r["attrs_json"]) if r["attrs_json"] else {}
+        if r["kind"] == "dispatch":
+            active_start[r["trace_id"]] = r["ts"]
+        elif r["kind"] == "dispatch_end":
+            start_ts = active_start.pop(r["trace_id"], None)
+            start_dt, end_dt = _parse_ts(start_ts), _parse_ts(r["ts"])
+            dur_ms = int((end_dt - start_dt).total_seconds() * 1000) if start_dt and end_dt else None
+            terminations.append({
+                "trace_id": r["trace_id"], "kind": "dispatch_end",
+                "slice": attrs.get("slice"), "outcome": attrs.get("result"),
+                "ts": r["ts"], "dur_ms": dur_ms,
+            })
+        elif r["kind"] == "pr_merged":
+            terminations.append({
+                "trace_id": r["trace_id"], "kind": "pr_merged",
+                "pr": attrs.get("pr"), "outcome": "merged",
+                "ts": r["ts"], "dur_ms": r["dur_ms"],
+            })
+    terminations.reverse()
+    return terminations[:limit]
+
+
+def _build_runboard(log_path=None, db_path_=None, recent_limit=20):
+    """Blocking builder — pure sqlite+JSONL read, no gh calls. Exposed
+    directly so tests can call it without going through the background
+    thread (mirrors _build_recorded_runs's own house pattern)."""
+    resolved_db = db_path_ or db_path()
+    fold(log_path=log_path, db_path_=resolved_db, force=False)
+    now = _now_entries(log_path=log_path, db_path_=resolved_db)
+    next_list, next_source = _next_entries(now, log_path=log_path, db_path_=resolved_db)
+    recent = _recent_terminations(limit=recent_limit, log_path=log_path, db_path_=resolved_db)
+    return {
+        "now": now,
+        "next": next_list,
+        "next_source": next_source,
+        "recent": recent,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+_runboard_cache: dict = {}
+_runboard_cache_lock = threading.Lock()
+_RUNBOARD_CACHE_TTL = 15  # seconds — shorter than trace-runs: "now" wants fresher reads
+_runboard_computing = False
+
+
+def _runboard_background(log_path, db_path_):
+    global _runboard_computing
+    try:
+        payload = _build_runboard(log_path=log_path, db_path_=db_path_)
+    except Exception as exc:
+        payload = {
+            "now": [], "next": [], "next_source": "none-recorded", "recent": [],
+            "error": str(exc), "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+    with _runboard_cache_lock:
+        _runboard_cache["default"] = {"data": payload, "ts": time.time()}
+        _runboard_computing = False
+
+
+def serve_runboard(log_path=None, db_path_=None):
+    """Stale-while-revalidate serve path for /api/runboard — mirrors
+    serve_trace_runs()'s contract exactly (cached / computing / stale+
+    refreshing-in-background), applied to a single unkeyed cache slot since
+    the run-board takes no limit parameter."""
+    global _runboard_computing
+    with _runboard_cache_lock:
+        cached_entry = _runboard_cache.get("default")
+        now_ts = time.time()
+
+        if cached_entry is not None:
+            expired = (now_ts - cached_entry.get("ts", 0)) >= _RUNBOARD_CACHE_TTL
+            if not expired:
+                return cached_entry["data"]
+            payload = dict(cached_entry["data"])
+            payload["refreshing"] = True
+            if not _runboard_computing:
+                _runboard_computing = True
+                threading.Thread(
+                    target=_runboard_background, args=(log_path, db_path_), daemon=True
+                ).start()
+            return payload
+
+        if _runboard_computing:
+            return {"status": "computing"}
+        _runboard_computing = True
+
+    threading.Thread(
+        target=_runboard_background, args=(log_path, db_path_), daemon=True
+    ).start()
+    return {"status": "computing"}
+
+
 def _cmd_fold(args):
     count = fold(force=True)
     print(f"folded {count} spans into {db_path()}")
@@ -546,6 +746,21 @@ def _cmd_path(args):
     return 0
 
 
+def _cmd_runboard(args):
+    board = _build_runboard()
+    print(f"now ({len(board['now'])}):")
+    for e in board["now"]:
+        print(f"  slice=#{e['slice']} prd={e.get('prd', '?')} elapsed={e['elapsed_seconds']}s")
+    print(f"next ({len(board['next'])}, source={board['next_source']}):")
+    for e in board["next"]:
+        print(f"  slice=#{e['slice']} prd={e.get('prd', '?')}")
+    print(f"recent ({len(board['recent'])}):")
+    for e in board["recent"]:
+        label = f"pr=#{e['pr']}" if e["kind"] == "pr_merged" else f"slice=#{e['slice']}"
+        print(f"  {label} outcome={e['outcome']} dur_ms={e['dur_ms']}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="tracestore.py")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -559,6 +774,9 @@ def main(argv=None):
 
     p_running = sub.add_parser("running", help='"running now" query: dispatch spans lacking a terminal dispatch_end')
     p_running.set_defaults(func=_cmd_running)
+
+    p_runboard = sub.add_parser("runboard", help="now/next/recent run-board query (PRD #1170)")
+    p_runboard.set_defaults(func=_cmd_runboard)
 
     args = parser.parse_args(argv)
     return args.func(args)

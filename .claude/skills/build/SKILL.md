@@ -186,15 +186,14 @@ The gate runs up to **3 rounds total**. Track round count; increment on each FAI
   - **browser route:** `SendUserFile qa-proof/<prd-num>/<slug>` with caption `"PRD #<prd-num> — production-verified: [the PRD's Production check: line]"`.
   - **hook-fire / command-run / static-check routes:** no file to send (no image); instead print the `PROOF:` string inline in the summary beside the verified claim.
 - **Visible-surface screenshot floor (run-to-done complement):** Regardless of proof route, if the shipped work has ANY user-visible surface — a dashboard tab, panel, graph, or report view — the wrap-up MUST capture a post-merge production screenshot from a fresh (restarted/live) environment per rule #20's freshness clause and `SendUserFile` it with a claim-tied caption. The route-scoped SendUserFile items above are the per-route minimum; this floor-raises them for visual work. Non-visual work: send the nearest visible artifact if one exists (e.g. a CLI output excerpt as an inline code block), else state honestly "no visual surface — nearest artifact: [quoted output]". Do NOT send a screenshot of a stale or pre-merge environment; restart the relevant server/dashboard before capturing.
-- **Post-merge green-develop step (ADR-0062 D3):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged develop:
-  1. `bash tools/ci-checks.sh` — must exit 0.
-  2. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
-  3. On success, record the `develop_green` checkpoint via the sanctioned wrapper (repoint target, PRD #1075 criterion 1 rider / slice #1086 — absorbs `tools/record-green.sh`'s own CI+pytest verification and additionally appends a v3 `develop_green` trace span in the same run):
+- **Post-merge green-develop step (ADR-0062 D3, narrowed by [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1):** After all slices have merged (confirmed by `/ship` in step 3) and before marking the feature done, run the post-merge verification on actual merged develop:
+  1. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
+  2. Record the `develop_green` checkpoint via the sanctioned wrapper (repoint target, PRD #1075 criterion 1 rider / slice #1086 — absorbs `tools/record-green.sh`'s own recorded-CI-trust verification — ADR-0079 D1: trusts a recorded GitHub `ci` conclusion for the exact sha instead of re-running the local suite, superseding the standalone `bash tools/ci-checks.sh` mandate previously run as a separate step here — and additionally appends a v3 `develop_green` trace span in the same run):
      ```bash
      python tools/pipe/record-green
      ```
-  4. On failure: the suspect set = squash commits since the last `develop_green` event (≤600 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
-  Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3.
+  3. On failure: the suspect set = squash commits since the last `develop_green` event (≤600 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
+  Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3 and [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1.
 - Mark the feature done; proceed to output.
 
 **FAIL** (`PRODUCTION_VERIFY: FAIL` in qa-tester's trailer) — and `round < 3`:

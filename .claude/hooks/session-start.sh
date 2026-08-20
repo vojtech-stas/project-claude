@@ -99,11 +99,29 @@ if [ "$GH_OK" -ne 1 ]; then
 fi
 
 # ---- GitHub live state (gh + jq required) ------------------------------------
-q_label() {
-  gh issue list --label "$1" --state open --json number,title --limit 3 2>/dev/null \
-    | jq -r 'if length==0 then "0 open"
-             else "\(length)+ open; recent: \([.[] | "#\(.number) \(.title)"] | join(" | "))"
-             end' 2>/dev/null || echo "(query failed)"
+# Formatting helpers: byte-identical to the original inline jq filters (only
+# their INPUT changed -- a local tempfile instead of a live gh|jq pipe -- so
+# additionalContext stays field/format-compatible, per AC 3c4). The `-s`
+# (file exists AND non-empty) guard is required in addition to jq's own
+# `|| echo "(query failed)"`: jq on a genuinely EMPTY file (a failed gh call
+# writes zero bytes -- its own error text goes to the stderr we discard)
+# exits 0 with no output, not an error, so jq's `||` alone would silently
+# degrade to an EMPTY field rather than "(query failed)" -- the ORIGINAL
+# live `gh | jq` pipe caught this via `pipefail` propagating gh's own
+# non-zero exit through the pipeline; that signal doesn't exist once gh's
+# capture and jq's formatting are split across `wait`, so the emptiness
+# check restores the same fallback guarantee explicitly.
+_fmt_open() {
+  [ -s "$1" ] || { echo "(query failed)"; return; }
+  jq -r 'if length==0 then "0 open"
+         else "\(length)+ open; recent: \([.[] | "#\(.number) \(.title)"] | join(" | "))"
+         end' < "$1" 2>/dev/null || echo "(query failed)"
+}
+_fmt_nhprs() {
+  [ -s "$1" ] || { echo "(query failed)"; return; }
+  jq -r 'if length==0 then "0 needs-human PRs"
+         else "\(length)+ needs-human PRs: \([.[] | "#\(.number) \(.title)"] | join(" | "))"
+         end' < "$1" 2>/dev/null || echo "(query failed)"
 }
 
 NH_ISSUES="(gh/jq unavailable)"
@@ -114,17 +132,49 @@ CAP="(gh/jq unavailable)"
 DASH_FRESH="(not checked)"
 
 if [ "$GH_OK" -eq 1 ]; then
-  NH_ISSUES=$(q_label needs-human)
-  SL=$(q_label slice)
-  CAP=$(q_label captured)
-  PR=$(gh pr list --state open --json number,title --limit 3 2>/dev/null \
-       | jq -r 'if length==0 then "0 open"
-                else "\(length)+ open; recent: \([.[] | "#\(.number) \(.title)"] | join(" | "))"
-                end' 2>/dev/null || echo "(query failed)")
-  NH_PRS=$(gh pr list --state open --label needs-human --json number,title --limit 3 2>/dev/null \
-           | jq -r 'if length==0 then "0 needs-human PRs"
-                    else "\(length)+ needs-human PRs: \([.[] | "#\(.number) \(.title)"] | join(" | "))"
-                    end' 2>/dev/null || echo "(query failed)")
+  # Five independent gh queries run CONCURRENTLY as backgrounded jobs, each
+  # writing its RAW JSON to a PRIVATE tempfile (per-query output isolation,
+  # the slicer's named risk: one query's timeout/rate-limit can never
+  # corrupt a sibling's captured text). jq formatting runs AFTER `wait`,
+  # sequentially, against the already-captured local files -- measured
+  # faster than piping gh|jq live inside each backgrounded job (5 concurrent
+  # jq spawns contending with the network-bound gh calls cost ~2s in
+  # profiling; concurrent-gh + sequential-local-jq cost ~1.1s for the same
+  # fixture -- see PR body). Each formatting call keeps the query's own
+  # `|| echo "(query failed)"` fallback (also degrades to that text when a
+  # job's tempfile was never written at all -- e.g. gh killed mid-run).
+  # Primitive: bash background jobs + `wait` (chosen over a python3
+  # orchestrator per PRD #1193 §6 OQ2 -- see PR body for the measured
+  # before/after medians). The serial `git fetch origin develop` +
+  # divergence count above is untouched -- explicit rabbit-hole guard
+  # (PRD #1193 §6 / slice #1199 out-of-bounds); the #1191 dashboard-liveness
+  # probe below is untouched too. ADR-0079 D3 / slice #1199.
+  T_NH=$(mktemp 2>/dev/null) || T_NH="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/session-start-gh-nh-$$-$RANDOM"
+  T_SL=$(mktemp 2>/dev/null) || T_SL="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/session-start-gh-sl-$$-$RANDOM"
+  T_CAP=$(mktemp 2>/dev/null) || T_CAP="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/session-start-gh-cap-$$-$RANDOM"
+  T_PR=$(mktemp 2>/dev/null) || T_PR="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/session-start-gh-pr-$$-$RANDOM"
+  T_NHPR=$(mktemp 2>/dev/null) || T_NHPR="${TMPDIR:-${TEMP:-${TMP:-/tmp}}}/session-start-gh-nhpr-$$-$RANDOM"
+
+  gh issue list --label needs-human --state open --json number,title --limit 3 > "$T_NH" 2>/dev/null &
+  PID_NH=$!
+  gh issue list --label slice --state open --json number,title --limit 3 > "$T_SL" 2>/dev/null &
+  PID_SL=$!
+  gh issue list --label captured --state open --json number,title --limit 3 > "$T_CAP" 2>/dev/null &
+  PID_CAP=$!
+  gh pr list --state open --json number,title --limit 3 > "$T_PR" 2>/dev/null &
+  PID_PR=$!
+  gh pr list --state open --label needs-human --json number,title --limit 3 > "$T_NHPR" 2>/dev/null &
+  PID_NHPR=$!
+
+  wait "$PID_NH" "$PID_SL" "$PID_CAP" "$PID_PR" "$PID_NHPR" 2>/dev/null
+
+  NH_ISSUES=$(_fmt_open "$T_NH")
+  SL=$(_fmt_open "$T_SL")
+  CAP=$(_fmt_open "$T_CAP")
+  PR=$(_fmt_open "$T_PR")
+  NH_PRS=$(_fmt_nhprs "$T_NHPR")
+
+  rm -f "$T_NH" "$T_SL" "$T_CAP" "$T_PR" "$T_NHPR" 2>/dev/null
 fi
 
 # ---- Dashboard freshness (no gh required) -----------------------------------

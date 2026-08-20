@@ -103,6 +103,9 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 #### Source: ADR-0078 (`decisions/0078-run-board-landing-view.md`)
 - **PIP-022:** `/api/runboard` serves now/next/recent strictly from recorded v3 spans (never inferred, backfilled, or reconstructed), rendered first at `/` with the architecture view one click away; the production check fails outright if any rendered row cannot be traced to a canonical-ledger span, the board renders normally while the ledger is unreadable, or the ledger holds no dispatch/batch_planned span in the verification window (ADR-0078 D1).
 
+#### Source: ADR-0079 (`decisions/0079-recorded-ci-trust-and-hook-diet.md`)
+- **PIP-023:** Post-merge green evidence is the recorded GitHub `ci` conclusion for the exact merged/certified sha — deriving that sha internally from a local ref (rather than receiving it as a parameter) is forbidden on evidence paths, and a mismatch between the certified sha and the evidence sha refuses rather than proceeds (ADR-0079 D1/D2); the separate always-run `bash tools/ci-checks.sh` SKILL-mandated re-run is deleted at all three sites since record-green's own recorded-CI-trust logic already performs the equivalent verification (ADR-0079 D1b).
+
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 

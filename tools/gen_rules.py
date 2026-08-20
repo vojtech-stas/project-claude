@@ -131,12 +131,13 @@ SCOPE_PATHS: dict[str, str] = {
 # This is the TOTAL number of rule_ids across all active ADR scopes as of the
 # scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
 # PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162),
-# then by ADR-0078's 1 new PIP-* id (slice #1172).
+# then by ADR-0078's 1 new PIP-* id (slice #1172), then by ADR-0079's 1 new
+# PIP-* id (slice #1197).
 # --check verifies that the live count equals this value; a mismatch means a
 # rule was silently added or removed without updating this constant.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(22) + REG(3) + SLI(5) + VER(8) = 83
-RULE_IDS_BASELINE: int = 83
+#            ISO(6) + OUT(5) + PIP(23) + REG(3) + SLI(5) + VER(8) = 84
+RULE_IDS_BASELINE: int = 84
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -430,6 +431,18 @@ _RULE_STATEMENTS: dict[str, str] = {
         "while the ledger is unreadable, or the ledger holds no "
         "dispatch/batch_planned span in the verification window "
         "(ADR-0078 D1)."
+    ),
+    # ADR-0079: recorded-CI trust post-merge + sha-attributed evidence + hook diet
+    "PIP-023": (
+        "Post-merge green evidence is the recorded GitHub `ci` conclusion for "
+        "the exact merged/certified sha — deriving that sha internally from a "
+        "local ref (rather than receiving it as a parameter) is forbidden on "
+        "evidence paths, and a mismatch between the certified sha and the "
+        "evidence sha refuses rather than proceeds (ADR-0079 D1/D2); the "
+        "separate always-run `bash tools/ci-checks.sh` SKILL-mandated re-run "
+        "is deleted at all three sites since record-green's own recorded-CI-"
+        "trust logic already performs the equivalent verification (ADR-0079 "
+        "D1b)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

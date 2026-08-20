@@ -123,18 +123,28 @@ elif [ -n "${RECORD_GREEN_GH_CMD:-}" ]; then
   echo "INFO: CI status from RECORD_GREEN_GH_CMD (legacy injection) = '$CI_STATUS'"
 else
   # Real path: delegate to dashboard/health.py::_fetch_github_ci_conclusion().
-  # It finds the merged PR whose mergeCommit.oid == develop HEAD and reads
-  # THAT PR's ci check — works correctly for squash-merge commits.
+  # It finds the merged PR whose mergeCommit.oid == the sha being certified
+  # and reads THAT PR's ci check — works correctly for squash-merge commits.
   # Use git show-toplevel (not git-common-dir) for the dashboard import so
   # worktree runs load the worktree's own health.py (which has the function),
   # not the root repo's potentially-older copy.
+  #
+  # sha=$DEV_SHA (ADR-0079 D2 / #1192 fix): DEV_SHA was ALREADY resolved
+  # above (step 1) — either the caller's explicit sha or this script's own
+  # fetch-then-rev-parse fallback. Passing it through here means
+  # _fetch_github_ci_conclusion() uses it DIRECTLY instead of re-deriving
+  # its own sha internally via a SECOND `git rev-parse origin/develop`
+  # call. Without this, the two independent derivations could disagree if
+  # origin/develop moves between them (e.g. a different PR merges in the
+  # interim) — the exact live incident (#1192) where record-green certified
+  # the correct sha but the CI-evidence line cited an unrelated PR's run.
   SCRIPT_REPO_ROOT="$(git rev-parse --show-toplevel)"
   COMMON_LOGROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
   CI_PY_OUT="$(python3 -c "
 import sys
 sys.path.insert(0, '$SCRIPT_REPO_ROOT/dashboard')
 from health import _fetch_github_ci_conclusion
-status, detail = _fetch_github_ci_conclusion('$COMMON_LOGROOT')
+status, detail = _fetch_github_ci_conclusion('$COMMON_LOGROOT', sha='$DEV_SHA')
 print(status)
 print(detail)
 " 2>/dev/null || echo "unavailable")"

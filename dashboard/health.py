@@ -258,22 +258,52 @@ _RELEASE_READY_CICHECKS_TIMEOUT_S = 300
 _RELEASE_READY_PYTEST_TIMEOUT_S = 300
 
 
-def _fetch_github_ci_conclusion(repo_root) -> tuple:
-    """Query GitHub for the `ci` check conclusion on develop's HEAD commit.
+def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
+    """Query GitHub for the `ci` check conclusion on the given (or develop
+    HEAD) commit.
 
     Strategy (issue #986):
-      1. Fetch the latest merged PRs targeting develop (gh pr list --base develop
+      1. Resolve the sha to query — see `sha` parameter below.
+      2. Fetch the latest merged PRs targeting develop (gh pr list --base develop
          --state merged --limit N --json number,mergeCommit).
-      2. Find the PR whose mergeCommit.oid matches `git rev-parse origin/develop`.
-      3. Run `gh pr checks <n> --json name,state` and look for name="ci".
-      4. Map state: SUCCESS/PASS → "pass"; FAILURE/ERROR/CANCELLED → "fail";
+      3. Find the PR whose mergeCommit.oid matches the resolved sha.
+      4. Run `gh pr checks <n> --json name,state` and look for name="ci".
+      5. Map state: SUCCESS/PASS → "pass"; FAILURE/ERROR/CANCELLED → "fail";
          anything else (PENDING/IN_PROGRESS) → "pending".
+
+    Parameters
+    ----------
+    repo_root : the repo root to run `git` from (only consulted when `sha`
+                is omitted — see below).
+    sha        : ADR-0079 D2 (#1192 fix) — the EXACT sha to certify, when the
+                caller already holds it (e.g. tools/record-green.sh's own
+                resolved DEV_SHA, itself possibly a caller-provided confirmed
+                merge oid per #1188). When given, this function uses it
+                DIRECTLY and skips the internal `git rev-parse
+                origin/develop` derivation entirely — the PR-mergeCommit
+                search below can then only ever match the requested sha,
+                never a stale local ref. This closes the #1192 class: the
+                OLD (sha-less) code re-derived its own sha independently of
+                whatever the caller had already resolved, so a local ref
+                that moved between the two derivations (e.g. a DIFFERENT PR
+                merging to develop in between) could cause this function to
+                cite a NEIGHBOURING PR's CI run instead of the one the
+                caller actually meant to certify (live incident: PR
+                #1190/#1191).
+                STRICTLY ADDITIVE: when `sha` is omitted (None, the default),
+                behavior is byte-identical to the pre-#1192-fix code — every
+                existing no-sha caller (e.g. RELEASE-READY condition (a)) is
+                unaffected.
 
     Returns (status, detail) where status is one of:
       "pass"        — GitHub ci check succeeded
       "fail"        — GitHub ci check failed
       "pending"     — GitHub ci check is still running
-      "unavailable" — gh CLI unavailable, rate-limited, or no matching PR found
+      "unavailable" — gh CLI unavailable, rate-limited, or no matching PR
+                      found for the resolved sha (UNCHANGED semantics —
+                      the sha parameter does not introduce a new status
+                      value nor alter this branch; #1166's separate
+                      unavailable-sentinel conflation is untouched here)
 
     This function is intentionally injectable/monkeypatchable at module level so
     tests can substitute a mock without subprocess patching.
@@ -283,20 +313,25 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
 
     repo_root = Path(repo_root)
 
-    # Step 1: Get develop HEAD SHA.
-    try:
-        sha_r = _sp.run(
-            ["git", "rev-parse", "origin/develop"],
-            capture_output=True, text=True, timeout=10,
-            cwd=str(repo_root),
-        )
-        if sha_r.returncode != 0:
-            return "unavailable", "git rev-parse origin/develop failed"
-        develop_sha = sha_r.stdout.strip()
-    except Exception as exc:
-        return "unavailable", f"git rev-parse error: {exc}"
+    if sha:
+        # Explicit sha (ADR-0079 D2): use it as-is, no local git derivation.
+        develop_sha = sha
+    else:
+        # Step 1: Get develop HEAD SHA (byte-identical to the pre-#1192-fix
+        # code — this branch is untouched by the sha parameter's addition).
+        try:
+            sha_r = _sp.run(
+                ["git", "rev-parse", "origin/develop"],
+                capture_output=True, text=True, timeout=10,
+                cwd=str(repo_root),
+            )
+            if sha_r.returncode != 0:
+                return "unavailable", "git rev-parse origin/develop failed"
+            develop_sha = sha_r.stdout.strip()
+        except Exception as exc:
+            return "unavailable", f"git rev-parse error: {exc}"
 
-    # Step 2: Fetch recent merged PRs to develop and find the one matching HEAD.
+    # Step 3: Fetch recent merged PRs to develop and find the one matching the resolved sha.
     # Routed through gh_cache (ttl=30s, timeout=5s) so a slow gh degrades to
     # "unavailable" (which triggers the ci-checks.sh local fallback) rather than
     # blocking the request path for up to 20s (PRD #993 cr.3, slice #996).
@@ -327,7 +362,7 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
             f"(checked {len(prs)} recent PRs)"
         )
 
-    # Step 3: Query check status for that PR (via gh_cache, same degrade policy).
+    # Step 4: Query check status for that PR (via gh_cache, same degrade policy).
     try:
         _chk_rc, _chk_out = _health_gh_fetch(
             ["pr", "checks", str(matching_pr), "--json", "name,state"],
@@ -341,7 +376,7 @@ def _fetch_github_ci_conclusion(repo_root) -> tuple:
     except Exception as exc:
         return "unavailable", f"gh pr checks exception: {exc}"
 
-    # Step 4: Find the `ci` check and map its state.
+    # Step 5: Find the `ci` check and map its state.
     ci_entry = next(
         (c for c in checks if (c.get("name") or "").lower() == "ci"),
         None,

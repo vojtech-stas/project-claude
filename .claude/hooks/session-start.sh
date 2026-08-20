@@ -128,12 +128,24 @@ if [ "$GH_OK" -eq 1 ]; then
 fi
 
 # ---- Dashboard freshness (no gh required) -----------------------------------
+# Identity-verifying (#1184 incident fix, slice #1189): distinguish "no
+# listener at all" from "occupied by a foreign listener" (an HTTPError means
+# SOMETHING answered — never conflate that with the server being down).
 if command -v python3 >/dev/null 2>&1; then
   DASH_FRESH=$(python3 -c "
-import urllib.request, json, datetime, sys
+import urllib.request, urllib.error, json, datetime, sys
 try:
     resp = urllib.request.urlopen('http://localhost:8765/api/meta', timeout=2)
-    data = json.loads(resp.read())
+    body = resp.read()
+    try:
+        data = json.loads(body)
+    except Exception:
+        print('dashboard OCCUPIED (foreign listener: non-JSON /api/meta response)')
+        sys.exit(0)
+    sha = data.get('sha', '')
+    if not sha:
+        print('dashboard OCCUPIED (foreign listener: /api/meta missing sha field)')
+        sys.exit(0)
     ts = data.get('ts', '')
     if ts:
         dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
@@ -141,6 +153,8 @@ try:
         print(f'dashboard up ({age_m}m since last sync)')
     else:
         print('dashboard up (no ts in /api/meta)')
+except urllib.error.HTTPError as e:
+    print(f'dashboard OCCUPIED (foreign listener: HTTP {e.code} on /api/meta)')
 except Exception as e:
     print(f'dashboard unreachable ({e})')
 " 2>/dev/null || echo "(check failed)")

@@ -187,10 +187,11 @@ class TestGenRulesBaseline(unittest.TestCase):
     def test_baseline_bumped_to_82(self):
         # Baseline is a moving conservation counter — every later ADR that
         # adds new rule_ids bumps it further (e.g. ADR-0078's PIP-022 moved
-        # it 82 -> 83, slice #1172). This test's job is unchanged: confirm
-        # slice #1162's own PIP-020/021 rule_ids are still represented in
-        # the live baseline, not that the literal number stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 83", self.text)
+        # it 82 -> 83, slice #1172; ADR-0079's PIP-023 moved it 83 -> 84,
+        # slice #1197). This test's job is unchanged: confirm slice #1162's
+        # own PIP-020/021 rule_ids are still represented in the live
+        # baseline, not that the literal number stays frozen at 82.
+        self.assertIn("RULE_IDS_BASELINE: int = 84", self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)

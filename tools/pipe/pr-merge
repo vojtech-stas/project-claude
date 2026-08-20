@@ -200,14 +200,24 @@ def _pending_message(pr):
 # RECORD-GREEN CHAINING (slice #1134 / PRD #1127 criterion 4, ADR-0076 D1)
 # ---------------------------------------------------------------------------
 
-def _chain_record_green(deadline):
+def _chain_record_green(deadline, sha=None):
     """Tail-invoke tools/pipe/record-green from a FRESHLY confirmed merge,
     bounded by pr-merge's own REMAINING wall-clock budget for THIS
     invocation -- never a fresh budget. Never raises; never changes the
     caller's exit code -- the merge already succeeded and was already
     recorded before this runs, so record-green's outcome (or the budget
     being exhausted before/during the call) is only ever NAMED, honestly,
-    on stdout/stderr (mirrors the #1102 non-fatal-enrichment posture)."""
+    on stdout/stderr (mirrors the #1102 non-fatal-enrichment posture).
+
+    `sha` (#1188 / root-cause #1183): the CONFIRMED merge-commit oid this
+    invocation already holds from the GitHub REST API, passed straight
+    through as record-green's explicit sha argument so the chained call
+    certifies the sha that was actually just merged -- never a local
+    `origin/develop` ref that can be stale by the time this fires (the
+    ci-trust fast path, #1163, made the chain fire 2-6s post-merge, which
+    widened that exposure). When `sha` is falsy (e.g. the GitHub API
+    response omitted merge_commit_sha), falls back to record-green's own
+    no-arg fetch-then-resolve path, preserving prior behavior."""
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         print(
@@ -217,8 +227,11 @@ def _chain_record_green(deadline):
             file=sys.stderr,
         )
         return
+    cmd = [sys.executable, _RECORD_GREEN]
+    if sha:
+        cmd.append(sha)
     try:
-        result = subprocess.run([sys.executable, _RECORD_GREEN], timeout=remaining)
+        result = subprocess.run(cmd, timeout=remaining)
     except subprocess.TimeoutExpired:
         print(
             f"pr-merge: record-green TIMED OUT after {remaining:.0f}s "
@@ -343,7 +356,7 @@ def _do_confirm(pr, deadline, start):
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
     trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha}")
-    _chain_record_green(deadline)
+    _chain_record_green(deadline, sha)
     return 0
 
 
@@ -405,7 +418,7 @@ def _do_default(pr, deadline, start):
     trace.emit_span(trace_id=f"pr-{pr}", kind="pr_merged", attrs=attrs, dur_ms=dur_ms)
     trace.emit_span(trace_id=f"pr-{pr}", kind="verdict", attrs=_verdict_attrs(pr, approve_comment))
     print(f"pr-merge: PR #{pr} merged sha={sha} attempts={attempt} behind_retried={attempt - 1}")
-    _chain_record_green(deadline)
+    _chain_record_green(deadline, sha)
     return 0
 
 

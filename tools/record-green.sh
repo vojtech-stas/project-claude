@@ -2,11 +2,20 @@
 # record-green.sh — verify develop is genuinely green, then record develop_green.
 #
 # USAGE:
-#   bash tools/record-green.sh [--dry-run]
+#   bash tools/record-green.sh [--dry-run] [<sha>]
 #
-# What it does (slice #1032 / PRD #1031; ci-trust fast path per #1161):
-#   1. Resolves develop HEAD sha (git rev-parse origin/develop).
-#   2. Fetches the GitHub 'ci' check conclusion for the EXACT develop HEAD sha.
+# What it does (slice #1032 / PRD #1031; ci-trust fast path per #1161;
+# explicit-sha certification per #1188 / root-cause #1183):
+#   1. Resolves the sha to certify:
+#      - EXPLICIT <sha> argument given (e.g. the confirmed merge oid a caller
+#        like tools/pipe/pr-merge already holds from the GitHub API) -> use it
+#        directly, no git call at all. This is the primary path: it kills the
+#        stale-local-ref class at the root rather than papering over it.
+#      - NO <sha> argument given (standalone/manual invocation) -> fetch
+#        `origin develop` FIRST, then resolve `git rev-parse origin/develop`
+#        (falls back to local `develop` if origin resolution fails). A stale
+#        local remote-tracking ref can never be certified on this path again.
+#   2. Fetches the GitHub 'ci' check conclusion for the EXACT sha being certified.
 #      - conclusion == 'pass'        -> the recorded CI run (tools/ci-checks.sh,
 #        which itself runs `pytest tests/` as a required sub-check — REG-001)
 #        ALREADY proves the suite green for this sha. Trust it: skip the local
@@ -48,19 +57,45 @@
 set -euo pipefail
 
 DRY_RUN=0
+EXPLICIT_SHA=""
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) DRY_RUN=1 ;;
-    *) echo "ERROR: unknown argument: $arg" >&2; exit 1 ;;
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --*)
+      echo "ERROR: unknown argument: $arg" >&2
+      exit 1
+      ;;
+    *)
+      if [ -n "$EXPLICIT_SHA" ]; then
+        echo "ERROR: unexpected extra positional argument: $arg (sha already set to $EXPLICIT_SHA)" >&2
+        exit 1
+      fi
+      EXPLICIT_SHA="$arg"
+      ;;
   esac
 done
 
-# --- 1. Resolve develop HEAD sha ---
-DEV_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
-  echo "ERROR: cannot resolve develop HEAD — fetch origin first" >&2
-  exit 1
-}
-echo "INFO: develop HEAD = $DEV_SHA"
+# --- 1. Resolve the sha to certify (#1188: explicit sha wins outright; the
+# no-arg fallback fetches origin develop FIRST so a stale local
+# remote-tracking ref can never be certified) ---
+if [ -n "$EXPLICIT_SHA" ]; then
+  DEV_SHA="$EXPLICIT_SHA"
+  echo "INFO: certifying caller-provided sha = $DEV_SHA (e.g. a confirmed merge oid)"
+else
+  echo "INFO: no explicit sha provided — fetching origin develop before resolving fallback ref"
+  if git fetch origin develop --quiet 2>/dev/null; then
+    echo "INFO: fetched origin develop"
+  else
+    echo "WARN: git fetch origin develop failed — falling back to existing local ref (may be stale)" >&2
+  fi
+  DEV_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
+    echo "ERROR: cannot resolve develop HEAD — fetch origin first" >&2
+    exit 1
+  }
+  echo "INFO: develop HEAD (post-fetch) = $DEV_SHA"
+fi
 
 # --- 2a. Verify GitHub ci conclusion via PR-mergeCommit lookup ---
 # Squash-merge commits (every develop HEAD in the two-tier workflow) have NO

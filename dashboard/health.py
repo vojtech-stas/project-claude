@@ -4805,7 +4805,12 @@ def check_stale_server() -> dict:
     Compares the sha reported by /api/meta against the current git HEAD.
     PASS  when server sha == HEAD (server loaded current code).
     FAIL  when sha differs from HEAD OR /api/meta reports stale=True.
-    WARN  when the server is not reachable (no server running is not stale).
+    FAIL  (occupied=True) when something answers at the dashboard port but
+          fails the identity check — non-200 status, non-JSON body, or a
+          missing "sha" field. A foreign listener squatting the port is
+          NEVER conflated with "no server running" (#1184 incident fix).
+    WARN  when the server is genuinely not reachable at all (connection
+          refused/timeout — no server running is not stale).
 
     Supports env-var overrides for offline testing:
       _STALE_SERVER_META_OVERRIDE  — JSON string for the /api/meta response body
@@ -4813,7 +4818,9 @@ def check_stale_server() -> dict:
       _STALE_SERVER_HEAD_OVERRIDE  — HEAD sha string (overrides git rev-parse).
 
     Per ADR-0071 D5 (server-staleness claim); surfaces the #726 staleness
-    condition as an honest registry row.
+    condition as an honest registry row. Identity-verifying per the #1184
+    root-cause incident (slice #1189): an HTTP error response means SOMETHING
+    answered — that is never the same as no server running.
     """
     import json as _json
     import urllib.request as _urllib_request
@@ -4860,12 +4867,26 @@ def check_stale_server() -> dict:
                 "detail": f"meta override parse error: {exc}",
             }
     else:
-        # Production path: try localhost:8765 (the canonical dashboard port)
+        # Production path: try localhost:8765 (the canonical dashboard port).
+        # Identity-verifying (#1184 fix): HTTPError means SOMETHING answered
+        # at this port — it must be classified occupied, never "unreachable".
+        # HTTPError is a URLError subclass, so it is caught BEFORE the
+        # generic URLError/OSError branch (which is genuine no-listener).
         try:
             with _urllib_request.urlopen(
                 "http://localhost:8765/api/meta", timeout=3
             ) as resp:
                 meta = _json.loads(resp.read().decode("utf-8"))
+        except _urllib_error.HTTPError as exc:
+            return {
+                "id": "STALE-SERVER",
+                "result": "FAIL",
+                "occupied": True,
+                "detail": (
+                    f"occupied by a foreign listener: HTTP {exc.code} answering "
+                    f"/api/meta at localhost:8765 (not a project-claude dashboard)"
+                ),
+            }
         except (_urllib_error.URLError, OSError):
             return {
                 "id": "STALE-SERVER",
@@ -4873,10 +4894,13 @@ def check_stale_server() -> dict:
                 "detail": "dashboard server not reachable at localhost:8765 (no server running is not stale)",
             }
         except Exception as exc:
+            # Includes JSON parse failures — a 200 response with a
+            # non-conforming body is also "occupied", not unreachable.
             return {
                 "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": f"unexpected error fetching /api/meta: {exc}",
+                "result": "FAIL",
+                "occupied": True,
+                "detail": f"occupied by a foreign listener: non-conforming /api/meta response ({exc})",
             }
 
     # --- 3. Compare sha and stale flag ---
@@ -4886,8 +4910,9 @@ def check_stale_server() -> dict:
     if not server_sha:
         return {
             "id": "STALE-SERVER",
-            "result": "WARN",
-            "detail": "server /api/meta did not return a sha; cannot compare",
+            "result": "FAIL",
+            "occupied": True,
+            "detail": "occupied by a foreign listener: /api/meta did not return a sha field",
         }
 
     if server_stale_flag or server_sha != head_sha:

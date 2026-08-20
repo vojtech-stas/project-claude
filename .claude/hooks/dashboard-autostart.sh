@@ -71,38 +71,51 @@ if [ -f "$DASHBOARD_UP_PS1" ] && command -v powershell >/dev/null 2>&1; then
   exit 0
 fi
 
-# --- Idempotency check (ADR-0033 D1.4): is the server already up on 127.0.0.1:8765? ---
-HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 http://127.0.0.1:8765/api/architecture 2>/dev/null || echo "000")
+# --- Idempotency check (ADR-0033 D1.4): is OUR server already up on
+# 127.0.0.1:8765? Identity-verifying (#1184 incident fix, slice #1189):
+# uses the shared dashboard_probe_identity contract (lib-root.sh) instead of
+# trusting any HTTP 200 from the old architecture-endpoint probe — a foreign
+# listener answering that endpoint must never be mistaken for a healthy
+# same-code server.
+PROBE_RESULT=$(dashboard_probe_identity "$PYTHON" "http://127.0.0.1:8765" 1)
 
-if [ "$HTTP_STATUS" = "200" ]; then
-  # Server is up — check if it's serving current code (#846 defect 1).
-  # Query /api/meta for the sha the running server captured at startup.
-  SERVER_SHA=$(curl -s --max-time 2 http://127.0.0.1:8765/api/meta 2>/dev/null \
-    | "$PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(d.get('sha',''))" \
-    2>/dev/null || echo "")
+case "$PROBE_RESULT" in
+  ok\ *)
+    # Server is up and identity-verified — check if it's serving current
+    # code (#846 defect 1).
+    SERVER_SHA="${PROBE_RESULT#ok }"
+    HEAD_SHA=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo "")
 
-  # Get the current HEAD sha of the main repo.
-  HEAD_SHA=$(git -C "$MAIN_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+    if [ -n "$SERVER_SHA" ] && [ -n "$HEAD_SHA" ] && [ "$SERVER_SHA" = "$HEAD_SHA" ]; then
+      # Sha matches — server is current; nothing to do.
+      exit 0
+    fi
 
-  if [ -n "$SERVER_SHA" ] && [ -n "$HEAD_SHA" ] && [ "$SERVER_SHA" = "$HEAD_SHA" ]; then
-    # Sha matches — server is current; nothing to do.
+    # Sha mismatch (or couldn't read sha) → stale server; restart from current code.
+    if [ -n "$SERVER_SHA" ] && [ -n "$HEAD_SHA" ]; then
+      warn "stale server detected (server sha: ${SERVER_SHA:0:8}, HEAD: ${HEAD_SHA:0:8}); restarting..."
+    else
+      warn "could not verify server sha; restarting to ensure current code is served..."
+    fi
+
+    if [ -f "$RESTART_HELPER" ]; then
+      bash "$RESTART_HELPER" "$SERVER_SCRIPT" >&2 || warn "restart-dashboard.sh failed; server may be stale"
+    else
+      warn "restart-dashboard.sh not found at $RESTART_HELPER — cannot auto-restart stale server"
+    fi
     exit 0
-  fi
-
-  # Sha mismatch (or couldn't read sha) → stale server; restart from current code.
-  if [ -n "$SERVER_SHA" ] && [ -n "$HEAD_SHA" ]; then
-    warn "stale server detected (server sha: ${SERVER_SHA:0:8}, HEAD: ${HEAD_SHA:0:8}); restarting..."
-  else
-    warn "could not verify server sha; restarting to ensure current code is served..."
-  fi
-
-  if [ -f "$RESTART_HELPER" ]; then
-    bash "$RESTART_HELPER" "$SERVER_SCRIPT" >&2 || warn "restart-dashboard.sh failed; server may be stale"
-  else
-    warn "restart-dashboard.sh not found at $RESTART_HELPER — cannot auto-restart stale server"
-  fi
-  exit 0
-fi
+    ;;
+  occupied\ *)
+    # #1184 incident fix: something answered on 8765 but failed the
+    # identity check — a foreign listener, not our dashboard. Spawning
+    # here would collide on the port, so warn loudly and stop.
+    warn "port 8765 occupied by a foreign listener (${PROBE_RESULT#occupied }) — not our dashboard; skipping auto-start"
+    exit 0
+    ;;
+  *)
+    # no-server: nothing answered — fall through to spawn below.
+    ;;
+esac
 
 # --- Spawn dashboard server (ADR-0033 D1.3: project-scoped, localhost-only) ---
 # nohup + disown detaches from the parent shell's job table (works on Linux/macOS/Git Bash)

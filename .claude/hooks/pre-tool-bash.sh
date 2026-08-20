@@ -12,20 +12,36 @@
 # untouched by any check below because none of their clause-head tokens are
 # `gh`/`git`/a `tools/promote.sh` invocation -- their Bash-tool command line
 # is `python tools/pipe/<verb> ...`, so no new allowlist code was needed.
+#
+# SINGLE-SPAWN CONSOLIDATION + OUTCOME BEACON (ADR-0079 D3, slice #1198):
+# the eight sequential jq spawns the pre-consolidation script made on every
+# allow-path fire (one tool_input.command extraction, two classifier-JSON
+# shape-validity checks, five per-flag `jq -r` reads) are replaced by ONE
+# python3 invocation (pre-tool-bash-classify.py, alongside this script) that
+# reads the raw stdin payload directly, extracts the command, classifies it,
+# decides deny/warn/allow, and prints at most two lines: the outcome marker
+# and (for deny/warn) the compact JSON this hook relays to Claude Code. The
+# classifier ALSO appends a second beacon line to hook-fires.jsonl carrying
+# the additive `outcome` field (deny|warn|allow), making real deny history
+# measurable for the first time. Decision logic, message text, and clause-
+# anchoring behavior are byte-identical to the pre-consolidation version --
+# only the spawn count changed. Target: allow-path median wall ≤350 ms (from
+# measured ~652 ms).
+#
 # Reads tool-call JSON on stdin; inspects tool_input.command.
 #
 # INVOCATION-ANCHORED, NOT SUBSTRING (reviewer round-1 BLOCK on PR #1141,
 # fixed here): every check below classifies the command via a python3 clause
-# tokenizer (`classify()`, embedded below) rather than a whole-string grep. The raw
-# command is split into "clauses" on unquoted shell separators (`;`, `&`,
-# `&&`, `|`, `||`, newline) using `shlex.shlex(..., posix=True,
-# punctuation_chars=True)` (quotes are honored — a quoted phrase collapses
-# into ONE token, so it can never masquerade as an adjacent command word).
-# Each clause is checked independently by its OWN first token(s) (skipping
-# leading `VAR=val` env-prefixes) — a mention of a dangerous phrase inside an
-# unrelated command's argument (a commit message, an echo, a grep pattern)
-# never matches, and a dangerous clause in a compound command is never
-# rescued by an unrelated mention in another clause. Full parsing of
+# tokenizer (`classify()`, in pre-tool-bash-classify.py) rather than a
+# whole-string grep. The raw command is split into "clauses" on unquoted
+# shell separators (`;`, `&`, `&&`, `|`, `||`, newline) using `shlex.shlex(...,
+# posix=True, punctuation_chars=True)` (quotes are honored — a quoted phrase
+# collapses into ONE token, so it can never masquerade as an adjacent command
+# word). Each clause is checked independently by its OWN first token(s)
+# (skipping leading `VAR=val` env-prefixes) — a mention of a dangerous phrase
+# inside an unrelated command's argument (a commit message, an echo, a grep
+# pattern) never matches, and a dangerous clause in a compound command is
+# never rescued by an unrelated mention in another clause. Full parsing of
 # command-substitution subshells (`$(...)`, backticks) is intentionally out
 # of scope (ADR-0076 D4 rabbit-hole discipline — see PR body); each clause is
 # examined independently, so under-splitting only ever makes detection MORE
@@ -64,10 +80,10 @@
 #     pipeline itself -- the #1038 untested-gate class). The #918
 #     hand-created-slice class keeps its deterministic lane via CI CHECK 19
 #     (slicer-provenance) + the SLICE-VS-PR reconciler.
-# Soft-degrades if `jq` OR `python3` missing → ERROR beacon + exit 0 (cannot
-# classify; let Claude's built-in classifier handle. jq itself is still
-# required for the earlier `tool_input.command` extraction and for the
-# emit_deny/emit_warn JSON builders).
+# Soft-degrades if `python3` missing → ERROR beacon + exit 0 (cannot
+# classify; let Claude's built-in classifier handle). `jq` is no longer a
+# hard dependency for the allow/deny/warn decision path (slice #1198) --
+# only the fail-open contract below relies on plain bash + python3.
 set -uo pipefail
 
 # Resolve main root + LOG_DIR via lib-root.sh (PRD #668 beacon unification).
@@ -75,196 +91,64 @@ SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 # shellcheck source=lib-root.sh
 source "$SCRIPT_DIR/lib-root.sh"
 
-printf '{"hook":"pre-tool-bash","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
-
-emit_deny() {
-  local reason="$1"
-  if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-  else
-    ESC=$(printf '%s' "$reason" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$ESC"
-  fi
-  exit 0
-}
-
-emit_warn() {
-  local msg="$1"
-  if command -v jq >/dev/null 2>&1; then
-    jq -cn --arg m "$msg" '{systemMessage: $m}'
-  else
-    ESC=$(printf '%s' "$msg" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
-    printf '{"systemMessage":"%s"}\n' "$ESC"
-  fi
-  exit 0
-}
-
-if ! command -v jq >/dev/null 2>&1; then
-  exit 0
+# WORKFLOW_LOG_DIR sandbox seam (mirrors pre-tool-edit.sh / stop-reviewer-gate.sh
+# / log-tool-event.sh): only mkdir when a test harness actually overrides the
+# beacon directory -- the production LOG_DIR is already created by lib-root.sh,
+# so the hot path never pays for a redundant mkdir spawn.
+if [ -n "${WORKFLOW_LOG_DIR:-}" ] && [ ! -d "${WORKFLOW_LOG_DIR}" ]; then
+  mkdir -p "$WORKFLOW_LOG_DIR" 2>/dev/null || true
 fi
+_BEACON_DIR="${WORKFLOW_LOG_DIR:-$LOG_DIR}"
 
-CMD=$(jq -r '.tool_input.command // ""' </dev/stdin 2>/dev/null || echo "")
-[ -z "$CMD" ] && exit 0
+# ATTEMPT beacon FIRST — before ANY parsing (HOK-008).
+printf '{"hook":"pre-tool-bash","ts":"%s"}\n' "$(date -u -Iseconds 2>/dev/null)" >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 emit_error_beacon() {
   local reason="$1"
   printf '{"hook":"pre-tool-bash","status":"ERROR","ts":"%s","reason":"%s"}\n' \
     "$(date -u -Iseconds 2>/dev/null)" "$reason" \
-    >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 }
 
 if ! command -v python3 >/dev/null 2>&1; then
-  emit_error_beacon 'python3 unavailable -- clause-anchored deny-guard classification skipped, fail-open'
+  emit_error_beacon 'python3 unavailable -- single-spawn classification skipped, fail-open'
   exit 0
 fi
 
-# Clause-anchored classification (fixes reviewer round-1 BLOCK on PR #1141:
-# F1 substring-vs-invocation for 7a, F2 clause-decoupling for 7c, + rule #19
-# sweep of the same weakness in 7b and the WIP warn). Passed via env var
-# (mirrors pre-tool-edit.sh's `_PTE_STDIN` pattern) rather than heredoc
-# interpolation, so quotes/backticks/`$` in CMD are never re-interpreted by
-# bash.
-_PTB_JSON=$(export _PTB_CMD="$CMD"; python3 - <<'PYEOF' 2>/dev/null
-import json, os, re, shlex
-
-BOUNDARY_TOKENS = {";", "&", "&&", "|", "||"}
-REFSPEC_MAIN_RE = re.compile(r'(\borigin\s+main\b|:main\b|\brefs/heads/main\b)')
-ENV_PREFIX_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
-
-
-def _tokenize_line(line):
-    try:
-        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        tokens = list(lex)
-    except ValueError:
-        # Unbalanced quote etc. -- never crash; treat the raw line as ONE
-        # clause via a plain whitespace split (fail-safe, not fail-silent).
-        tokens = line.split()
-        return [tokens] if tokens else []
-    clauses, current = [], []
-    for tok in tokens:
-        if tok in BOUNDARY_TOKENS:
-            if current:
-                clauses.append(current)
-            current = []
-        else:
-            current.append(tok)
-    if current:
-        clauses.append(current)
-    return clauses
-
-
-def _clauses(cmd):
-    out = []
-    for line in cmd.split("\n"):
-        out.extend(_tokenize_line(line))
-    return out
-
-
-def _strip_env_prefix(tokens):
-    i = 0
-    while i < len(tokens) and ENV_PREFIX_RE.match(tokens[i]):
-        i += 1
-    return tokens[i:]
-
-
-def classify(cmd):
-    deny_gh_merge = deny_push_main = deny_promote_invocation = warn_wip = False
-    warn_issue_create_label = False
-    for tokens in _clauses(cmd):
-        t = _strip_env_prefix(tokens)
-        if not t:
-            continue
-        head = t[0]
-        if head == "gh" and len(t) >= 3 and t[1] == "pr" and t[2] == "merge":
-            deny_gh_merge = True
-        if (head in ("bash", "sh") and len(t) >= 2 and t[1].endswith("tools/promote.sh")) \
-           or head.endswith("tools/promote.sh"):
-            deny_promote_invocation = True
-        if head == "git" and len(t) >= 2 and t[1] == "push":
-            if REFSPEC_MAIN_RE.search(" ".join(t[2:])):
-                deny_push_main = True
-        if head == "git" and len(t) >= 2 and t[1] == "commit":
-            if "-m" in t[2:] and any("WIP" in tok for tok in t[2:]):
-                warn_wip = True
-        if head == "gh" and len(t) >= 3 and t[1] == "issue" and t[2] == "create":
-            rest = t[3:]
-            for i, tok in enumerate(rest):
-                if tok == "--label" and i + 1 < len(rest):
-                    parts = rest[i + 1].split(",")
-                    if "slice" in parts or "prd" in parts:
-                        warn_issue_create_label = True
-    return {
-        "deny_gh_merge": deny_gh_merge,
-        "deny_push_main": deny_push_main,
-        "deny_promote_invocation": deny_promote_invocation,
-        "warn_wip": warn_wip,
-        "warn_issue_create_label": warn_issue_create_label,
-    }
-
-
-try:
-    raw_cmd = os.environ.get("_PTB_CMD", "")
-    print(json.dumps(classify(raw_cmd)))
-except Exception as exc:
-    print(json.dumps({"error": str(exc)[:200]}))
-PYEOF
-)
+# Single python3 invocation: reads the ORIGINAL stdin payload directly (no
+# pre-read into a bash variable, no heredoc — the classifier is a companion
+# file, so real stdin is never consumed by anything else), extracts
+# tool_input.command, classifies it, decides deny/warn/allow, writes the
+# outcome beacon, and prints the outcome marker (+decision JSON for
+# deny/warn) — ADR-0079 D3 / slice #1198.
+_PTB_OUT=$(_PTB_BEACON_DIR="$_BEACON_DIR" python3 "$SCRIPT_DIR/pre-tool-bash-classify.py" 2>/dev/null)
 _PTB_RC=$?
 
-if [ $_PTB_RC -ne 0 ] || ! printf '%s' "$_PTB_JSON" | jq -e . >/dev/null 2>&1 \
-   || printf '%s' "$_PTB_JSON" | jq -e 'has("error")' >/dev/null 2>&1; then
-  emit_error_beacon "clause classifier failed (rc=$_PTB_RC) -- fail-open"
+if [ $_PTB_RC -ne 0 ]; then
+  emit_error_beacon "classifier failed (rc=$_PTB_RC) -- fail-open"
   exit 0
 fi
 
-_flag() { printf '%s' "$_PTB_JSON" | jq -r ".$1"; }
+# Pure bash string split on the first newline — no head/tail subprocess
+# spawn on the hot path. `${_PTB_OUT%%$'\n'*}` removes the first newline
+# onward (yields line 1); `${_PTB_OUT#*$'\n'}` removes up through the first
+# newline (yields everything after line 1). For a single-line "allow"
+# payload the second form is unused (only referenced in the deny/warn arm).
+# Trailing `\r` stripped defensively (Python's classifier reconfigures LF-only
+# stdout, but a foreign python3 build could still emit CRLF on Windows).
+_PTB_OUTCOME="${_PTB_OUT%%$'\n'*}"
+_PTB_OUTCOME="${_PTB_OUTCOME%$'\r'}"
 
-# `git push` targeting main via ANY refspec form (ADR-0076 D4 7c): plain
-# `origin main`; `<src>:main` incl. `HEAD:main` and `:main` (delete-remote-main);
-# or `refs/heads/main` (bare, or as a colon-form destination e.g.
-# `HEAD:refs/heads/main`) -- matched ONLY within the same `git push` clause.
-if [ "$(_flag deny_push_main)" = "true" ]; then
-  emit_deny 'Direct push to main forbidden per CLAUDE.md rule #4 (all refspec forms denied: origin main, HEAD:main, refs/heads/main, :main); open a PR instead.'
-fi
-
-# `git commit -m "... WIP ..."` → warn-only (convention, not danger).
-if [ "$(_flag warn_wip)" = "true" ]; then
-  emit_warn 'WIP commit detected — CLAUDE.md rule #5 discourages WIP messages; prefer Conventional Commits.'
-fi
-
-# `gh issue create --label slice|prd` (as the actual invocation) → warn-only,
-# NEVER deny (ADR-0076 D4 7d). No sanctioned posting verb exists yet, and
-# /to-issues / /to-prd legitimately run this exact raw form in main-agent
-# context -- a hard deny here would break the sanctioned pipeline itself
-# (the #1038 untested-gate class). The call proceeds; the #918
-# hand-created-slice class keeps its deterministic enforcement via CI
-# CHECK 19 (slicer-provenance) + the SLICE-VS-PR reconciler.
-if [ "$(_flag warn_issue_create_label)" = "true" ]; then
-  emit_warn 'gh issue create --label slice|prd detected — slices and PRDs are normally posted via /to-issues or /to-prd (which gate through slicer-critic/prd-critic); this raw call still proceeds. The #918 hand-created-slice class is caught deterministically via CI CHECK 19 + the SLICE-VS-PR reconciler.'
-fi
-
-# `tools/promote.sh` invoked (as the actual command) from a SUBAGENT context
-# (ADR-0076 D4 7b) → deny. Reuses pre-tool-edit.sh's CLAUDE_AGENT_TYPE
-# discriminator exactly: subagent contexts set this env var, the main-agent
-# orchestrator does not. Promotion is a human-gated orchestrator action (see
-# #880) — implementer.md and reviewer.md already prohibit it in prose; this
-# makes the prohibition mechanical for subagent-context Bash invocations.
-# Orchestrator-context invocations (no CLAUDE_AGENT_TYPE) fall through
-# un-denied.
-if [ "$(_flag deny_promote_invocation)" = "true" ] && [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
-  emit_deny 'tools/promote.sh may not run from a subagent context — promotion is a human-gated orchestrator action (see #880); only the orchestrator invokes it directly.'
-fi
-
-# Raw `gh pr merge` (as the actual invocation) → DENY (ADR-0076 D4 7a;
-# upgraded from the advisory warn added in PRD #1075 slice #1086). The
-# sanctioned tools/pipe/pr-merge wrapper appends the atomic pr_merged v3 span
-# a raw call skips, and asserts the reviewer APPROVE verdict (ADR-0076 D3) a
-# raw call never checks. The wrapper invocation's clause head is `python`,
-# never `gh` -- so this deny never fires on the sanctioned wrapper.
-if [ "$(_flag deny_gh_merge)" = "true" ]; then
-  emit_deny 'Raw `gh pr merge` denied — bypasses tools/pipe/pr-merge (no v3 pr_merged span, no APPROVE-verdict assertion). Use `python tools/pipe/pr-merge <PR>` instead.'
-fi
+case "$_PTB_OUTCOME" in
+  deny|warn)
+    printf '%s\n' "${_PTB_OUT#*$'\n'}"
+    ;;
+  allow)
+    : # allow decisions produce no stdout — call proceeds untouched.
+    ;;
+  *)
+    emit_error_beacon "classifier produced unexpected outcome marker '$_PTB_OUTCOME' -- fail-open"
+    ;;
+esac
 
 exit 0

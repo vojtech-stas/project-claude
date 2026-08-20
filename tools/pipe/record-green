@@ -4,7 +4,7 @@ tools/pipe/record-green — atomic wrapper: tools/record-green.sh + develop_gree
 v3 trace span, in the same execution (PRD #1075 criterion 1 rider, slice #1086).
 
 Usage:
-  python tools/pipe/record-green [--dry-run]
+  python tools/pipe/record-green [--dry-run] [<sha>]
 
 ABSORBS the existing tools/record-green.sh verification (GitHub `ci` conclusion
 via PR-mergeCommit lookup + `python -m pytest tests/` green) as the ONE
@@ -14,6 +14,15 @@ test seam (RECORD_GREEN_CI_STATUS, RECORD_GREEN_GH_CMD, RECORD_GREEN_PYTEST_CMD,
 RECORD_GREEN_TEST_LOG_PATH — untouched env passthrough) and its RELEASE-READY
 preflight edge-cases (the script's own --dry-run contract, its refusal-writes-
 nothing invariant).
+
+EXPLICIT SHA (slice #1188 / root-cause #1183): a caller-provided positional
+<sha> (e.g. the confirmed merge oid tools/pipe/pr-merge already holds from the
+GitHub API) is passed straight through to tools/record-green.sh AND reused
+verbatim for this wrapper's own v3 span -- the SAME value certifies both the
+v2 event and the v3 span, never two independent local-ref resolutions that
+could disagree. With no <sha> argument, `_resolve_develop_sha()` fetches
+`origin develop` before resolving, so a stale local remote-tracking ref can
+never be certified on the fallback path.
 
 Repoint target for ship/SKILL.md's post-merge green-develop step (previously
 an inline `python3 -c "..."` one-liner appending the v2 develop_green event
@@ -48,6 +57,19 @@ def _load_trace():
 
 
 def _resolve_develop_sha():
+    """Fallback-only resolution (no explicit sha argument was given). Fetches
+    origin develop FIRST (#1188 / root-cause #1183) so a stale local
+    remote-tracking ref can never be certified — best-effort: a fetch
+    failure (e.g. offline) does not abort resolution, it just risks the
+    same staleness the fetch is meant to prevent, matching the pre-existing
+    fallback's own resilience posture."""
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", "develop"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        pass
     try:
         return subprocess.run(
             ["git", "rev-parse", "origin/develop"],
@@ -60,6 +82,9 @@ def _resolve_develop_sha():
 def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     dry_run = "--dry-run" in argv
+    # First non-flag token is the explicit sha (mirrors tools/record-green.sh's
+    # own positional-argument parsing — see that script for the full contract).
+    explicit_sha = next((a for a in argv if not a.startswith("--")), None)
 
     bash = shutil.which("bash") or "bash"
     result = subprocess.run([bash, _RECORD_GREEN_SH] + argv)
@@ -77,7 +102,9 @@ def main(argv=None):
         # that here — no v3 span on a dry-run either.
         return 0
 
-    sha = _resolve_develop_sha() or "unknown"
+    # Same value certifies both the v2 event (written by record-green.sh
+    # above) and this v3 span -- never two independent resolutions.
+    sha = explicit_sha or _resolve_develop_sha() or "unknown"
     trace = _load_trace()
     trace.emit_span(trace_id=f"green-{sha}", kind="develop_green", attrs={"sha": sha})
     print(f"record-green: v3 develop_green span appended sha={sha}")

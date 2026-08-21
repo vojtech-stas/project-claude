@@ -15,8 +15,10 @@ Covers:
        in test_deny_guard_mechanical_1133.py).
   7e — pass-through verification: every sanctioned verb invocation form
        (`python tools/pipe/{dispatch,pr-open,pr-merge,qa-verify,record-green,
-       prd-close,batch-plan} ...` and `bash tools/promote.sh` in orchestrator
-       context) produces NEITHER a warn NOR a deny. No new hook code was
+       prd-close} ...` and `bash tools/promote.sh` in orchestrator context)
+       produces NEITHER a warn NOR a deny (the retired `batch-plan` verb's
+       own case was deleted with its subject per ADR-0080 D2, slice #1219).
+       No new hook code was
        needed for this criterion (see pre-tool-bash.sh's top-of-file note): a
        sanctioned verb's Bash-tool command line has clause-head `python` (or
        `bash` for promote.sh, already gated on subagent-context only), which
@@ -219,11 +221,6 @@ class Test7eSanctionedVerbsPassThroughUntouched(unittest.TestCase):
 
     def test_prd_close_verb_passes(self):
         self._assert_clean_pass("python tools/pipe/prd-close 1127")
-
-    def test_batch_plan_verb_passes(self):
-        self._assert_clean_pass(
-            "python tools/pipe/batch-plan 1127 --pending 1136 --ready 1135 --blocked none"
-        )
 
     def test_promote_sh_orchestrator_context_passes(self):
         """No CLAUDE_AGENT_TYPE set -- the sanctioned orchestrator procedure

@@ -9,7 +9,11 @@ trace.py's VALID_KINDS closed enum), with cadence classes assigned per kind:
   - always-on (generous _STREAM_LIVENESS_V3_DARK_MINUTES window):
     pr_opened, pr_merged, verdict, dispatch, dispatch_end
   - on-demand (dead-feed honesty -- never-fired reads as idle, not FAIL):
-    qa_verified, develop_green, promotion, batch_planned
+    qa_verified, develop_green, promotion
+    (the `batch_planned` kind this file originally used as its dead-feed
+    example was retired per ADR-0080 D2, slice #1219 -- the per-kind
+    explosion denominator is 8-member now; `promotion` demonstrates the
+    same never-fired-is-idle semantics)
 
 Test-first discipline: this commit lands BEFORE the per-kind explosion
 exists in dashboard/health.py's check_stream_liveness(). FAILS before impl
@@ -19,8 +23,8 @@ PASSES after impl.
 Covers (per slice #1136 body):
   (a) silence-one-kind fixture (always-on kind) -> that kind alone flagged
       FAIL, sibling always-on kinds stay PASS, hook streams unaffected
-  (b) dead-feed honesty: a NEW on-demand kind that has NEVER fired (e.g.
-      batch_planned) reads as idle, not FAIL
+  (b) dead-feed honesty: an on-demand kind that has NEVER fired (e.g.
+      promotion) reads as idle, not FAIL
   (c) generous window: an always-on kind idle for hours (but well within
       the 24h v3 window) must not FAIL -- this is the "doesn't false-FAIL
       tomorrow" property the slice explicitly calls for
@@ -45,7 +49,7 @@ DASHBOARD_DIR = REPO_ROOT / "dashboard"
 # as literal fixture-authoring convenience; the check itself imports the
 # real enum, never a copy of this list.
 _ALWAYS_ON_KINDS = ["pr_opened", "pr_merged", "verdict", "dispatch", "dispatch_end"]
-_ON_DEMAND_KINDS = ["qa_verified", "develop_green", "promotion", "batch_planned"]
+_ON_DEMAND_KINDS = ["qa_verified", "develop_green", "promotion"]
 
 
 def _iso(ts: float) -> str:
@@ -169,16 +173,15 @@ class TestSilenceOneAlwaysOnKindFlagsOnlyThatKind(unittest.TestCase):
 
 class TestDeadFeedHonestyNeverFiredOnDemandIsIdle(unittest.TestCase):
     """(b) Dead-feed honesty rule: on-demand kinds that have NEVER fired
-    (batch_planned only just landed this PRD) read as idle/pending, never
-    FAIL -- direct reuse of the existing on-demand never-fired-is-idle
-    semantics (#1107), not a new mechanism."""
+    read as idle/pending, never FAIL -- direct reuse of the existing
+    on-demand never-fired-is-idle semantics (#1107), not a new mechanism."""
 
-    def test_never_fired_batch_planned_and_qa_verified_are_idle_not_fail(self):
+    def test_never_fired_promotion_and_qa_verified_are_idle_not_fail(self):
         now = time.time()
         now_iso = _iso(now)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            # Only the always-on kinds + one hook stream fire; batch_planned
+            # Only the always-on kinds + one hook stream fire; promotion
             # and qa_verified never fire at all.
             trace_lines = [
                 {"v": 3, "ts": _iso(now - 60), "kind": k, "attrs": {}}
@@ -192,10 +195,10 @@ class TestDeadFeedHonestyNeverFiredOnDemandIsIdle(unittest.TestCase):
             )
         self.assertEqual("PASS", result["result"], msg=result)
         fail_names = " ".join(result.get("fail_streams", []))
-        self.assertNotIn("batch_planned", fail_names, msg=result)
+        self.assertNotIn("promotion", fail_names, msg=result)
         self.assertNotIn("qa_verified", fail_names, msg=result)
         idle_names = " ".join(result.get("idle_streams", []))
-        self.assertIn("v3:batch_planned(never-fired)", idle_names, msg=result)
+        self.assertIn("v3:promotion(never-fired)", idle_names, msg=result)
         self.assertIn("v3:qa_verified(never-fired)", idle_names, msg=result)
 
 

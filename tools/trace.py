@@ -61,13 +61,14 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-# Closed v3 kind enum (ADR-0076 D2) — the full set across PRD #1075 (five
-# wrapper-emitted kinds) + PRD #1127 (four guarded-verb kinds). STABLE and
+# Closed v3 kind enum (ADR-0076 D2, as amended by ADR-0080 D2 — the retired
+# ninth kind is gone) — the full set across PRD #1075 (five wrapper-emitted
+# kinds) + PRD #1127 (three surviving guarded-verb kinds). STABLE and
 # closed: adding a new kind requires editing this set explicitly, never an
 # implicit new-string-just-works path.
 VALID_KINDS = frozenset({
     "pr_opened", "pr_merged", "qa_verified", "develop_green", "promotion",
-    "dispatch", "dispatch_end", "verdict", "batch_planned",
+    "dispatch", "dispatch_end", "verdict",
 })
 
 

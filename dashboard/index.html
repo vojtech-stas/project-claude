@@ -242,8 +242,9 @@
   .badge-na      { background: var(--border); color: var(--muted); }
   /* no-data badge (slice #967 / PRD #957 §2 #4): grey, distinct from amber WARN */
   .badge-nodata  { background: #3a3f47; color: #8b9096; border: 1px solid #4a5058; }
-  /* Run-board tab (PRD #1170 slice #1172): three-column now/next/recent layout */
-  .runboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  /* Run-board tab (PRD #1170 slice #1172): two-column now/recent layout
+     (the `next` column retired per ADR-0080 D2, slice #1219) */
+  .runboard-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
   .runboard-row { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 12px; }
   .runboard-row:last-child { border-bottom: none; }
   button.refresh {
@@ -1144,11 +1145,13 @@
 
 <!-- RUN-BOARD TAB (PRD #1170 walking skeleton, slice #1172; staleness flag +
      row-level provenance + honest empty state, slice #1173) — rendered
-     first at "/": what is running now, what runs next, what just finished,
-     read strictly from the recorded v3 trace ledger (ADR-0078 D1). Per
-     ADR-0080 D1 this is now the ONLY tab: it absorbs the former Firing
-     tab's recorded-runs panel and a new thin health strip replacing the
-     former Health tab. -->
+     first at "/": what is running now, what just finished, read strictly
+     from the recorded v3 trace ledger (ADR-0078 D1). Per ADR-0080 D1 this
+     is now the ONLY tab: it absorbs the former Firing tab's recorded-runs
+     panel and a new thin health strip replacing the former Health tab.
+     The "Next" column (the retired checkpoint verb's ready-set) is
+     retired per ADR-0080 D2, slice #1219 — the board shows only what is
+     recorded. -->
 <div id="tab-runboard" class="tab active">
   <div class="section">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
@@ -1157,21 +1160,17 @@
       <span id="runboard-status" style="color:var(--muted);font-size:11px;"></span>
     </div>
     <p style="color:var(--muted);font-size:11px;margin-bottom:14px;">
-      What is running now, what runs next, what just finished — read
-      strictly from the recorded v3 trace ledger (tools/trace.py +
-      dashboard/tracestore.py). Never inferred; an absent record renders
-      as absent, never fabricated. Every row below names its own data
-      source and the ledger read time.
+      What is running now, what just finished — read strictly from the
+      recorded v3 trace ledger (tools/trace.py + dashboard/tracestore.py).
+      Never inferred; an absent record renders as absent, never
+      fabricated. Every row below names its own data source and the
+      ledger read time.
     </p>
     <div id="runboard-empty-banner" style="display:none;color:var(--muted);font-size:12px;margin-bottom:14px;border:1px solid #21262d;border-radius:6px;padding:10px 12px;"></div>
     <div class="runboard-grid">
       <div class="card">
         <div class="card-title">Now <span id="runboard-stale-note" style="color:var(--muted);font-weight:normal;font-size:10px;"></span></div>
         <div id="runboard-now"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Next</div>
-        <div id="runboard-next"><span style="color:var(--muted);font-size:11px;">Loading…</span></div>
       </div>
       <div class="card">
         <div class="card-title">Recent</div>
@@ -1707,9 +1706,10 @@ registerTabHook('runboard', startTraceRuns);
 
 // --- Run-board tab (PRD #1170 walking skeleton, slice #1172; staleness
 // flag + row-level provenance + honest empty state, slice #1173) ---
-// Landing view: now/next/recent from /api/runboard, strictly read from the
+// Landing view: now/recent from /api/runboard, strictly read from the
 // recorded v3 trace ledger (ADR-0078 D1). Mirrors reloadTraceRuns()'s
-// fetch/render/poll house pattern.
+// fetch/render/poll house pattern. The `next` column (the retired
+// checkpoint verb's ready-set) is retired per ADR-0080 D2, slice #1219.
 let _runboardLoaded = false;
 
 function _rbFmtSecs(sec) {
@@ -1734,17 +1734,16 @@ function _rbProvenance(source, fetchedAtDisplay) {
 function renderRunboard(data) {
   try {
     const nowEl = document.getElementById('runboard-now');
-    const nextEl = document.getElementById('runboard-next');
     const recentEl = document.getElementById('runboard-recent');
     const statusEl = document.getElementById('runboard-status');
     const staleNoteEl = document.getElementById('runboard-stale-note');
     const emptyBannerEl = document.getElementById('runboard-empty-banner');
-    if (!nowEl || !nextEl || !recentEl) return;
+    if (!nowEl || !recentEl) return;
 
     if (!data || data.error) {
       const msg = '<span style="color:var(--muted);font-size:11px;">Error: ' +
         escHtml((data && data.error) || 'unknown error') + '</span>';
-      nowEl.innerHTML = msg; nextEl.innerHTML = msg; recentEl.innerHTML = msg;
+      nowEl.innerHTML = msg; recentEl.innerHTML = msg;
       if (emptyBannerEl) emptyBannerEl.style.display = 'none';
       return;
     }
@@ -1754,12 +1753,12 @@ function renderRunboard(data) {
       return;
     }
 
-    const now = data.now || [], next = data.next || [], recent = data.recent || [];
+    const now = data.now || [], recent = data.recent || [];
     const ledger = data.ledger || '.claude/logs/trace-v3.jsonl';
     const fetchedAtDisplay = data.fetched_at ? _firingFmtTs(data.fetched_at) : 'unknown time';
     const fetchedAt = data.fetched_at ? ' — fetched ' + fetchedAtDisplay : '';
-    if (statusEl) statusEl.textContent = now.length + ' running, ' + next.length +
-      ' next, ' + recent.length + ' recent' + fetchedAt;
+    if (statusEl) statusEl.textContent = now.length + ' running, ' +
+      recent.length + ' recent' + fetchedAt;
 
     // Staleness threshold visible in the UI, not hidden in code (§6 OQ1 /
     // ADR-0078 D1): read from the API response every render, never a
@@ -1769,17 +1768,16 @@ function renderRunboard(data) {
         '— flagged stale after ' + _rbFmtSecs(data.stale_threshold_seconds) : '';
     }
 
-    // Honest empty state (§2 #2d): when all three sections are empty,
-    // replace the three independent column messages with one banner
-    // naming the ledger it read, rather than three quiet blank-looking
-    // panels.
-    const allEmpty = now.length === 0 && next.length === 0 && recent.length === 0;
+    // Honest empty state (§2 #2d): when both sections are empty, replace
+    // the two independent column messages with one banner naming the
+    // ledger it read, rather than two quiet blank-looking panels.
+    const allEmpty = now.length === 0 && recent.length === 0;
     if (emptyBannerEl) {
       emptyBannerEl.style.display = allEmpty ? 'block' : 'none';
       if (allEmpty) {
         emptyBannerEl.innerHTML = 'No recorded activity — read ' + escHtml(ledger) +
           ' (via the trace.db read-model) at ' + escHtml(fetchedAtDisplay) +
-          ' and found no dispatch, batch_planned, or termination spans.';
+          ' and found no dispatch or termination spans.';
       }
     }
 
@@ -1792,13 +1790,6 @@ function renderRunboard(data) {
         ' — running ' + _rbFmtSecs(e.elapsed_seconds) + '</div>' +
         _rbProvenance(e.source, fetchedAtDisplay) + '</div>';
     }).join('') : (allEmpty ? '' : '<span style="color:var(--muted);font-size:11px;">nothing running</span>');
-
-    nextEl.innerHTML = next.length ? next.map(function(e) {
-      return '<div class="runboard-row">slice #' + escHtml(e.slice) +
-        (e.prd ? ' (PRD #' + escHtml(e.prd) + ')' : '') +
-        _rbProvenance(e.source, fetchedAtDisplay) + '</div>';
-    }).join('') : (allEmpty ? '' : '<span style="color:var(--muted);font-size:11px;">no ready slices recorded (' +
-      escHtml(data.next_source || 'none-recorded') + ')</span>');
 
     recentEl.innerHTML = recent.length ? recent.map(function(e) {
       const label = e.kind === 'pr_merged' ? ('PR #' + escHtml(e.pr)) : ('slice #' + escHtml(e.slice));

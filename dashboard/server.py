@@ -2,26 +2,13 @@
 """
 dashboard/server.py — project-claude workflow dashboard server.
 
-Serves: GET /               -> dashboard/index.html
-        GET /api/architecture -> JSON {skills, agents, hooks, adrs, edges}
-        GET /api/pipeline     -> JSON pipeline spec (SPEC v2 from pipeline_spec.py)
-        GET /api/health       -> JSON {auditMeta, auditSubagents}
-        GET /api/file?path=   -> file content (path-traversal safe)
+Serves (ADR-0080 D1 — reduced to the run-board + a thin health strip;
+Architecture/Live/Health/Firing tabs and their 15 UI-only routes deleted):
+        GET /               -> dashboard/index.html
+        GET /api/health       -> JSON {auditMeta, auditSubagents} — feeds the health strip
         GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
-        GET /api/runs[?n=N]       -> JSON recent session runs metadata from workflow-events.jsonl (slice #864)
-        GET /api/live-progress    -> JSON Lane A run-progress for most recent open PRD (25s TTL bg-thread cache)
-        GET /api/live-poll?cursor=N -> JSON {cursor, events[], reset} — byte-cursor incremental read (Lane B)
-        GET /api/trail?prd=N      -> JSON artifact trail for PRD #N (cache-first, ADR-0053 D1/D4)
-        GET /api/comparison?prd=N -> JSON per-run comparison report for PRD #N (ADR-0053 D3)
-        GET /api/trail-runs?last=N -> JSON list of last N closed PRDs (for run picker)
-        GET /api/rollup?last=N    -> JSON repo rollup over last N closed PRDs (ADR-0053 D3)
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
-        GET /api/prd-firing[?limit=N] -> JSON per-PR agent-firing timelines from gh (slice #871)
-        GET /api/promotion            -> JSON develop/main topology + last promotions + held_reason (slice #843)
-        GET /api/runtime-reading      -> JSON current-session runtime reading from transcript (slice #928)
-        GET /api/session-live         -> JSON current-session events from transcript (slice #899)
-        GET /api/session-firing       -> JSON per-PRD firing tree from transcript (slice #901)
-        GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Firing tab's PRIMARY renderer (slice #1082, PRD #1075 criterion 9)
+        GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Run-board's recorded-runs panel (slice #1082, PRD #1075 criterion 9; relocated into the Run-board by ADR-0080 D1)
         GET /api/runboard             -> JSON {now, next, next_source, recent, stale_threshold_seconds, ledger, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172 + #1173 provenance/staleness)
 
 Start: python dashboard/server.py
@@ -57,18 +44,9 @@ _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in sys.path:
     sys.path.insert(0, _DASHBOARD_DIR_STR)
 
-from collector import get_trail, get_closed_prd_numbers, rollup  # noqa: E402
-from comparison import compare, get_spec_for_compare  # noqa: E402
-from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
-import live  # noqa: E402
-from live import serve_live_poll, _live_progress_background  # noqa: E402
-import transcript as _transcript_mod  # noqa: E402
 from telemetry_root import _telemetry_log_root  # noqa: E402
 
 # Sibling module imports (facade re-exports)
-from discovery import (  # noqa: E402
-    discover_skills, discover_agents, discover_hooks, discover_adrs, discover_edges,
-)
 import health as _health_mod  # noqa: E402
 from health import (  # noqa: E402
     check_docs1_adr_index_forward,
@@ -84,10 +62,8 @@ from health import (  # noqa: E402
     audit_subagents, audit_meta,
     serve_health as _serve_health_cached,
 )
-from events import serve_runs as _serve_runs_fn  # noqa: E402
 from workitems import fetch_workitems  # noqa: E402
 from readme_gen import generate_readme, render_pipeline_mermaid  # noqa: E402
-import prd_firing as _prd_firing_mod  # noqa: E402
 import tracestore as _tracestore_mod  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -391,164 +367,6 @@ def _build_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# /api/promotion — develop/main topology + promotion history (slice #843)
-#
-# Fix #1005: check_release_ready() (full ci-checks.sh, up to 300s) must NOT
-# run on the HTTP request path.  held_reason is now served from a short-TTL
-# background-thread cache.  On a cold/missing cache the endpoint returns
-# held_reason=None with held_reason_source="computing" so the promotion panel
-# shows "computing" while the first background refresh runs (~95s).
-# ---------------------------------------------------------------------------
-
-_PROMOTION_HELD_REASON_TTL = 120   # seconds between background refreshes
-
-# Cache structure: {"held_reason": str|None, "ts": float, "source": str}
-# source: "live" = freshly computed, "computing" = no result yet
-_promotion_held_reason_cache: dict = {}
-_promotion_held_reason_lock = threading.Lock()
-_promotion_bg_running = False   # True while a refresh thread is in flight
-
-
-def _refresh_promotion_held_reason() -> None:
-    """Background daemon: compute held_reason from check_release_ready() +
-    check_meta_tripwire() and store in the module-level cache.  Never raises.
-    """
-    global _promotion_bg_running
-    try:
-        from health import (  # noqa: PLC0415
-            check_release_ready as _rr,
-            check_meta_tripwire as _mt,
-        )
-        held_reason = ""
-        rr = _rr()
-        if rr.get("verdict") == "false":
-            held_reason = rr.get("detail", "RELEASE-READY gate held")
-        elif rr.get("result") == "WARN" and rr.get("verdict") != "true":
-            held_reason = rr.get("detail", "")
-        mt = _mt()
-        if mt.get("result") == "FAIL":
-            mt_detail = mt.get("detail", "")
-            held_reason = (held_reason + " | " + mt_detail).strip(" | ") if held_reason else mt_detail
-        with _promotion_held_reason_lock:
-            _promotion_held_reason_cache["held_reason"] = held_reason or None
-            _promotion_held_reason_cache["ts"] = time.time()
-            _promotion_held_reason_cache["source"] = "live"
-    except Exception:
-        # On error keep any existing cached value; don't overwrite with garbage.
-        pass
-    finally:
-        with _promotion_held_reason_lock:
-            _promotion_bg_running = False
-
-
-def _get_cached_held_reason() -> tuple:
-    """Return (held_reason, source) from cache.
-
-    Spawns a background refresh if the cache is cold or expired.
-    Returns ("computing", "computing") when no data is available yet.
-    """
-    global _promotion_bg_running
-    now = time.time()
-    with _promotion_held_reason_lock:
-        entry = _promotion_held_reason_cache.copy()
-        bg_running = _promotion_bg_running
-
-    cache_age = now - entry.get("ts", 0) if entry.get("ts") else float("inf")
-    cache_fresh = cache_age < _PROMOTION_HELD_REASON_TTL
-
-    if not cache_fresh and not bg_running:
-        # Spawn a background refresh (daemon so it doesn't block server exit)
-        with _promotion_held_reason_lock:
-            if not _promotion_bg_running:   # double-checked under lock
-                _promotion_bg_running = True
-        t = threading.Thread(
-            target=_refresh_promotion_held_reason, daemon=True
-        )
-        t.start()
-
-    if entry.get("source") == "live":
-        return entry.get("held_reason"), "live" if cache_fresh else "stale"
-    return None, "computing"
-
-
-def _build_promotion_state() -> dict:
-    """Build the /api/promotion payload: real develop/main state + last N promotions.
-
-    Returns:
-      develop_sha, main_sha  — current remote branch HEADs
-      ahead, behind          — commits develop is ahead/behind main
-      main_is_ancestor       — True when main ff-reachable from develop
-      last_promotions        — last 5 promotion events from workflow-events.jsonl
-      last_sha               — SHA of last promotion (short), None if no promotions
-      last_ts                — ISO timestamp of last promotion, None if no promotions
-      lag_hours              — hours since last promotion (None if no promotions)
-      pending_since          — last_ts of last promotion if develop is ahead, else None
-      held_reason            — non-empty if RELEASE-READY or META-TRIPWIRE holds promotion;
-                               None when computing or gate is clear
-      held_reason_source     — "live"|"stale"|"computing" — freshness of held_reason
-
-    Honest nulls throughout; no fixture data.  held_reason is served from a
-    background-thread TTL cache (fix #1005 — check_release_ready() is NOT
-    called inline; see _get_cached_held_reason / _refresh_promotion_held_reason).
-    """
-    from health import (  # noqa: PLC0415
-        check_branch_topology as _bt,
-        _read_promotion_events,
-    )
-
-    # --- branch topology (cheap git calls, stays synchronous) ---
-    bt = _bt()
-    develop_sha = bt.get("develop_sha", None)
-    main_sha = bt.get("main_sha", None)
-    ahead = bt.get("ahead", None)
-    behind = bt.get("behind", None)
-    main_is_ancestor = bt.get("main_is_ancestor", None)
-
-    # --- promotion events (local file read, stays synchronous) ---
-    promotions = _read_promotion_events()
-    last_5 = promotions[-5:] if promotions else []
-    last_promo = promotions[-1] if promotions else None
-    last_sha = last_promo.get("sha", "")[:8] if last_promo else None
-    last_ts = last_promo.get("ts", None) if last_promo else None
-
-    # lag_hours since last promotion
-    lag_hours = None
-    if last_ts:
-        try:
-            from datetime import datetime as _dt, timezone as _tz
-            last_dt = _dt.fromisoformat(last_ts.replace("Z", "+00:00"))
-            lag_hours = round((time.time() - last_dt.timestamp()) / 3600.0, 1)
-        except Exception:
-            pass
-
-    # pending_since: when did develop start getting ahead?
-    # Proxy: last promotion timestamp (develop became ahead after that)
-    pending_since = last_ts if (ahead is not None and ahead > 0) else None
-
-    # --- held_reason from background cache (fix #1005) ---
-    # check_release_ready() is NOT called here — it runs in a daemon thread
-    # and stores its result in _promotion_held_reason_cache.
-    held_reason, held_reason_source = _get_cached_held_reason()
-
-    return {
-        "develop_sha": develop_sha,
-        "main_sha": main_sha,
-        "ahead": ahead,
-        "behind": behind,
-        "main_is_ancestor": main_is_ancestor,
-        "last_promotions": last_5,
-        "last_sha": last_sha,
-        "last_ts": last_ts,
-        "lag_hours": lag_hours,
-        "pending_since": pending_since,
-        "held_reason": held_reason,
-        "held_reason_source": held_reason_source,
-        "branch_topology_result": bt.get("result", "WARN"),
-        "branch_topology_detail": bt.get("detail", ""),
-    }
-
-
-# ---------------------------------------------------------------------------
 # Known critics (explicit allow-list per implementer note 1).
 # 7 critics per ADR-0046 D1 (parsimony principle; codebase-critic added ADR-0046 D2).
 # CHECK 7 regexes server.py SOURCE for this literal — it must stay here.
@@ -562,112 +380,6 @@ KNOWN_CRITICS = {
     "backlog-critic",
     "codebase-critic",
 }
-
-# ---------------------------------------------------------------------------
-# Rollup cache — rollup calls gh CLI per-PR so it can take 20-40s on cold
-# start; keyed by last_n with 120s TTL.  Background-thread computation so
-# the HTTP handler returns immediately with {"status":"computing"} while the
-# work runs; client polls until status transitions to "ready".
-# ---------------------------------------------------------------------------
-_rollup_cache: dict = {}        # {last_n: {"data": {...}, "ts": float}}
-_rollup_computing: dict = {}    # {last_n: True} — in-flight marker
-_rollup_lock = threading.Lock()
-_ROLLUP_CACHE_TTL = 120    # seconds
-
-
-def _rollup_background(last_n: int) -> None:
-    """Compute rollup in a background thread and store result in _rollup_cache."""
-    try:
-        spec = get_spec_for_compare()
-        result = rollup(last_n=last_n, compare_fn=compare, spec=spec)
-        with _rollup_lock:
-            _rollup_cache[last_n] = {"data": result, "ts": time.time()}
-    except Exception as e:
-        # Store error so polling can surface it
-        with _rollup_lock:
-            _rollup_cache[last_n] = {
-                "data": {"status": "error", "error": str(e)},
-                "ts": time.time(),
-            }
-    finally:
-        with _rollup_lock:
-            _rollup_computing.pop(last_n, None)
-
-
-# ---------------------------------------------------------------------------
-# Comparison cache — non-blocking stale-while-revalidate (fix #1020 facet 2).
-# /api/comparison is gh-heavy (collect_trail + compare); without caching it
-# blocks the HTTP thread for >30s on cold start, freezing the browser renderer.
-# Pattern mirrors prd_firing.serve_prd_firing() and _rollup_background().
-# Keyed by prd_number (int); TTL 90s (open PRDs change; closed ones are stable).
-# ---------------------------------------------------------------------------
-_comparison_cache: dict = {}     # {prd_n: {"data": dict, "ts": float}}
-_comparison_computing: dict = {} # {prd_n: True} — in-flight marker
-_comparison_lock = threading.Lock()
-_COMPARISON_CACHE_TTL = 90  # seconds
-
-
-def _comparison_background(prd_n: int) -> None:
-    """Compute comparison in a background thread; cache result."""
-    try:
-        trail = get_trail(prd_n, force_refresh=True)
-        spec = get_spec_for_compare()
-        result = compare(spec, trail)
-        with _comparison_lock:
-            _comparison_cache[prd_n] = {"data": result, "ts": time.time()}
-    except Exception as exc:
-        with _comparison_lock:
-            _comparison_cache[prd_n] = {
-                "data": {"prd_number": prd_n, "run_pass": False,
-                         "error": str(exc), "edges": {}, "violations": [],
-                         "unexpected": []},
-                "ts": time.time(),
-            }
-    finally:
-        with _comparison_lock:
-            _comparison_computing.pop(prd_n, None)
-
-
-def serve_comparison(prd_n: int) -> dict:
-    """Non-blocking serve for /api/comparison?prd=N (fix #1020).
-
-    ALWAYS returns immediately (target < 3 s, typically < 10 ms):
-      - Warm cache (not expired): return cached report.
-      - Stale cache: return last-known data with refreshing:True, kick refresh.
-      - Cold (no prior result): return {"status":"computing","prd_number":N},
-        kick background computation.
-
-    Mirrors prd_firing.serve_prd_firing() pattern.
-    """
-    with _comparison_lock:
-        entry = _comparison_cache.get(prd_n)
-        now = time.time()
-
-        if entry is not None:
-            data = entry["data"]
-            expired = (now - entry.get("ts", 0)) >= _COMPARISON_CACHE_TTL
-            if not expired:
-                return data
-            # Stale — serve last-known with refreshing marker
-            payload = dict(data)
-            payload["refreshing"] = True
-            if not _comparison_computing.get(prd_n):
-                _comparison_computing[prd_n] = True
-                threading.Thread(
-                    target=_comparison_background, args=(prd_n,), daemon=True
-                ).start()
-            return payload
-
-        # Cold start — kick background if not already running
-        if _comparison_computing.get(prd_n):
-            return {"status": "computing", "prd_number": prd_n}
-        _comparison_computing[prd_n] = True
-
-    threading.Thread(
-        target=_comparison_background, args=(prd_n,), daemon=True
-    ).start()
-    return {"status": "computing", "prd_number": prd_n}
-
 
 # ---------------------------------------------------------------------------
 # HTTP handler
@@ -717,11 +429,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def _serve_runs(self, query: dict) -> dict:
-        """Delegate to events.serve_runs with the canonical log path."""
-        log_path = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
-        return _serve_runs_fn(query, log_path)
-
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -733,22 +440,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_text(index.read_bytes(), "text/html; charset=utf-8")
             else:
                 self._send_error(404, "index.html not found")
-
-        elif path == "/api/architecture":
-            data = {
-                "skills": discover_skills(),
-                "agents": discover_agents(),
-                "hooks": discover_hooks(),
-                "adrs": discover_adrs(),
-                "edges": discover_edges(),
-            }
-            self._send_json(data)
-
-        elif path == "/api/pipeline":
-            # Canonical topology spec (ADR-0053 D2 / ADR-0039 D1 extended).
-            # Returns SPEC v2 from pipeline_spec.py; dashboard index.html fetches
-            # this for the declared topology render.
-            self._send_json(_get_pipeline_spec())
 
         elif path == "/api/health":
             # TTL-cached; second consecutive call returns <200 ms.
@@ -766,171 +457,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({"error": str(exc)}, 500)
 
-        elif path == "/api/runs":
-            # GET /api/runs[?n=N][?before=<cursor>][?session=<id>]
-            # Returns recent session runs metadata from workflow-events.jsonl.
-            # Delegates to events.serve_runs; filter applied by _serve_runs helper.
-            # Restored in slice #864: route was removed in #860 as "dead" because
-            # the Live tab never fetched it — re-added here with wired index.html.
-            try:
-                self._send_json(self._serve_runs(query))
-            except Exception as exc:
-                self._send_json({"error": str(exc)}, 500)
-
-        elif path == "/api/live-progress":
-            # GET /api/live-progress — Lane A run-progress for most recent open PRD.
-            # Stale-while-revalidate: if a previous payload exists, ALWAYS return it
-            # immediately (with "refreshing":true while a rebuild is in flight).
-            # {"status":"computing"} is returned ONLY when no payload has ever been
-            # built since process start.  Pattern mirrors /api/rollup.
-            with live._live_progress_lock:
-                cached = live._live_progress_cache.get("data")
-                now = time.time()
-                ts = live._live_progress_cache.get("ts", 0)
-                expired = (now - ts) >= live._LIVE_PROGRESS_TTL
-                if cached is not None and not expired:
-                    # Fresh cache — return as-is
-                    self._send_json(cached)
-                    return
-                if cached is not None and expired:
-                    # Stale-while-revalidate: serve stale payload immediately,
-                    # kick off a background refresh if not already running.
-                    payload = dict(cached)
-                    payload["refreshing"] = True
-                    if not live._live_progress_computing:
-                        live._live_progress_computing = True
-                        t = threading.Thread(
-                            target=_live_progress_background, daemon=True
-                        )
-                        t.start()
-                    self._send_json(payload)
-                    return
-                # No payload ever built yet — bootstrap case
-                if live._live_progress_computing:
-                    self._send_json({"status": "computing"})
-                    return
-                live._live_progress_computing = True
-            t = threading.Thread(
-                target=_live_progress_background, daemon=True
-            )
-            t.start()
-            self._send_json({"status": "computing"})
-
-        elif path == "/api/live-poll":
-            # GET /api/live-poll?cursor=<N>
-            # Byte-cursor incremental read of workflow-events.jsonl (Lane B).
-            # Returns {cursor, events[], reset}.
-            cursor_raw = (query.get("cursor") or ["0"])[0]
-            self._send_json(serve_live_poll(cursor_raw))
-
-        elif path == "/api/trail":
-            # GET /api/trail?prd=N — raw artifact trail for a PRD (ADR-0053 D1/D4).
-            prd_raw = query.get("prd", [""])[0]
-            if not prd_raw or not prd_raw.isdigit():
-                self._send_error(400, "prd parameter required (integer)")
-                return
-            try:
-                trail = get_trail(int(prd_raw))
-                self._send_json(trail)
-            except Exception as e:
-                self._send_error(500, str(e))
-
-        elif path == "/api/comparison":
-            # GET /api/comparison?prd=N[&format=download] — comparison report (ADR-0053 D3).
-            # Non-blocking (fix #1020): serve_comparison() returns immediately via
-            # stale-while-revalidate; background thread runs compare() + get_trail().
-            # ?format=download bypasses cache (serves fresh JSON with Content-Disposition).
-            prd_raw = query.get("prd", [""])[0]
-            if not prd_raw or not prd_raw.isdigit():
-                self._send_error(400, "prd parameter required (integer)")
-                return
-            fmt = query.get("format", [""])[0]
-            prd_n = int(prd_raw)
-            if fmt == "download":
-                # Download mode: bypass cache, compute inline, serve attachment
-                try:
-                    trail = get_trail(prd_n)
-                    spec = get_spec_for_compare()
-                    report = compare(spec, trail)
-                    import json as _json
-                    body = _json.dumps(report, indent=2).encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header(
-                        "Content-Disposition",
-                        f'attachment; filename="prd-{prd_raw}-comparison.json"',
-                    )
-                    self.end_headers()
-                    self.wfile.write(body)
-                except Exception as e:
-                    self._send_error(500, str(e))
-            else:
-                # Non-blocking path: serve_comparison returns in < 3 s always
-                try:
-                    self._send_json(serve_comparison(prd_n))
-                except Exception as e:
-                    self._send_error(500, str(e))
-
-        elif path == "/api/trail-runs":
-            # GET /api/trail-runs?last=N — list of last N closed PRDs for run picker.
-            last_raw = query.get("last", ["20"])[0]
-            try:
-                last_n = int(last_raw) if last_raw.isdigit() else 20
-            except (ValueError, AttributeError):
-                last_n = 20
-            try:
-                numbers = get_closed_prd_numbers(last_n=last_n)
-                # Fetch minimal metadata (title + closedAt) for each PRD
-                runs = []
-                for n in numbers:
-                    trail = get_trail(n)
-                    runs.append({
-                        "number": n,
-                        "title": trail.get("prd_title", f"PRD #{n}"),
-                        "closed_at": trail.get("prd_closed_at", ""),
-                        "wall_time_s": trail.get("wall_time_s"),
-                    })
-                self._send_json({"runs": runs})
-            except Exception as e:
-                self._send_error(500, str(e))
-
-        elif path == "/api/rollup":
-            # GET /api/rollup?last=N — repo rollup over last N closed PRDs.
-            # Returns immediately: {"status":"computing"} while background thread
-            # runs; client polls every 2s until status is absent (data ready).
-            last_raw = query.get("last", ["10"])[0]
-            try:
-                last_n = int(last_raw) if last_raw.isdigit() else 10
-            except (ValueError, AttributeError):
-                last_n = 10
-            with _rollup_lock:
-                cached = _rollup_cache.get(last_n)
-                now = time.time()
-                if cached and (now - cached.get("ts", 0)) < _ROLLUP_CACHE_TTL:
-                    # Serve cached result; propagate any error status from failed run
-                    self._send_json(cached["data"])
-                    return
-                if _rollup_computing.get(last_n):
-                    # Already in flight — return computing sentinel
-                    self._send_json({"status": "computing", "last_n": last_n})
-                    return
-                # Kick off background computation
-                _rollup_computing[last_n] = True
-            t = threading.Thread(
-                target=_rollup_background, args=(last_n,), daemon=True
-            )
-            t.start()
-            self._send_json({"status": "computing", "last_n": last_n})
-
-        elif path == "/api/promotion":
-            # GET /api/promotion — develop/main topology + last N promotion events.
-            # Returns real git data: develop sha, main sha, ahead/behind counts,
-            # last promotion event(s) from workflow-events.jsonl, pending_since,
-            # and held_reason from BRANCH-TOPOLOGY + META-TRIPWIRE checks.
-            # Honest nulls when data is unavailable; no fixtures.
-            self._send_json(_build_promotion_state())
-
         elif path == "/api/meta":
             # GET /api/meta — server identity: {sha, started_at, stale}
             # sha: HEAD sha captured at startup; stale: HEAD has moved since startup.
@@ -943,26 +469,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "stale": stale,
             })
 
-        elif path == "/api/prd-firing":
-            # GET /api/prd-firing[?limit=N] — per-PR agent-firing timelines.
-            # Non-blocking: serve_prd_firing() returns immediately (issue #962).
-            limit_raw = (query.get("limit") or ["30"])[0]
-            try:
-                limit = int(limit_raw) if str(limit_raw).isdigit() else 30
-            except (ValueError, AttributeError):
-                limit = 30
-            limit = max(1, min(limit, 100))
-            try:
-                self._send_json(_prd_firing_mod.serve_prd_firing(limit))
-            except Exception as exc:
-                self._send_json({"error": str(exc), "prs": [], "pr_count": 0}, 500)
-
         elif path == "/api/trace-runs":
             # GET /api/trace-runs[?limit=N] — recorded pipeline-span chains
-            # from the v3 trace store: the Firing tab's PRIMARY renderer
-            # (slice #1082, PRD #1075 criterion 9). Non-blocking
-            # background-warm serve, mirrors /api/prd-firing's house
-            # pattern (issue #962) — zero gh calls, sqlite+JSONL only.
+            # from the v3 trace store: the Run-board's recorded-runs panel
+            # (slice #1082, PRD #1075 criterion 9; relocated from the
+            # deleted Firing tab into the Run-board by ADR-0080 D1).
+            # Non-blocking background-warm serve — zero gh calls, sqlite+JSONL only.
             limit_raw = (query.get("limit") or ["20"])[0]
             try:
                 limit = int(limit_raw) if str(limit_raw).isdigit() else 20
@@ -990,73 +502,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
                      "stale_threshold_seconds": _tracestore_mod.RUNBOARD_STALE_THRESHOLD_SECONDS,
                      "ledger": _tracestore_mod._LEDGER_DISPLAY_NAME}, 500
                 )
-
-        elif path == "/api/runtime-reading":
-            # GET /api/runtime-reading — current-session runtime reading from transcript
-            # (slice #928). Derives session age, event count, and most-recent event type
-            # from the transcript-sourced event list; honest no_session flag when no
-            # transcript is found.  Cached by transcript file mtime.
-            # Returns {source, event_count, session_age_s, last_event_ts,
-            #          last_event_type, no_session, error}.
-            try:
-                self._send_json(_transcript_mod.get_runtime_reading())
-            except Exception as exc:
-                self._send_json(
-                    {"source": "", "event_count": 0, "session_age_s": None,
-                     "last_event_ts": "", "last_event_type": "",
-                     "no_session": True, "error": str(exc)}, 500
-                )
-
-        elif path == "/api/session-live":
-            # GET /api/session-live — current-session events from transcript (slice #899).
-            # Primary source for the Live tab; hook-independent (works even when hooks
-            # are dark).  Cached by transcript file mtime — no full re-parse per request.
-            # Returns {events, source, event_count, error}.
-            try:
-                self._send_json(_transcript_mod.get_session_events())
-            except Exception as exc:
-                self._send_json(
-                    {"events": [], "source": "", "event_count": 0,
-                     "error": str(exc)}, 500
-                )
-
-        elif path == "/api/session-firing":
-            # GET /api/session-firing — per-PRD firing tree from transcript (slice #901).
-            # Maps subagent dispatches to PRD buckets via subagents/agent-*.meta.json.
-            # Non-blocking: serve_session_firing() returns immediately (issue #1061) —
-            # cold parse of a large transcript (~85k events) is background-warmed by
-            # a daemon thread rather than blocking the request path.
-            # Returns {groups: {<prd-label>: [{agent,start,end,verdict}…]},
-            #          dispatch_count, source, error} OR {status:"computing"}/
-            #          {..., refreshing:true} while the background build runs.
-            try:
-                self._send_json(_transcript_mod.serve_session_firing())
-            except Exception as exc:
-                self._send_json(
-                    {"groups": {}, "dispatch_count": 0, "source": "",
-                     "error": str(exc)}, 500
-                )
-
-        elif path == "/api/file":
-            rel_path = query.get("path", [""])[0]
-            if not rel_path:
-                self._send_error(400, "path parameter required")
-                return
-            # Fix A: normalize any incoming backslashes (Windows round-trip defence)
-            rel_path = rel_path.replace("\\", "/")
-            # Path-traversal protection: resolve against repo root
-            try:
-                target = (REPO_ROOT / rel_path).resolve()
-                if not target.is_relative_to(REPO_ROOT):
-                    self._send_error(403, "Path traversal rejected")
-                    return
-                if not target.exists() or not target.is_file():
-                    self._send_error(404, "File not found")
-                    return
-                content = target.read_text(encoding="utf-8", errors="replace")
-                self._send_json({"path": rel_path, "content": content})
-            except Exception as e:
-                self._send_error(400, str(e))
 
         else:
             self._send_error(404, f"Not found: {path}")

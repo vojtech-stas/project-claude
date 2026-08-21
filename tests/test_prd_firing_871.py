@@ -282,40 +282,21 @@ class TestEndpointShape(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestServerRoutePresent(unittest.TestCase):
-    """server.py must have /api/prd-firing route; index.html must fetch it."""
+    """server.py stays valid; DEAD-ROUTES stays clean.
+
+    The /api/prd-firing route + its server.py import + its index.html fetch
+    are deleted per ADR-0080 D1 (Firing tab's gh-reconstructed cross-check
+    panel retired — RECORD-VS-GH + HOSTED-CI-REAL are its mechanized
+    replacement). prd_firing.py itself is untouched (module deletion is
+    slice 2's scope) — TestParseFiringTimeline/TestEndpointShape above still
+    exercise it directly.
+    """
 
     def _server_src(self):
         return SERVER_PY.read_text(encoding="utf-8")
 
     def _index_src(self):
         return INDEX_HTML.read_text(encoding="utf-8")
-
-    def test_server_has_prd_firing_route(self):
-        """server.py must contain elif path == '/api/prd-firing' route."""
-        src = self._server_src()
-        self.assertIn(
-            '"/api/prd-firing"',
-            src,
-            "server.py must contain an elif path == '/api/prd-firing' route",
-        )
-
-    def test_index_fetches_prd_firing(self):
-        """index.html must contain a fetch('/api/prd-firing') call (DEAD-ROUTES)."""
-        html = self._index_src()
-        self.assertIn(
-            "/api/prd-firing",
-            html,
-            "index.html must fetch /api/prd-firing (DEAD-ROUTES compliance)",
-        )
-
-    def test_server_imports_prd_firing(self):
-        """server.py must import from prd_firing module."""
-        src = self._server_src()
-        self.assertIn(
-            "prd_firing",
-            src,
-            "server.py must import prd_firing module",
-        )
 
     def test_server_py_parses(self):
         """server.py must be valid Python after adding the new route."""

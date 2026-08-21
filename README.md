@@ -323,7 +323,7 @@ All operational content lives in skills + subagents + CLAUDE.md + ADRs; no separ
 
 ### Dashboard
 
-Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionStart hook (per [ADR-0033](decisions/0033-tooling-spawn-hook-scope.md)). Visit `http://localhost:8765` — **Run-board** (the landing view), **Architecture**, **Live**, **Health**, and **Firing** tabs. Run-board is rendered first (PRD #1170 / [ADR-0078](decisions/0078-run-board-landing-view.md) D1): now/next/recent read strictly from the recorded v3 trace ledger via `/api/runboard`, with the Architecture view one click away. Architecture shows the pipeline diagram and auto-discovered component graph (skills, agents, hooks, ADRs) with click-to-view file content. Live shows two lanes: Lane A polls `/api/live-progress` (~25s) to render the most recent open PRD's per-slice run progress from the artifact trail (hook-independent); Lane B polls `/api/live-poll?cursor=N` with a byte-cursor against `workflow-events.jsonl` for an incremental chat transcript (O(delta), session picker, user/assistant bubbles, tool-beat rows, expand-on-click, All/Chat/Tools filter chips, APPROVE/BLOCK verdict badges). A status pill reports hook freshness and collector health honestly. Health shows pass/fail grids for DOCS-1..DOCS-10 and AS-* checks. Python stdlib only — no `pip install` needed. Manual start: `python dashboard/server.py`. See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
+Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionStart hook (per [ADR-0033](decisions/0033-tooling-spawn-hook-scope.md)). Visit `http://localhost:8765` — **Run-board** is the ONLY tab (PRD #1170 / [ADR-0078](decisions/0078-run-board-landing-view.md) D1, reduced from five tabs to one by PRD #1214 / [ADR-0080](decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1): now/next/recent read strictly from the recorded v3 trace ledger via `/api/runboard`, plus a recorded-pipeline-chains panel (`/api/trace-runs`, relocated from the deleted Firing tab) and a thin health strip (PASS/WARN/FAIL counts + FAIL names from `/api/health`, fetched once per page load with a manual Refresh). The former Architecture, Live, and Health tabs and their fifteen UI-only routes are deleted — topology lives in the CI-gated [`_repo-map.md`](.claude/generated/_repo-map.md) instead. Python stdlib only — no `pip install` needed. Manual start: `python dashboard/server.py`. See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
 
 ## Component map
 
@@ -376,7 +376,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 77 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 78 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -396,7 +396,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 77 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 78 ADR(s).
 
 ## License
 

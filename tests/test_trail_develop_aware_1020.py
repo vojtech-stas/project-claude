@@ -1,32 +1,33 @@
 """
 Regression test for issue #1020 — Trail comparison still false-FAILs develop PRDs.
 
-Two facets tested:
+Facet tested:
   A) slice_no_pr false-FAIL: when slices have closedAt set (are genuinely closed)
      but GitHub did NOT auto-populate closingIssuesReferences (develop-base merge),
      the comparison must NOT emit slice_no_pr violations after the fix. This test
-     calls compare() (the REAL /api/comparison path), not sub-helpers that bypass
-     the violation detector.
+     calls compare() (the comparison.py engine function directly), not sub-helpers
+     that bypass the violation detector.
 
-  B) Non-blocking /api/comparison: serve_comparison() must return immediately
-     (< 3 s) regardless of gh latency; the endpoint never blocks the HTTP thread.
+  Facet B (non-blocking /api/comparison via server.serve_comparison()) was
+  retired per ADR-0080 D1: the /api/comparison route and its server-side
+  non-blocking wrapper are deleted along with the Architecture tab's embedded
+  comparison panel. comparison.py itself (and its compare() engine function
+  tested by facet A) is unaffected — collector.py still imports it for its
+  CLI, per ADR-0055 D2's run_pass guarantee.
 
-Root cause (two-facet):
-  1. closedAt IS set on slices (GitHub auto-closed via some mechanism, or manual),
-     but closing_pr_number is None because _discover_develop_pr_slice_links scans
-     --base develop only; once PRs are promoted to main the scan returns empty and
-     the slice_no_pr detector fires.
-  2. /api/comparison blocked the HTTP thread synchronously (no background warm).
+Root cause:
+  closedAt IS set on slices (GitHub auto-closed via some mechanism, or manual),
+  but closing_pr_number is None because _discover_develop_pr_slice_links scans
+  --base develop only; once PRs are promoted to main the scan returns empty and
+  the slice_no_pr detector fires.
 
 Before fix (commit #1 — this file only):
   - compare() returns slice_no_pr violations for slices with closedAt set + no
     closing_pr_number → run_pass False.
-  - serve_comparison() doesn't exist; the endpoint is blocking.
 
 After fix (commit #2):
   - compare() returns run_pass True / zero slice_no_pr for slices whose closing PR
     is discoverable via trail prs dict or develop-PR body scanning.
-  - serve_comparison() returns immediately (stale-while-revalidate).
 
 Runner: stdlib unittest (no top-level pytest).
   python -m pytest tests/test_trail_develop_aware_1020.py -v
@@ -35,10 +36,9 @@ Runner: stdlib unittest (no top-level pytest).
 
 import json
 import sys
-import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
@@ -421,69 +421,6 @@ class TestSliceNoPrDevelopAware(unittest.TestCase):
         self.assertEqual(
             edge.get("state"), "confirmed",
             f"E-REVIEW-MERGE must be confirmed, got: {edge}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Group B: Non-blocking /api/comparison — serve_comparison() exists and is fast
-# ---------------------------------------------------------------------------
-
-class TestComparisonNonBlocking(unittest.TestCase):
-    """serve_comparison() must return in < 3 s regardless of gh latency.
-
-    Before fix: no serve_comparison() in server.py; endpoint is blocking.
-    After fix: serve_comparison(prd_n) returns cached/computing immediately.
-    """
-
-    def test_serve_comparison_exists(self):
-        """serve_comparison must exist in server module after fix.
-
-        FAILS before fix (AttributeError); passes after.
-        """
-        _inject_dashboard()
-        import server
-        self.assertTrue(
-            hasattr(server, "serve_comparison"),
-            "server.serve_comparison not found — fix (commit #2) not applied. "
-            "This test MUST FAIL before the fix."
-        )
-
-    def test_serve_comparison_returns_quickly(self):
-        """serve_comparison(993) must return in < 3 s even on cold cache."""
-        _inject_dashboard()
-        import server
-
-        if not hasattr(server, "serve_comparison"):
-            self.skipTest("serve_comparison not yet implemented (pre-fix state)")
-
-        # Patch get_trail to simulate slow gh (2s delay)
-        import collector
-
-        def slow_trail(prd_number, force_refresh=False):
-            time.sleep(2)  # simulate gh latency
-            return {
-                "prd_number": prd_number,
-                "prd_title": "slow trail",
-                "collector_status": "",
-                "slices": [],
-                "prs": {},
-            }
-
-        with patch.object(server, "get_trail", side_effect=slow_trail):
-            t0 = time.monotonic()
-            result = server.serve_comparison(993)
-            elapsed = time.monotonic() - t0
-
-        self.assertLess(
-            elapsed, 3.0,
-            f"serve_comparison took {elapsed:.2f}s (>3s) — endpoint is BLOCKING. "
-            f"Fix must make it non-blocking (stale-while-revalidate)."
-        )
-        # Either computing sentinel or real data — either is acceptable
-        self.assertIn(
-            "status" if result.get("status") == "computing" else "prd_number",
-            result,
-            f"Unexpected serve_comparison result: {result}"
         )
 
 

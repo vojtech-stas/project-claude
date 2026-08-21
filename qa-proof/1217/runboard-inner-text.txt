@@ -1,0 +1,254 @@
+project-claude dashboard
+Run-board + health strip — PRD #345
+feat/1217-reduce-ui-runboard-strip@e067f13
+|
+HOOKS LIVE
+|
+activity 2 min ago · beacon
+|
+green e067f13 lag=0 2h
+|
+33 PASS
+12 WARN
+2 FAIL
+|
+PRs 0 · slices 0 · captured 0 (computing)
+Run-board
+Run-board
+Refresh
+1 running, 0 next, 20 recent — fetched 08-21 14:39
+
+What is running now, what runs next, what just finished — read strictly from the recorded v3 trace ledger (tools/trace.py + dashboard/tracestore.py). Never inferred; an absent record renders as absent, never fabricated. Every row below names its own data source and the ledger read time.
+
+Now
+— flagged stale after 1h30m
+slice #1217 (PRD #1214)
+session orchestrator — running 56m23s
+source: dispatch span (open, no dispatch_end) — ledger read 08-21 14:39
+Next
+no ready slices recorded (none-recorded)
+Recent
+PR #1213 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+PR #1210 — merged
+took 4s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1199 — success
+took 1h28m
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1203 — merged
+took 4s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1198 — success
+took 55m31s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1201 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1197 — success
+took 51m6s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1200 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1189 — success
+took 54m57s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1191 — merged
+took 26s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1188 — success
+took 39m28s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1190 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+PR #1177 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1173 — success
+took 28m38s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1174 — merged
+took 4s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1172 — success
+took 35m33s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1164 — merged
+took 6s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1162 — success
+took 39m40s
+source: dispatch_end span — ledger read 08-21 14:39
+PR #1163 — merged
+took 5s
+source: pr_merged span — ledger read 08-21 14:39
+slice #1161 — success
+took 24m31s
+source: dispatch_end span — ledger read 08-21 14:39
+Recorded pipeline chains
+Refresh
+20 recorded chains — fetched 08-21 14:39
+
+Recorded v3 spans from the trace store (tools/trace.py + dashboard/tracestore.py) — pr_opened→pr_merged chains with real timestamps/durations. Zero gh calls, zero regex reconstruction.
+
+PR #1213
+4872ms
+pr_opened
+08-21 12:32
+pr_merged
+08-21 12:39
+verdict
+08-21 12:39
+PR #1210
+4256ms
+pr_opened
+08-21 12:12
+pr_merged
+08-21 12:21
+verdict
+08-21 12:21
+PR #1203
+4341ms
+pr_opened
+08-20 22:19
+pr_merged
+08-20 22:49
+verdict
+08-20 22:49
+PR #1201
+5248ms
+pr_opened
+08-20 21:46
+pr_merged
+08-20 22:14
+verdict
+08-20 22:14
+PR #1200
+4779ms
+pr_opened
+08-20 21:00
+pr_merged
+08-20 21:18
+verdict
+08-20 21:18
+PR #1191
+25745ms
+pr_opened
+08-20 18:56
+pr_merged
+08-20 19:19
+verdict
+08-20 19:19
+PR #1190
+5161ms
+pr_opened
+08-20 18:47
+pr_merged
+08-20 19:05
+verdict
+08-20 19:05
+PR #1177
+4649ms
+pr_opened
+08-04 01:47
+pr_merged
+08-04 02:25
+verdict
+08-04 02:25
+PR #1174
+4360ms
+pr_opened
+08-04 00:43
+pr_merged
+08-04 01:17
+verdict
+08-04 01:17
+PR #1164
+5674ms
+pr_opened
+08-03 11:59
+pr_merged
+08-03 12:26
+verdict
+08-03 12:26
+PR #1163
+4866ms
+pr_opened
+08-03 11:44
+pr_merged
+08-03 12:00
+verdict
+08-03 12:00
+PR #1154
+4570ms
+pr_opened
+08-02 21:02
+pr_merged
+08-02 21:44
+PR #1149
+24721ms
+pr_opened
+08-02 19:46
+pr_merged
+08-02 20:17
+PR #1148
+19534ms
+pr_opened
+08-02 19:44
+pr_merged
+08-02 20:14
+verdict
+08-02 20:14
+PR #1142
+6145ms
+pr_opened
+08-02 18:17
+pr_merged
+08-02 18:53
+verdict
+08-02 18:53
+PR #1141
+9418ms
+pr_opened
+08-02 18:14
+pr_merged
+08-02 19:29
+verdict
+08-02 19:29
+PR #1140
+5865ms
+pr_opened
+08-02 18:10
+pr_merged
+08-02 18:25
+PR #1139
+2101ms
+pr_opened
+08-02 18:09
+pr_merged
+08-02 20:33
+verdict
+08-02 20:33
+PR #1137
+4670ms
+pr_opened
+08-02 13:47
+pr_merged
+08-02 14:41
+PR #1125
+5750ms
+pr_opened
+08-02 11:36
+pr_merged
+08-02 11:52
+Health
+Refresh
+47 checks — fetched 2026-08-21T14:39:48.278Z
+
+Verdict counts + FAIL check names from the health check registry (python dashboard/health.py). Fetched once per page load, not polled — click Refresh for current data.
+
+PASS 33  WARN 12  FAIL 2
+FAIL: HOOK-INTEGRITY, STREAM-LIVENESS

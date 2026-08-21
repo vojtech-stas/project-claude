@@ -284,65 +284,55 @@ class TestFiringCacheNoTranscript(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestNonBlockingPatterns(unittest.TestCase):
-    """index.html must have non-blocking AbortController pattern for Health/Arch/Firing."""
+    """index.html must have non-blocking AbortController pattern where used.
+
+    ADR-0080 D1 deletes the Health/Architecture/Firing tabs and their
+    per-panel AbortController instances (_healthRefreshTimer,
+    _archController, _firingController) along with the panels themselves.
+    The status bar's own AbortController (_statusController, a shared/
+    global feature unaffected by the tab reduction) remains the live
+    example of the pattern this slice's #997 introduced.
+    """
 
     def _html_src(self):
         return (REPO_ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
 
-    def test_health_has_abort_controller(self):
-        """loadHealth() must use AbortController for non-blocking fetch."""
+    def test_status_bar_has_abort_controller(self):
+        """The status bar poller must use AbortController for non-blocking fetch."""
         html = self._html_src()
         self.assertIn(
-            "AbortController",
+            "_statusController",
             html,
-            "index.html must use AbortController (non-blocking pattern, slice #997)",
+            "index.html must use _statusController (non-blocking pattern, slice #997)",
         )
 
-    def test_health_has_computing_text(self):
-        """Health panel must show 'computing' text when slow/aborted."""
+    def test_runboard_has_computing_text(self):
+        """Run-board panels must show 'computing' text when slow/aborted."""
         html = self._html_src()
         self.assertIn(
             "computing",
             html,
-            "index.html must show 'computing…' state on slow/aborted health fetch",
+            "index.html must show 'computing…' state on slow/aborted fetches",
         )
 
-    def test_health_auto_refresh_timer(self):
-        """Health tab must have an auto-refresh setInterval."""
+    def test_trace_runs_auto_refresh(self):
+        """The relocated recorded-runs panel must have a 30s auto-refresh
+        setInterval inside startTraceRuns (mirrors the deleted Firing tab's
+        former cadence)."""
         html = self._html_src()
-        self.assertIn(
-            "_healthRefreshTimer",
-            html,
-            "index.html must have _healthRefreshTimer for health auto-refresh",
-        )
-
-    def test_firing_abort_controller(self):
-        """fetchFiring() must use AbortController for non-blocking fetch."""
-        html = self._html_src()
-        self.assertIn(
-            "_firingController",
-            html,
-            "index.html must have _firingController (non-blocking Firing panel)",
-        )
-
-    def test_firing_auto_refresh(self):
-        """Firing tab must have a 30s auto-refresh setInterval inside startFiring."""
-        html = self._html_src()
-        # The auto-refresh is inside startFiring function
         self.assertIn(
             "30000",
             html,
-            "index.html must have 30s auto-refresh for Firing tab",
+            "index.html must have 30s auto-refresh for the recorded-runs panel",
         )
 
-    def test_architecture_abort_controller(self):
-        """loadArchitecture() must use AbortController for non-blocking fetch."""
+    def test_deleted_tab_controllers_absent(self):
+        """The Health/Architecture/Firing per-panel controllers are gone,
+        not merely renamed (ADR-0080 D1)."""
         html = self._html_src()
-        self.assertIn(
-            "_archController",
-            html,
-            "index.html must have _archController (non-blocking Architecture panel)",
-        )
+        self.assertNotIn("_healthRefreshTimer", html)
+        self.assertNotIn("_archController", html)
+        self.assertNotIn("_firingController", html)
 
 
 if __name__ == "__main__":

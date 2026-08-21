@@ -132,12 +132,12 @@ SCOPE_PATHS: dict[str, str] = {
 # scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
 # PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162),
 # then by ADR-0078's 1 new PIP-* id (slice #1172), then by ADR-0079's 1 new
-# PIP-* id (slice #1197).
+# PIP-* id (slice #1197), then by ADR-0080's 1 new PIP-* id (slice #1217).
 # --check verifies that the live count equals this value; a mismatch means a
 # rule was silently added or removed without updating this constant.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(23) + REG(3) + SLI(5) + VER(8) = 84
-RULE_IDS_BASELINE: int = 84
+#            ISO(6) + OUT(5) + PIP(24) + REG(3) + SLI(5) + VER(8) = 85
+RULE_IDS_BASELINE: int = 85
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -371,16 +371,18 @@ _RULE_STATEMENTS: dict[str, str] = {
     # ADR-0076: guarded-verb pipeline engine
     "PIP-014": (
         "The complete verb set (`tools/pipe/{dispatch,pr-open,pr-merge,qa-verify,"
-        "prd-close,record-green,batch-plan}` + `tools/promote.sh`) is the sole "
+        "prd-close,record-green}` + `tools/promote.sh`) is the sole "
         "sanctioned path for mechanical pipeline transitions: precondition checks "
         "→ side effect → atomic v3 span; a refused transition exits non-zero and "
-        "never half-succeeds (ADR-0076 D1)."
+        "never half-succeeds (ADR-0076 D1, as amended by ADR-0080 D2 — "
+        "`batch-plan` retired)."
     ),
     "PIP-015": (
         "`tools/trace.py` accepts only the closed kind set {pr_opened, pr_merged, "
-        "qa_verified, develop_green, promotion, dispatch, dispatch_end, verdict, "
-        "batch_planned}; an unknown kind is a hard error (non-zero, nothing "
-        "written) (ADR-0076 D2)."
+        "qa_verified, develop_green, promotion, dispatch, dispatch_end, verdict}; "
+        "an unknown kind is a hard error (non-zero, nothing "
+        "written) (ADR-0076 D2, as amended by ADR-0080 D2 — `batch_planned` "
+        "retired)."
     ),
     "PIP-016": (
         "`tools/pipe/pr-merge` refuses to merge a slice PR lacking a reviewer "
@@ -425,12 +427,14 @@ _RULE_STATEMENTS: dict[str, str] = {
     "PIP-022": (
         "`/api/runboard` serves now/next/recent strictly from recorded v3 "
         "spans (never inferred, backfilled, or reconstructed), rendered "
-        "first at `/` with the architecture view one click away; the "
+        "as the dashboard's only tab; the "
         "production check fails outright if any rendered row cannot be "
         "traced to a canonical-ledger span, the board renders normally "
         "while the ledger is unreadable, or the ledger holds no "
         "dispatch/batch_planned span in the verification window "
-        "(ADR-0078 D1)."
+        "(ADR-0078 D1, as amended by ADR-0080 D1 — the "
+        "architecture-view-one-click-away clause retired; the dashboard is "
+        "reduced to the run-board plus a thin health strip)."
     ),
     # ADR-0079: recorded-CI trust post-merge + sha-attributed evidence + hook diet
     "PIP-023": (
@@ -443,6 +447,17 @@ _RULE_STATEMENTS: dict[str, str] = {
         "is deleted at all three sites since record-green's own recorded-CI-"
         "trust logic already performs the equivalent verification (ADR-0079 "
         "D1b)."
+    ),
+    # ADR-0080: frontend reduced to the run-board; batch-plan verb retired
+    "PIP-024": (
+        "`tools/pipe/batch-plan` is retired and `batch_planned` leaves "
+        "`tools/trace.py`'s closed kind enum (zero recorded spans, "
+        "verified); the Run-board's `next` panel and `next_source` marker "
+        "are removed — the board shows only `now` and `recent`, both "
+        "backed by spans that verifiably occur; the verb returns only via "
+        "a new ADR gated on two `captured` issues from distinct PRDs each "
+        "documenting a concrete mis-dispatch or planning failure caused by "
+        "absent recorded batch state (ADR-0080 D2)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

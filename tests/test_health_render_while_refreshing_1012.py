@@ -2,18 +2,16 @@
 Regression tests for issue #1012 — Health board shows 'computing...' hiding
 valid stale data while refreshing=True (slow-gh).
 
-Two defects:
-  (a) Structural (front-end): loadHealth()'s _isCold logic treats
-      data.refreshing=True as cold, even when data has populated checks.
-      This triggers continuous fast-retry that (via the 30s abort timer)
-      blanks already-rendered grids by resetting them to 'computing…'.
-      Fix: _isCold must NOT be set True from data.refreshing alone when
-      checks are genuinely present. Only the absent-checks condition counts.
-  (b) Backend: _HEALTH_TTL is 30s — shorter than typical slow-gh compute
-      time, so refreshing=True is near-permanent.
-      Fix: raise _HEALTH_TTL to >= 180s so the cache isn't perpetually expired.
+Backend: _HEALTH_TTL is 30s — shorter than typical slow-gh compute
+time, so refreshing=True is near-permanent.
+Fix: raise _HEALTH_TTL to >= 180s so the cache isn't perpetually expired.
 
-These tests FAIL on develop before the fix and PASS after.
+This test FAILs on develop before the fix and PASSes after.
+
+The former front-end facet (loadHealth()'s _isCold logic) is retired per
+ADR-0080 D1: loadHealth() and the entire old Health-tab render pipeline
+were deleted with the Health tab; the new thin health strip (fetched once
+per page load, not polled) has no equivalent fast-retry/_isCold concern.
 
 NO top-level `import pytest` — stdlib unittest only.
 
@@ -27,180 +25,15 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-INDEX_HTML = REPO_ROOT / "dashboard" / "index.html"
 HEALTH_PY  = REPO_ROOT / "dashboard" / "health.py"
-
-
-def _load_index() -> str:
-    return INDEX_HTML.read_text(encoding="utf-8")
 
 
 def _load_health_py() -> str:
     return HEALTH_PY.read_text(encoding="utf-8")
 
 
-def _extract_load_health_body(content: str) -> str:
-    """Extract the full body of async function loadHealth() by brace-matching."""
-    m = re.search(r'async function loadHealth\s*\(\s*\)', content)
-    if not m:
-        raise AssertionError("loadHealth() function not found in index.html")
-    start = m.start()
-    brace_pos = content.index('{', start)
-    depth = 0
-    i = brace_pos
-    while i < len(content):
-        if content[i] == '{':
-            depth += 1
-        elif content[i] == '}':
-            depth -= 1
-            if depth == 0:
-                return content[brace_pos:i + 1]
-        i += 1
-    raise AssertionError("Could not find closing brace of loadHealth() in index.html")
-
-
-def _extract_function_body(content: str, fn_name: str) -> str:
-    """Extract the full body of a named JS function by brace-matching."""
-    pattern = rf'function {re.escape(fn_name)}\s*\('
-    m = re.search(pattern, content)
-    if not m:
-        raise AssertionError(f"function {fn_name}() not found in index.html")
-    start = m.start()
-    brace_pos = content.index('{', start)
-    depth = 0
-    i = brace_pos
-    while i < len(content):
-        if content[i] == '{':
-            depth += 1
-        elif content[i] == '}':
-            depth -= 1
-            if depth == 0:
-                return content[brace_pos:i + 1]
-        i += 1
-    raise AssertionError(f"Could not find closing brace of {fn_name}() in index.html")
-
-
 # ---------------------------------------------------------------------------
-# (a) loadHealth(): _isCold must NOT short-circuit to true on refreshing alone
-#     when checks are present.
-# ---------------------------------------------------------------------------
-
-class TestIsColdDoesNotTreatRefreshingAsAbsent(unittest.TestCase):
-    """Regression (a): the _isCold variable in loadHealth() must not be set
-    True by data.refreshing alone.
-
-    Before fix (current develop):
-        var _isCold = data.refreshing ||
-            (!data.purposeGroups && !data.auditMeta && ...);
-
-      This unconditionally sets _isCold=True whenever data.refreshing=True,
-      even when all check groups have populated data. The repeated fast-retry
-      loop, combined with the 30s abort timer, causes already-rendered grids
-      to be blanked with 'computing…'.
-
-    After fix:
-      _isCold is computed purely from data-presence, NOT from data.refreshing.
-      data.refreshing only drives the subtle timestamp indicator, NOT the retry.
-      Structural assertion: the _isCold assignment block must NOT have
-      `data.refreshing` as a standalone top-level OR-operand that can force
-      _isCold=True when data IS present.
-    """
-
-    def setUp(self):
-        self.content = _load_index()
-        self.body = _extract_load_health_body(self.content)
-
-    def test_isCold_not_set_from_refreshing_alone(self):
-        """_isCold must not have 'data.refreshing' as a standalone OR operand
-        at the top of the _isCold assignment (the pre-fix pattern).
-
-        Before fix:
-            var _isCold = data.refreshing ||
-              (!data.purposeGroups && ...);
-        This means: if data.refreshing => _isCold=True => retry loop fires
-        even when checks are fully present.
-
-        After fix: data.refreshing is NOT the first operand of _isCold,
-        or _isCold is not set at all from data.refreshing in isolation.
-        The check for data presence should be driven by checks.length, not
-        by the refreshing flag.
-        """
-        # Find the _isCold assignment block in loadHealth body
-        # Pattern: var _isCold = data.refreshing || ...
-        # This is the pre-fix buggy pattern that must NOT exist after the fix.
-        buggy_pattern = re.compile(
-            r'var\s+_isCold\s*=\s*data\.refreshing\s*\|\|',
-            re.DOTALL
-        )
-        match = buggy_pattern.search(self.body)
-        self.assertIsNone(
-            match,
-            msg=(
-                "loadHealth() still has the pre-fix _isCold pattern:\n"
-                "  `var _isCold = data.refreshing || ...`\n\n"
-                "This unconditionally sets _isCold=True whenever data.refreshing\n"
-                "is True — even when all check groups have populated data. This\n"
-                "triggers a fast-retry loop that (via the 30s abort timer) blanks\n"
-                "already-rendered Health grids with 'computing…'.\n\n"
-                "Fix: compute _isCold from data-PRESENCE only (checks.length == 0\n"
-                "or genuinely missing fields), not from the refreshing flag.\n"
-                "The refreshing flag should only drive the timestamp indicator."
-            )
-        )
-
-    def test_isCold_checks_data_presence(self):
-        """After removing data.refreshing from _isCold, the body must still
-        have a data-presence check (so cold-bootstrap case is still retried).
-
-        The fix must preserve the cold-bootstrap retry; it just must not
-        conflate 'refreshing' with 'absent'. We look for a check-absence
-        pattern (checks.length, purposeGroups, auditMeta, etc.) in the
-        _isCold assignment.
-        """
-        # After the fix, _isCold should still check for absent data
-        data_presence_pattern = re.compile(
-            r'_isCold\s*[=|].*?(?:\.length|purposeGroups|auditMeta|substrateMeta|checks)',
-            re.DOTALL
-        )
-        match = data_presence_pattern.search(self.body)
-        self.assertIsNotNone(
-            match,
-            msg=(
-                "loadHealth() does not appear to have a data-presence check\n"
-                "for _isCold (e.g. checks.length, purposeGroups, auditMeta…).\n\n"
-                "The fix must preserve the cold-bootstrap retry (when checks\n"
-                "are genuinely absent) while removing the data.refreshing\n"
-                "short-circuit. Both are needed."
-            )
-        )
-
-    def test_refreshing_indicator_preserved(self):
-        """The subtle refreshing indicator must still be present after the fix.
-
-        The issue spec says: keep the existing '(refreshing…)' timestamp
-        indicator for the stale-but-present case. This checks that
-        'refreshing…' still appears somewhere in the health-related JS.
-        """
-        # The timestamp indicator sets text like: data.refreshing ? ' (refreshing…)' : ''
-        # Verify the refreshing indicator is still rendered (just not misused for _isCold).
-        health_section = self.content
-        has_indicator = bool(re.search(
-            r'refreshing.*?refreshing',  # matches 'refreshing…' or similar
-            health_section,
-            re.DOTALL | re.IGNORECASE
-        ))
-        self.assertTrue(
-            has_indicator,
-            msg=(
-                "The '(refreshing…)' timestamp indicator appears to have been\n"
-                "removed from the Health JS. The fix must preserve the subtle\n"
-                "visual indicator while fixing the _isCold mis-classification."
-            )
-        )
-
-
-# ---------------------------------------------------------------------------
-# (b) Backend: _HEALTH_TTL must be >= 180 seconds
+# Backend: _HEALTH_TTL must be >= 180 seconds
 # ---------------------------------------------------------------------------
 
 class TestHealthTTLSufficient(unittest.TestCase):

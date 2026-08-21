@@ -359,24 +359,6 @@ class TestThreadedServerSmoke(unittest.TestCase):
             "server.py must instantiate ThreadingHTTPServer (not plain HTTPServer)",
         )
 
-    def test_api_runs_route_present(self):
-        """server.py must have an elif path == '/api/runs' route handler."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            '"/api/runs"',
-            src,
-            "server.py must contain an elif path == '/api/runs' route",
-        )
-
-    def test_api_runs_fetched_in_index_html(self):
-        """index.html must contain a fetch('/api/runs') call."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/runs",
-            html,
-            "index.html must fetch /api/runs (DEAD-ROUTES compliance)",
-        )
-
     def test_dead_routes_pass_after_impl(self):
         """DEAD-ROUTES health check must return PASS (no dead routes)."""
         import subprocess
@@ -400,48 +382,6 @@ print(json.dumps(check_dead_routes()))
             [],
             dead,
             f"DEAD-ROUTES check has dead routes: {dead}\nDetail: {data.get('detail')}",
-        )
-
-    def test_trail_tab_fetches_trail_api(self):
-        """index.html Trail tab must fetch /api/trail for per-PRD timeline."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/trail",
-            html,
-            "index.html must fetch /api/trail in the Trail tab",
-        )
-
-    def test_live_tab_fetches_live_progress(self):
-        """index.html Live tab must fetch /api/live-progress."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/live-progress",
-            html,
-            "index.html must fetch /api/live-progress in the Live tab",
-        )
-
-    def test_per_prd_timeline_section_present(self):
-        """index.html must contain the per-PRD workflow-firing timeline section.
-
-        The section can be in the Trail tab (showing per-PRD timeline from
-        /api/trail data) or in the Live tab (from /api/runs). Checks for
-        a marker that indicates wired rendering of real per-PRD events.
-        """
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        # The timeline section renders per-PRD firing: slices + PRs + verdicts
-        # Must have a section element with data from /api/trail or /api/runs
-        markers = [
-            "per-prd-timeline",    # id or class we'll add
-            "prd-timeline",        # alternative id
-            "workflow-timeline",   # alternative
-            "prd-firing",          # alternative
-        ]
-        found = any(m in html for m in markers)
-        self.assertTrue(
-            found,
-            f"index.html must contain a per-PRD workflow-firing timeline section "
-            f"(looked for: {markers}). Timeline renders how+when the workflow fired "
-            f"for a PRD from /api/trail data.",
         )
 
 

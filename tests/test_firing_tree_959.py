@@ -652,81 +652,17 @@ class TestPartialMarker(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestLiveTabUX(unittest.TestCase):
-    """Live-tab UX: Refresh buttons have auto-interval label; events ordered oldest-at-top."""
+    """transcript.py's nested_groups/research_other API shape stays intact.
+
+    The Live tab's session-live/session-firing panels + their Refresh-button
+    labels and JS (fetchSessionFiring, _renderNestedPrdNode) are deleted per
+    ADR-0080 D1. transcript.py itself is untouched (module deletion is
+    slice 2's scope) — build_firing_tree()/get_session_firing() are tested
+    directly below via the module, not via index.html string-grepping.
+    """
 
     def setUp(self):
         _inject_dashboard()
-
-    def test_session_live_refresh_button_has_auto_label(self):
-        """Session-live Refresh button must say 'Refresh (auto 15s)'."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "Refresh (auto 15s)",
-            content,
-            "Session-live Refresh button must be labelled 'Refresh (auto 15s)'",
-        )
-
-    def test_session_firing_refresh_button_has_auto_label(self):
-        """Session-firing Refresh button must say 'Refresh (auto 30s)'."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "Refresh (auto 30s)",
-            content,
-            "Session-firing Refresh button must be labelled 'Refresh (auto 30s)'",
-        )
-
-    def test_session_live_poll_interval_15s(self):
-        """Session-live auto-refresh interval must be 15 seconds."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        # The setInterval for session-live should use 15000 ms
-        self.assertIn(
-            "15000",
-            content,
-            "Session-live polling must use 15000 ms interval",
-        )
-
-    def test_session_firing_poll_interval_30s(self):
-        """Session-firing auto-refresh interval must be 30 seconds."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "30000",
-            content,
-            "Session-firing polling must use 30000 ms interval",
-        )
-
-    def test_nested_groups_key_in_fetchSessionFiring_js(self):
-        """fetchSessionFiring() JS must use 'nested_groups' from the API response."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "nested_groups",
-            content,
-            "index.html must reference 'nested_groups' in the fetchSessionFiring JS",
-        )
-
-    def test_research_other_key_in_fetchSessionFiring_js(self):
-        """fetchSessionFiring() JS must use 'research_other' from the API response."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "research_other",
-            content,
-            "index.html must reference 'research_other' in the fetchSessionFiring JS",
-        )
-
-    def test_partial_badge_in_js(self):
-        """_renderNestedPrdNode must emit a 'partial' badge when partial=true."""
-        index_html = REPO_ROOT / "dashboard" / "index.html"
-        content = index_html.read_text(encoding="utf-8", errors="replace")
-        self.assertIn(
-            "partial",
-            content,
-            "index.html must render a 'partial' marker for PRD nodes",
-        )
 
     def test_build_firing_tree_returns_research_other(self):
         """build_firing_tree() API dict must include 'research_other' key."""

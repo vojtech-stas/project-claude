@@ -9,8 +9,9 @@ Groups:
   3. OutcomeFallback     — outcome == "dispatched" when no verdict has been recorded yet.
   4. ActorDerivation     — actor == "orchestrator" when dispatch is from main transcript;
                            actor == parent agent type when dispatch is from a subagent.
-  5. ServerRouteFields   — /api/session-firing response includes completeness_count key
-                           (static grep on server.py + index.html — no live bind).
+  5. TranscriptModuleExports — transcript.py exports the WHO/tool_target/completeness
+                           helpers directly (the /api/session-firing route + its
+                           renderer were deleted with the Live tab per ADR-0080 D1).
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_firing_who_929.py -v
@@ -25,8 +26,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
-SERVER_PY = DASHBOARD_DIR / "server.py"
-INDEX_HTML = DASHBOARD_DIR / "index.html"
 
 
 def _inject_dashboard():
@@ -453,44 +452,14 @@ class TestActorDerivation(unittest.TestCase):
 # Group 5: ServerRouteFields — static checks (no live bind)
 # ---------------------------------------------------------------------------
 
-class TestServerRouteFields(unittest.TestCase):
-    """server.py and index.html wire up the new fields correctly."""
+class TestTranscriptModuleExports(unittest.TestCase):
+    """transcript.py exports the WHO/tool_target/completeness helpers directly.
 
-    def _server_src(self):
-        return SERVER_PY.read_text(encoding="utf-8")
-
-    def _index_src(self):
-        return INDEX_HTML.read_text(encoding="utf-8")
-
-    def test_server_has_session_firing_route(self):
-        """server.py must still have /api/session-firing route."""
-        self.assertIn('"/api/session-firing"', self._server_src(),
-                      "server.py must have /api/session-firing route")
-
-    def test_index_has_completeness_badge_class(self):
-        """index.html must contain the firing-completeness-badge CSS class."""
-        self.assertIn("firing-completeness-badge", self._index_src(),
-                      "index.html must define firing-completeness-badge CSS class")
-
-    def test_index_renders_actor_field(self):
-        """index.html must reference 'actor' in the firing group renderer."""
-        self.assertIn("firing-event-actor", self._index_src(),
-                      "index.html must reference firing-event-actor CSS class")
-
-    def test_index_renders_tool_target_field(self):
-        """index.html must reference 'tool_target' in the firing group renderer."""
-        self.assertIn("tool_target", self._index_src(),
-                      "index.html must reference tool_target field in firing renderer")
-
-    def test_index_renders_outcome_field(self):
-        """index.html must reference 'outcome' in the firing group renderer."""
-        self.assertIn("firing-event-outcome", self._index_src(),
-                      "index.html must reference firing-event-outcome CSS class")
-
-    def test_index_renders_completeness_count(self):
-        """index.html must reference 'completeness_count' in the session-firing renderer."""
-        self.assertIn("completeness_count", self._index_src(),
-                      "index.html must reference completeness_count from API response")
+    The /api/session-firing route + its index.html renderer (formerly tested
+    here as "TestServerRouteFields") were deleted with the Live tab per
+    ADR-0080 D1 — transcript.py itself is untouched (module deletion is
+    slice 2's scope) and these functions remain live/tested via direct call.
+    """
 
     def test_transcript_module_exports_new_functions(self):
         """transcript.py must export _build_actor_map and _count_transcript_firing_events."""

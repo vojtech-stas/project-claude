@@ -31,12 +31,29 @@ no contamination risk): `--fixture-file <path>` loads a JSON file shaped
 comment-set deliberately lacking the trailer) without needing a real
 badly-merged PR to exist.
 
+Tri-state gh-interaction contract (reviewer round-1 BLOCK, PR #1222, R-TESTS
+— this is the D6-supersession compensating control; it must NOT soft-fail
+invisibly): every gh-calling helper returns `(status, value)` where status is
+one of:
+  "ok"           — value is the useful payload (CompletedProcess / list)
+  "soft_degrade" — value names the reason; ONLY for a confirmed local-dev
+                   condition (gh binary literally not installed, or gh's own
+                   not-authenticated error shape) — never for an ambiguous
+                   failure. `main()` prints SKIP and exits 0 for this case.
+  "hard_fail"    — value names the reason; ANY gh failure that is NOT
+                   confirmed as one of the two conditions above (rate limits,
+                   timeouts, network errors, non-JSON output, a per-PR fetch
+                   failing mid-window) — `main()` prints FAIL and exits 1.
+                   A required gate that cannot verify its assertion must
+                   report that it cannot verify, never a silent PASS.
+
 Exit codes:
-  0 — every PR in the window carries the VERDICT: APPROVE trailer (or gh is
-      unavailable/unauthenticated — soft-degrade for local dev without a
-      GH_TOKEN; CI always has one per the CHECK-19 precedent, so this path
-      is a genuine hard gate there, not a WARN)
-  1 — one or more PRs in the window lack the trailer
+  0 — every PR in the window carries the VERDICT: APPROVE trailer, or a
+      confirmed soft-degrade condition (gh not installed / gh not
+      authenticated — local dev without a GH_TOKEN; CI always has one per
+      the CHECK-19 precedent, so this path is a genuine hard gate there)
+  1 — one or more PRs in the window lack the trailer, OR gh failed for any
+      reason NOT confirmed as a soft-degrade condition (hard_fail)
 
 Usage:
   python3 tools/check-verdict-presence.py
@@ -51,7 +68,6 @@ import json
 import re
 import subprocess
 import sys
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Windows cp1252 fix (#1050 precedent, mirrors check-slicer-provenance.py):
@@ -63,6 +79,11 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 _DEFAULT_LIMIT = 20
+
+# Tri-state status constants.
+_OK = "ok"
+_SOFT_DEGRADE = "soft_degrade"
+_HARD_FAIL = "hard_fail"
 
 # The exact signal tools/pipe/pr-merge's `_VERDICT_APPROVE_RE` requires
 # before performing a merge (PIP-016 / ADR-0076 D3) — kept byte-identical
@@ -101,106 +122,120 @@ def classify_prs(prs: list) -> dict:
     return {"ok": ok, "missing": missing}
 
 
+def _gh_unauthenticated(stderr: str) -> bool:
+    """Narrowly recognize gh's OWN not-authenticated error shapes — the
+    ONLY stderr condition allowed to soft-degrade this REQUIRED gate to a
+    SKIP (local dev without a GH_TOKEN).
+
+    Deliberately narrower than a bare "token" substring (the reviewer
+    round-1 BLOCK on PR #1222): gh's rate-limit message ("API rate limit
+    exceeded for token ...") also contains the word "token" but is NOT an
+    authentication failure — matching it as such would silently turn a
+    transient/rate-limit condition into an invisible PASS for the one
+    check that must not soft-fail invisibly (this compensating control's
+    whole point, per ADR-0080 D1's supersession of ADR-0075 D6). Any gh
+    failure that does not match one of these known auth-error shapes is
+    treated as a HARD FAILURE by the caller, never a silent skip."""
+    stderr_lower = (stderr or "").lower()
+    return any(
+        s in stderr_lower
+        for s in ("not logged", "authentication", "unauthorized", "gh_token")
+    )
+
+
 def _run_gh(args: list, timeout: int = 30):
-    """Run a `gh` subcommand. Returns the CompletedProcess, or None if gh is
-    missing/times out/errors at the process level (caller soft-degrades)."""
+    """Run a `gh` subcommand. Returns (status, value) per the tri-state
+    contract: ("ok", CompletedProcess) on a successful subprocess launch
+    (regardless of gh's own exit code — the caller inspects that);
+    ("soft_degrade", reason) ONLY when the gh binary itself is not
+    installed at all (an unambiguous local-dev condition); ("hard_fail",
+    reason) for a timeout or any other transport-level error — CI always
+    has gh installed, so anything else here is anomalous and must not be
+    silently skipped."""
     try:
-        return subprocess.run(
+        result = subprocess.run(
             ["gh", *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
+        return _OK, result
     except FileNotFoundError:
-        print("SKIP: verdict-presence check — gh not found (soft-degrade)")
-        return None
+        return _SOFT_DEGRADE, "gh not found"
     except subprocess.TimeoutExpired:
-        print("SKIP: verdict-presence check — gh timed out (soft-degrade)")
-        return None
+        return _HARD_FAIL, "gh timed out"
     except Exception as e:
-        print(f"SKIP: verdict-presence check — gh error: {e} (soft-degrade)")
-        return None
+        return _HARD_FAIL, f"gh error: {e}"
 
 
-def _gh_unauthenticated(stderr: str) -> bool:
-    stderr_lower = (stderr or "").lower()
-    return any(
-        s in stderr_lower
-        for s in ("not logged", "authentication", "unauthorized", "gh_token", "token")
-    )
-
-
-def _fetch_recent_merged_pr_numbers(limit: int) -> Optional[list]:
+def _fetch_recent_merged_pr_numbers(limit: int):
     """`gh pr list --base develop --state merged --limit <limit> --json number`
     — the same bounded-window convention `dashboard/health.py`'s
     `_fetch_github_ci_conclusion` / RECORD-VS-GH already use.
 
-    Returns a list of ints, or None if gh is unavailable/unauthenticated
-    (soft-degrade signal)."""
-    result = _run_gh([
+    Returns (status, value) per the tri-state contract: ("ok", [ints]),
+    ("soft_degrade", reason), or ("hard_fail", reason)."""
+    status, result = _run_gh([
         "pr", "list", "--base", "develop", "--state", "merged",
         "--limit", str(limit), "--json", "number",
     ])
-    if result is None:
-        return None
+    if status != _OK:
+        return status, result
     if result.returncode != 0:
         if _gh_unauthenticated(result.stderr):
-            print(
-                "SKIP: verdict-presence check — gh unauthenticated "
-                "(no GH_TOKEN) (soft-degrade)"
-            )
-        else:
-            print(
-                f"SKIP: verdict-presence check — gh pr list exited "
-                f"{result.returncode}: {result.stderr.strip()[:120]} (soft-degrade)"
-            )
-        return None
+            return _SOFT_DEGRADE, "gh unauthenticated (no GH_TOKEN)"
+        return _HARD_FAIL, (
+            f"gh pr list exited {result.returncode}: {result.stderr.strip()[:120]}"
+        )
     stdout = result.stdout.strip()
     if not stdout:
-        return []
+        return _OK, []
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError:
-        print("SKIP: verdict-presence check — gh pr list returned non-JSON (soft-degrade)")
-        return None
-    return [item["number"] for item in data]
+        return _HARD_FAIL, "gh pr list returned non-JSON output"
+    return _OK, [item["number"] for item in data]
 
 
-def _fetch_pr_comments(number: int) -> Optional[list]:
+def _fetch_pr_comments(number: int):
     """`gh pr view <n> --json comments` — the same call
-    `tools/pipe/pr-merge`'s `_fetch_pr_comments` uses. Returns a list of
-    comment dicts, or None on any gh failure (soft-degrade signal)."""
-    result = _run_gh(["pr", "view", str(number), "--json", "comments"])
-    if result is None:
-        return None
+    `tools/pipe/pr-merge`'s `_fetch_pr_comments` uses. Returns (status,
+    value) per the tri-state contract. A non-zero exit here (mid-window,
+    after the list call already succeeded and proved gh IS authenticated)
+    is always a hard_fail — never silently degraded to an empty comment
+    list, which would mischaracterize an unverifiable PR as one that
+    genuinely lacks the trailer."""
+    status, result = _run_gh(["pr", "view", str(number), "--json", "comments"])
+    if status != _OK:
+        return status, result
     if result.returncode != 0:
-        print(
-            f"SKIP: verdict-presence check — gh pr view #{number} exited "
-            f"{result.returncode}: {result.stderr.strip()[:120]} (soft-degrade)"
+        return _HARD_FAIL, (
+            f"gh pr view #{number} exited {result.returncode}: "
+            f"{result.stderr.strip()[:120]}"
         )
-        return None
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print(f"SKIP: verdict-presence check — gh pr view #{number} returned non-JSON (soft-degrade)")
-        return None
-    return data.get("comments", [])
+        return _HARD_FAIL, f"gh pr view #{number} returned non-JSON output"
+    return _OK, data.get("comments", [])
 
 
-def _fetch_prs_with_comments(limit: int) -> Optional[list]:
-    """Combine the two gh calls above into the shape `classify_prs` expects.
-    Returns None (soft-degrade) if the PR-list call itself fails; a
-    per-PR comment-fetch failure degrades that single PR's comment list to
-    empty (a real gh outage mid-window should not silently PASS the check —
-    it will surface as a missing-trailer FAIL, which is the safe direction:
-    a check that cannot prove presence must not claim it found any)."""
-    numbers = _fetch_recent_merged_pr_numbers(limit)
-    if numbers is None:
-        return None
+def _fetch_prs_with_comments(limit: int):
+    """Combine the two gh calls above into the shape `classify_prs`
+    expects. Returns (status, value) per the tri-state contract,
+    propagating the FIRST non-ok status encountered (list call or any
+    per-PR comment fetch) — a partial, unverifiable window must not be
+    reported as a verified PASS or a false per-PR FAIL."""
+    status, value = _fetch_recent_merged_pr_numbers(limit)
+    if status != _OK:
+        return status, value
+    numbers = value
     prs = []
     for n in numbers:
-        comments = _fetch_pr_comments(n)
-        prs.append({"number": n, "comments": comments or []})
-    return prs
+        c_status, c_value = _fetch_pr_comments(n)
+        if c_status != _OK:
+            return c_status, c_value
+        prs.append({"number": n, "comments": c_value})
+    return _OK, prs
 
 
 def _load_fixture(path: str) -> list:
@@ -221,10 +256,18 @@ def main(argv=None) -> int:
         prs = _load_fixture(args.fixture_file)
         print(f"verdict-presence check — running against fixture {args.fixture_file!r}")
     else:
-        prs = _fetch_prs_with_comments(args.limit)
-        if prs is None:
-            # Soft-degrade path — skip message already printed.
+        status, value = _fetch_prs_with_comments(args.limit)
+        if status == _SOFT_DEGRADE:
+            print(f"SKIP: verdict-presence check — {value} (soft-degrade)")
             return 0
+        if status == _HARD_FAIL:
+            print(
+                f"FAIL: verdict-presence — {value} — a REQUIRED gate must not "
+                "silently pass on an unverifiable gh result",
+                file=sys.stderr,
+            )
+            return 1
+        prs = value
 
     if not prs:
         print("PASS: verdict-presence — no merged develop PRs found in window")

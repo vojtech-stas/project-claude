@@ -384,30 +384,6 @@ print(json.dumps(check_dead_routes()))
             f"DEAD-ROUTES check has dead routes: {dead}\nDetail: {data.get('detail')}",
         )
 
-    def test_per_prd_timeline_section_present(self):
-        """index.html must contain the per-PRD workflow-firing timeline section.
-
-        The section can be in the Trail tab (showing per-PRD timeline from
-        /api/trail data) or in the Live tab (from /api/runs). Checks for
-        a marker that indicates wired rendering of real per-PRD events.
-        """
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        # The timeline section renders per-PRD firing: slices + PRs + verdicts
-        # Must have a section element with data from /api/trail or /api/runs
-        markers = [
-            "per-prd-timeline",    # id or class we'll add
-            "prd-timeline",        # alternative id
-            "workflow-timeline",   # alternative
-            "prd-firing",          # alternative
-        ]
-        found = any(m in html for m in markers)
-        self.assertTrue(
-            found,
-            f"index.html must contain a per-PRD workflow-firing timeline section "
-            f"(looked for: {markers}). Timeline renders how+when the workflow fired "
-            f"for a PRD from /api/trail data.",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

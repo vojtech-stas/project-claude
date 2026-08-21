@@ -980,39 +980,6 @@
   .rollup-table tr:last-child td { border-bottom: none; }
   .rollup-never-confirmed { color: var(--amber); font-weight: 600; }
 
-  /* Per-PRD workflow-firing timeline (slice #864) */
-  .prd-timeline {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px 14px;
-  }
-  .prd-timeline-events { display: flex; flex-direction: column; gap: 0; }
-  .prd-timeline-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 5px 0;
-    border-bottom: 1px solid #21262d;
-    font-size: 11px;
-  }
-  .prd-timeline-item:last-child { border-bottom: none; }
-  .prd-timeline-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    flex-shrink: 0; margin-top: 3px;
-  }
-  .prd-timeline-ts {
-    color: var(--muted); min-width: 90px; flex-shrink: 0; font-size: 10px; padding-top: 1px;
-  }
-  .prd-timeline-label { color: var(--text); flex: 1; }
-  .prd-timeline-detail { color: var(--muted); font-size: 10px; margin-top: 1px; }
-  .prd-tl-badge {
-    display: inline-block; font-size: 10px; padding: 1px 6px;
-    border-radius: 10px; margin-left: 4px; white-space: nowrap;
-  }
-  .prd-tl-approve { background: #0d2a0d; color: var(--green); border: 1px solid var(--green); }
-  .prd-tl-block   { background: #2a0d0d; color: var(--red);   border: 1px solid var(--red); }
-  .prd-tl-merge   { background: #0d1a2a; color: var(--cyan);  border: 1px solid var(--cyan); }
   /* Runs list (slice #864) */
   .runs-list { display: flex; flex-direction: column; gap: 4px; }
   .run-item {

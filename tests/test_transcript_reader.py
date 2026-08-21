@@ -20,8 +20,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
-SERVER_PY = DASHBOARD_DIR / "server.py"
-INDEX_HTML = DASHBOARD_DIR / "index.html"
 
 
 def _inject_dashboard():
@@ -378,34 +376,13 @@ class TestPathSanitise(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestServerRoutePresentGroup(unittest.TestCase):
-    """server.py must have /api/session-live route; index.html must fetch it."""
+    """transcript.py stays live/importable directly.
 
-    def test_server_py_has_session_live_route(self):
-        """server.py must contain elif path == '/api/session-live'."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            '"/api/session-live"',
-            src,
-            "server.py must contain the /api/session-live route handler",
-        )
-
-    def test_index_html_fetches_session_live(self):
-        """index.html must contain a fetch('/api/session-live') call."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/session-live",
-            html,
-            "index.html must fetch /api/session-live (DEAD-ROUTES compliance)",
-        )
-
-    def test_server_py_imports_transcript_module(self):
-        """server.py must import transcript module."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            "transcript",
-            src,
-            "server.py must import the transcript module",
-        )
+    The /api/session-live route (and server.py's transcript import) is
+    deleted per ADR-0080 D1 (Live tab deleted) — transcript.py itself is
+    untouched (module deletion is slice 2's scope) and its functions remain
+    tested via direct call below.
+    """
 
     def test_transcript_module_exists(self):
         """dashboard/transcript.py must exist."""
@@ -736,50 +713,11 @@ class TestFiringTreeDefensive(unittest.TestCase):
         self.assertIsInstance(result["dispatch_count"], int)
 
 
-class TestServerFiringRoutePresent(unittest.TestCase):
-    """server.py must have /api/session-firing route; index.html must fetch it."""
-
-    def test_server_py_has_session_firing_route(self):
-        """server.py must contain '/api/session-firing' route."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            '"/api/session-firing"',
-            src,
-            "server.py must contain the /api/session-firing route handler",
-        )
-
-    def test_server_py_calls_get_session_firing(self):
-        """server.py must call the transcript module's session-firing serve path.
-
-        Updated by issue #1061: the route now calls the non-blocking
-        serve_session_firing() wrapper instead of calling get_session_firing()
-        directly, so the cold-start parse no longer blocks the request path.
-        """
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            "serve_session_firing",
-            src,
-            "server.py must call serve_session_firing() for the /api/session-firing "
-            "route (non-blocking wrapper, issue #1061)",
-        )
-
-    def test_index_html_fetches_session_firing(self):
-        """index.html must reference /api/session-firing."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/session-firing",
-            html,
-            "index.html must fetch /api/session-firing (DEAD-ROUTES compliance)",
-        )
-
-    def test_index_html_has_session_firing_panel(self):
-        """index.html must have the session-firing-content div."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "session-firing-content",
-            html,
-            "index.html must contain the session-firing-content element",
-        )
+# TestServerFiringRoutePresent retired (ADR-0080 D1): the /api/session-firing
+# route, its index.html panel, and the Live tab it lived in are all deleted.
+# transcript.py's build_firing_tree()/get_session_firing() (tested above in
+# TestFiringTree/TestFiringTreeDefensive) are untouched — module deletion is
+# slice 2's scope.
 
 
 # ---------------------------------------------------------------------------
@@ -910,43 +848,12 @@ class TestRuntimeReadingFromFixture(unittest.TestCase):
 
 
 class TestRuntimeReadingRoutePresent(unittest.TestCase):
-    """server.py must expose /api/runtime-reading; index.html must fetch it."""
+    """transcript.py's get_runtime_reading() stays live/importable directly.
 
-    def test_server_py_has_runtime_reading_route(self):
-        """server.py must contain '/api/runtime-reading' route."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            '"/api/runtime-reading"',
-            src,
-            "server.py must contain the /api/runtime-reading route handler",
-        )
-
-    def test_server_py_calls_get_runtime_reading(self):
-        """server.py must call get_runtime_reading() in the route handler."""
-        src = SERVER_PY.read_text(encoding="utf-8")
-        self.assertIn(
-            "get_runtime_reading",
-            src,
-            "server.py must call get_runtime_reading() for the /api/runtime-reading route",
-        )
-
-    def test_index_html_fetches_runtime_reading(self):
-        """index.html must reference /api/runtime-reading (DEAD-ROUTES compliance)."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "/api/runtime-reading",
-            html,
-            "index.html must fetch /api/runtime-reading (DEAD-ROUTES compliance)",
-        )
-
-    def test_index_html_has_runtime_panel(self):
-        """index.html must have the runtime-content div."""
-        html = INDEX_HTML.read_text(encoding="utf-8")
-        self.assertIn(
-            "runtime-content",
-            html,
-            "index.html must contain the runtime-content element",
-        )
+    The /api/runtime-reading route (and its index.html panel) is deleted
+    per ADR-0080 D1 (Live tab deleted) — transcript.py itself is untouched
+    (module deletion is slice 2's scope).
+    """
 
     def test_transcript_get_runtime_reading_exists(self):
         """transcript.py must export get_runtime_reading()."""

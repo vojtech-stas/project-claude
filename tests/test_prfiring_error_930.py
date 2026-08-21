@@ -219,31 +219,16 @@ class TestEncodingParam(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestServerEndpointRoute(unittest.TestCase):
-    """Static checks: server.py has /api/prd-firing route and catches exceptions."""
+    """Static checks: server.py stays valid Python.
+
+    The /api/prd-firing route (and its try/except guard) is deleted per
+    ADR-0080 D1 — prd_firing.py itself is untouched (module deletion is
+    slice 2's scope); TestNullStdoutSafety/TestEncodingParam above still
+    exercise it directly.
+    """
 
     def _server_src(self):
         return SERVER_PY.read_text(encoding="utf-8")
-
-    def test_server_has_prd_firing_route(self):
-        """server.py must contain elif path == '/api/prd-firing' route."""
-        src = self._server_src()
-        self.assertIn(
-            '"/api/prd-firing"',
-            src,
-            "server.py must contain /api/prd-firing route",
-        )
-
-    def test_server_catches_prd_firing_exception(self):
-        """server.py prd-firing route must have try/except guard."""
-        src = self._server_src()
-        # The route block must contain try and except to return 500 rather than crash
-        # Both keywords appear in the prd-firing handler block
-        prd_firing_block_start = src.find('"/api/prd-firing"')
-        self.assertGreater(prd_firing_block_start, 0)
-        # Find the try keyword after the prd-firing elif
-        block_slice = src[prd_firing_block_start:prd_firing_block_start + 500]
-        self.assertIn("try:", block_slice,
-                      "prd-firing route block must contain try/except guard")
 
     def test_server_py_parses(self):
         """server.py must remain valid Python."""

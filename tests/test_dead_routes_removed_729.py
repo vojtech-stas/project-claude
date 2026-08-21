@@ -11,13 +11,16 @@ Asserts:
       no stale docstring mention).
   (b) dashboard/server.py no longer advertises /api/workitems (no route handler,
       no stale docstring mention).
-  (c) /api/runs route handler IS present in server.py (must be kept).
+  (c) /api/runs route handler is ALSO absent (ADR-0080 D1 supersedes this
+      issue's original "must be kept" invariant — the route's sole consumer,
+      the Live tab's Recent-sessions panel, is deleted with the tab).
   (d) fetch_workitems can be imported from workitems.py (function kept,
       only the route is dead).
   (e) dashboard/README.md does not list /api/workitems in its API table.
 
-Tests (a-b) FAIL before the fix; tests (c-d-e) verify invariants that
-must hold both before AND after the fix.
+Tests (a-b) FAIL before the fix; tests (d-e) verify invariants that
+must hold both before AND after the fix; test (c) was inverted by
+ADR-0080 D1 (rule #19 — the whole flagged class, not just the instance).
 """
 
 import re
@@ -93,15 +96,21 @@ class TestDeadRoutesRemoved(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------
-    # (c) /api/runs — must remain
+    # (c) /api/runs — issue #729's "must remain" invariant is superseded by
+    #     ADR-0080 D1: the Live tab's "Recent sessions panel" that consumed
+    #     /api/runs is deleted along with the whole tab, so the route is now
+    #     one of ADR-0080's 15 dead routes rather than a keeper.
     # ------------------------------------------------------------------
 
-    def test_runs_route_handler_present(self):
-        """server.py must still contain the /api/runs route handler."""
-        self.assertIn(
+    def test_runs_route_handler_removed(self):
+        """server.py must NOT contain the /api/runs route handler (ADR-0080 D1
+        supersedes issue #729's keep-it invariant — its sole consumer, the
+        Live tab's Recent-sessions panel, is deleted)."""
+        self.assertNotIn(
             '"/api/runs"',
             self.server_src,
-            "server.py must keep the /api/runs route handler (used by Recent sessions panel)",
+            "server.py must not contain the /api/runs route handler "
+            "(deleted per ADR-0080 D1 alongside the Live tab)",
         )
 
     # ------------------------------------------------------------------

@@ -2,16 +2,14 @@
 tests/test_trace_runs_route_1082.py
 
 Structural wiring regressions for slice #1082 (PRD #1075 criterion 9 — the
-Firing tab's dashboard repoint). Mirrors the existing test_prd_firing_871.py
-"server_route_present" AST/import-only pattern (no live server bind, per
-isolation rules): asserts server.py wires the /api/trace-runs route and
-index.html renders BOTH the recorded (primary) panel and the demoted
-reconstructed (cross-check) panel with a DOM-greppable marker + the honest
-pre-v3 empty-state text.
-
-Test-first discipline: this commit lands BEFORE the server.py route /
-index.html rendering exist. FAILS before impl (grep assertions on absent
-strings); PASSES once the next commit wires both.
+Firing tab's dashboard repoint) + ADR-0080 D1 (the recorded panel's
+relocation into the Run-board and the reconstructed cross-check panel's
+deletion). Mirrors the existing test_prd_firing_871.py "server_route_present"
+AST/import-only pattern (no live server bind, per isolation rules): asserts
+server.py wires the /api/trace-runs route and index.html renders the
+recorded panel (relocated into tab-runboard, the dashboard's only tab) with
+the honest pre-v3 empty-state text — and that the gh-derived reconstructed
+panel, superseded by ADR-0080 D1, is actually gone (not merely demoted).
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_trace_runs_route_1082.py -v
@@ -57,7 +55,19 @@ class TestServerRoutePresent(unittest.TestCase):
         )
 
 
-class TestIndexHtmlRendersBothPanels(unittest.TestCase):
+class TestIndexHtmlRendersRecordedPanel(unittest.TestCase):
+    """The recorded (primary) panel, relocated into the Run-board tab.
+
+    ADR-0080 D1 supersedes ADR-0075 D6's "never delete the gh-reconstructed
+    layer" clause: the reconstructed cross-check panel (formerly tested here
+    as TestIndexHtmlRendersBothPanels) IS deleted — the RECORD-VS-GH
+    reconciler + a new HOSTED-CI-REAL CI check are its mechanized
+    replacement (CLAUDE.md rule #19: revise the whole flagged class, not
+    just the instance — this file's cross-check-panel-presence assertions
+    are inverted below, not merely deleted, to actively guard against
+    resurrection).
+    """
+
     @classmethod
     def setUpClass(cls):
         cls.html_src = INDEX_HTML.read_text(encoding="utf-8", errors="replace")
@@ -65,20 +75,7 @@ class TestIndexHtmlRendersBothPanels(unittest.TestCase):
     def test_fetches_trace_runs_endpoint(self):
         self.assertIn(
             "/api/trace-runs", self.html_src,
-            "index.html must fetch /api/trace-runs for the recorded (primary) panel",
-        )
-
-    def test_cross_check_label_dom_marker_present(self):
-        """DOM-greppable marker for the demoted reconstructed layer — never
-        delete the gh-derived rendering, only relabel it."""
-        self.assertIn(
-            'id="firing-cross-check-label"', self.html_src,
-            "index.html must carry a DOM-greppable cross-check label marker",
-        )
-        self.assertIn(
-            "reconstructed (cross-check)", self.html_src,
-            "the demoted gh-derived panel must be relabeled "
-            '"reconstructed (cross-check)" — demote, never delete',
+            "index.html must fetch /api/trace-runs for the recorded panel",
         )
 
     def test_honest_empty_state_for_pre_v3_prs(self):
@@ -94,45 +91,43 @@ class TestIndexHtmlRendersBothPanels(unittest.TestCase):
         self.assertIn("renderTraceRuns", self.html_src)
         self.assertIn("fetchTraceRuns", self.html_src)
 
-    def test_reconstructed_panel_still_present_not_deleted(self):
-        """The existing gh-derived rendering must remain — demoted, never
-        deleted (per the slice's explicit instruction)."""
-        self.assertIn("renderFiring", self.html_src)
-        self.assertIn("fetchFiring", self.html_src)
-        self.assertIn('id="firing-content"', self.html_src)
+    def test_recorded_panel_lives_in_runboard_tab(self):
+        """The relocated panel's content div sits inside tab-runboard, the
+        dashboard's only tab (ADR-0080 D1), before the <script> block."""
+        rb_idx = self.html_src.find('id="tab-runboard"')
+        trace_idx = self.html_src.find('id="trace-runs-content"')
+        script_idx = self.html_src.find('<script>')
+        self.assertGreater(rb_idx, -1, "tab-runboard div not found")
+        self.assertGreater(trace_idx, rb_idx,
+                            "trace-runs-content must appear after tab-runboard opens")
+        self.assertLess(trace_idx, script_idx,
+                         "trace-runs-content must be markup, not inside <script>")
 
-    def test_cross_check_annotation_gated_on_recorded_load(self):
-        """Live QA (headless Playwright against real PRs 1095-1105) caught a
-        race: the recorded and reconstructed panels fetch independently, and
-        when gh_cache is already warm, the reconstructed panel can paint
-        BEFORE the recorded fetch resolves — a PR that IS recorded would
-        then show a false "no recorded trace" annotation. The annotation
-        must be gated on a loaded-flag so it never renders on an in-flight
-        (not-yet-resolved) recorded fetch."""
-        self.assertIn("_recordedRunsLoaded", self.html_src)
+    def test_reconstructed_panel_deleted(self):
+        """The gh-derived cross-check panel is DELETED, not merely demoted
+        (ADR-0080 D1 supersedes ADR-0075 D6's never-delete clause)."""
+        self.assertNotIn("renderFiring", self.html_src)
+        self.assertNotIn("fetchFiring", self.html_src)
+        self.assertNotIn('id="firing-content"', self.html_src)
+        self.assertNotIn('id="firing-cross-check-label"', self.html_src)
+        self.assertNotIn("reconstructed (cross-check)", self.html_src)
 
-    def test_recorded_fetch_shares_reconstructed_limit_not_hardcoded(self):
-        """(review round 1, B2) fetchTraceRuns() must NOT hard-code
-        `?limit=20` — it must share the same `#firing-limit-input` value the
-        reconstructed fetch uses, so both panels enumerate the same window
-        size."""
-        self.assertNotIn(
-            "/api/trace-runs?limit=20", self.html_src,
-            "fetchTraceRuns() must not hard-code ?limit=20 (drifts from the "
-            "1..100 #firing-limit-input picker) — B2 from review round 1",
-        )
-        self.assertIn(
-            "_firingSharedLimit", self.html_src,
-            "fetchTraceRuns() must read the shared #firing-limit-input value",
-        )
+    def test_race_fix_bookkeeping_removed_with_reconstructed_panel(self):
+        """The #1082 review-round-1 race-fix bookkeeping (_recordedRunsLoaded,
+        _recordedRunsCapped, the shared #firing-limit-input picker) existed
+        solely to support the now-deleted reconstructed panel's cross-check
+        annotation — it is dead code alongside its only consumer. (The DOM
+        element itself is gone; a historical explanatory code comment may
+        still name it in prose — that's not the DOM element.)"""
+        self.assertNotIn("_recordedRunsLoaded", self.html_src)
+        self.assertNotIn("_recordedRunsCapped", self.html_src)
+        self.assertNotIn("_firingSharedLimit", self.html_src)
+        self.assertNotIn('id="firing-limit-input"', self.html_src)
 
-    def test_capped_recorded_window_suppresses_not_falsifies_annotation(self):
-        """(review round 1, B2) A PR outside the recorded fetch's window
-        (when the real recorded set exceeds the requested limit) must
-        SUPPRESS the "no recorded trace" annotation, never assert it falsely
-        — closes the second axis of the "never render WRONG" guarantee
-        (rule #19: the whole flagged class, not just the race-fix axis)."""
-        self.assertIn("_recordedRunsCapped", self.html_src)
+    def test_fetch_uses_fixed_limit(self):
+        """fetchTraceRuns() now uses a fixed limit constant — the shared
+        picker input it used to read died with the reconstructed panel."""
+        self.assertIn("_TRACE_RUNS_LIMIT", self.html_src)
 
 
 if __name__ == "__main__":

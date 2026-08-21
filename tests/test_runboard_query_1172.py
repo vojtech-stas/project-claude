@@ -2,14 +2,15 @@
 tests/test_runboard_query_1172.py
 
 Fixture-ledger unit tests for the run-board query (PRD #1170 walking
-skeleton, slice #1172) — dashboard/tracestore.py's now/next/recent additions
-consumed by /api/runboard. One test per criterion's own Verify clause:
+skeleton, slice #1172) — dashboard/tracestore.py's now/recent additions
+consumed by /api/runboard (the `next` query was retired per ADR-0080 D2,
+slice #1219 — its two dedicated cases below were deleted with it). One
+test per surviving criterion's own Verify clause:
 
   1a. 2 open + 1 closed dispatch fixture -> `now` has exactly the 2 open.
-  1b. batch_planned ready=[A,B], A dispatched -> `next` = [B].
   1c. 25 terminated chains fixture -> `recent` has exactly the 20 newest,
       newest first, and the 5 oldest are absent.
-  1e. empty ledger -> `next` is [] AND `next_source == "none-recorded"`.
+  1e. empty ledger -> `now` and `recent` are both [].
 
 Every fixture is written to a tempfile via TRACE_LOG_OVERRIDE/
 TRACE_DB_OVERRIDE-equivalent explicit log_path/db_path_ args — NEVER the
@@ -85,22 +86,6 @@ class TestRunboardQuery1172(unittest.TestCase):
             self.assertEqual(e["session_id"], "s1")
             self.assertIsNotNone(e["elapsed_seconds"])
 
-    def test_1b_next_is_ready_minus_now(self):
-        """batch_planned ready=[A,B], A dispatched (no dispatch_end) ->
-        `next` = [B] only."""
-        spans = [
-            {"v": 3, "ts": "2026-08-04T09:00:00Z", "trace_id": "prd-900",
-             "span_id": "b1", "kind": "batch_planned",
-             "attrs": {"prd": "900", "pending": [], "ready": ["10", "11"],
-                       "blocked": [], "session_id": "s1"}},
-            {"v": 3, "ts": "2026-08-04T10:00:00Z", "trace_id": "slice-10",
-             "span_id": "a1", "kind": "dispatch",
-             "attrs": {"slice": "10", "prd": "900", "session_id": "s1"}},
-        ]
-        board = self._build(spans)
-        self.assertEqual([e["slice"] for e in board["next"]], ["11"])
-        self.assertEqual(board["next_source"], "batch_planned")
-
     def test_1c_recent_caps_at_20_newest_first(self):
         """25 terminated pr_merged chains -> `recent` has exactly the 20
         newest, newest-first, and the 5 oldest are absent."""
@@ -118,13 +103,10 @@ class TestRunboardQuery1172(unittest.TestCase):
         for stale_pr in ("0", "1", "2", "3", "4"):
             self.assertNotIn(stale_pr, recent_prs, "5 oldest must be absent")
 
-    def test_1e_empty_ledger_marks_next_source(self):
-        """No batch_planned span at all (empty ledger) -> `next` is []
-        AND `next_source` carries the explicit "none-recorded" marker."""
+    def test_1e_empty_ledger_returns_empty_now_and_recent(self):
+        """No spans at all (empty ledger) -> `now` and `recent` are both []."""
         board = self._build([])
         self.assertEqual(board["now"], [])
-        self.assertEqual(board["next"], [])
-        self.assertEqual(board["next_source"], "none-recorded")
         self.assertEqual(board["recent"], [])
 
     def test_dispatch_end_termination_has_outcome_and_duration(self):

@@ -136,6 +136,8 @@ def _build_repo_map() -> str:
         ("run_evals.py",   "tools/run_evals.py",    "Run critic golden-set evals on-demand"),
         ("check-slicer-provenance.py","tools/check-slicer-provenance.py",
          "Verify slicer-lane slice issues carry Slicer-provenance trailer (root-cause lane exempt)"),
+        ("check-verdict-presence.py","tools/check-verdict-presence.py",
+         "Verify recently-merged develop PRs carry a reviewer VERDICT: APPROVE comment"),
     ]
     for tool_name, tool_path, tool_desc in _TOOLS:
         full_path = REPO_ROOT / tool_path
@@ -149,6 +151,7 @@ def _build_repo_map() -> str:
     lines.append("|---|---|\n")
     _DIRS = [
         ("decisions/",       "Architecture Decision Records (immutable, supersession-based)"),
+        ("docs/decision-log/", "Dated per-problem records of operator decisions with ticked outcomes (append-only)"),
         (".claude/agents/",  "Subagent prompt files (critics + generators)"),
         (".claude/skills/",  "User-invocable skill prompt files"),
         (".claude/rules/",   "Generated AREA-scope rules (path-scoped, auto-loaded)"),

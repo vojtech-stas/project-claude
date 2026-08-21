@@ -1065,6 +1065,34 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 23: verdict-presence — every recently-merged develop PR carries a
+# reviewer `VERDICT: APPROVE` comment (PRD #1214 criterion 3c / ADR-0080 D1's
+# supersession of ADR-0075 D6, slice #1219). This is the D6-supersession's
+# compensating control: unlike the ledger-side MERGED-WITHOUT-VERDICT
+# reconciler (WARN-only in a fresh checkout with no local trace history),
+# this check reads GROUND TRUTH a fresh hosted checkout genuinely has (gh PR
+# comments), so a violation REALLY FAILS CI, not WARN. Mechanically bounded
+# window (last 20 merged develop PRs, matching the `gh pr list --base
+# develop --state merged --limit 20` convention CHECK 22/RECORD-VS-GH
+# already use) — NO special-case grandfather list. GH_TOKEN +
+# `pull-requests: read` + `issues: read` are already wired in ci.yml
+# (CHECK-19 precedent); soft-degrades to SKIP when gh is unavailable/
+# unauthenticated for local dev runs without a token.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 23: verdict-presence — merged develop PRs carry VERDICT: APPROVE ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/check-verdict-presence.py" ]; then
+    echo "SKIP: CHECK 23 — python3 or tools/check-verdict-presence.py not available (soft-degrade)"
+else
+    CHECK23_OUTPUT=$(python3 tools/check-verdict-presence.py --limit 20 2>&1)
+    CHECK23_EXIT=$?
+    if [ "$CHECK23_EXIT" -eq 0 ]; then
+        pass "CHECK 23 (verdict-presence): $CHECK23_OUTPUT"
+    else
+        fail "CHECK 23 (verdict-presence): $CHECK23_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

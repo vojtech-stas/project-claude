@@ -5,7 +5,8 @@ Fixture-ledger unit tests for the run-board staleness flag (PRD #1170,
 slice #1173, §2 criterion 1d): a `dispatch` span open longer than
 RUNBOARD_STALE_THRESHOLD_SECONDS carries `stale: true` in its `now` entry;
 a fresh one does not. Also covers §2 criterion 2c's per-row `source` field
-on now/next/recent entries.
+on now/recent entries (the `next` column was retired per ADR-0080 D2,
+slice #1219 — its dedicated provenance case below was trimmed with it).
 
 Every fixture is written to a tempfile via explicit log_path/db_path_ args
 (the same override seam TRACE_LOG_OVERRIDE/TRACE_DB_OVERRIDE resolve to
@@ -131,20 +132,14 @@ class TestRunboardStaleness1173(unittest.TestCase):
         board = self._build(spans)
         self.assertIn("dispatch", board["now"][0]["source"])
 
-    def test_next_and_recent_entries_carry_source_provenance(self):
-        """`next` and `recent` entries also state their own data source
-        (§2 #2c)."""
+    def test_recent_entry_carries_source_provenance(self):
+        """`recent` entries state their own data source (§2 #2c)."""
         spans = [
-            {"v": 3, "ts": "2026-08-04T09:00:00Z", "trace_id": "prd-1170",
-             "span_id": "b1", "kind": "batch_planned",
-             "attrs": {"prd": "1170", "pending": [], "ready": ["12"],
-                       "blocked": [], "session_id": "s1"}},
             {"v": 3, "ts": "2026-08-04T09:05:00Z", "trace_id": "pr-500",
              "span_id": "p1", "kind": "pr_merged",
              "attrs": {"pr": "500"}, "dur_ms": 5000},
         ]
         board = self._build(spans)
-        self.assertIn("batch_planned", board["next"][0]["source"])
         self.assertIn("pr_merged", board["recent"][0]["source"])
 
 

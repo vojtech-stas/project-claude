@@ -88,17 +88,16 @@ Python API (for dashboard reuse):
     Background-warmed /api/runboard payload builder (PRD #1170, slice
     #1172 walking skeleton + slice #1173 provenance/staleness) — mirrors
     serve_trace_runs()'s stale-while-revalidate pattern. Returns {now,
-    next, next_source, recent, stale_threshold_seconds, ledger,
-    fetched_at}: `now` = running_dispatches() enriched with elapsed
-    seconds, a `stale` bool (elapsed >= stale_threshold_seconds) and a
-    `source` label; `next` = the latest `batch_planned` span's ready-set
-    minus `now`, each entry carrying a `source` label (next_source=
-    "none-recorded" when no batch_planned span exists, else
-    "batch_planned"); `recent` = at most 20 newest-first terminated
-    chains (dispatch_end / pr_merged) with outcome, duration and a
-    `source` label. `stale_threshold_seconds` and `ledger` are echoed so
-    the UI never hardcodes either (row-level provenance, ADR-0078 D1).
-    Strict reader — never infers state the ledger does not hold.
+    recent, stale_threshold_seconds, ledger, fetched_at}: `now` =
+    running_dispatches() enriched with elapsed seconds, a `stale` bool
+    (elapsed >= stale_threshold_seconds) and a `source` label; `recent`
+    = at most 20 newest-first terminated chains (dispatch_end /
+    pr_merged) with outcome, duration and a `source` label.
+    `stale_threshold_seconds` and `ledger` are echoed so the UI never
+    hardcodes either (row-level provenance, ADR-0078 D1). Strict reader
+    — never infers state the ledger does not hold. The `next` panel
+    (the retired ready-set marker) is retired per ADR-0080 D2 — the
+    board shows only what is recorded, not what is promised.
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
@@ -525,10 +524,11 @@ def serve_trace_runs(limit=30, log_path=None, db_path_=None):
 
 
 # ---------------------------------------------------------------------------
-# Run-board query (PRD #1170 walking skeleton, slice #1172): now/next/recent
-# from the recorded ledger — strictly a reader, per ADR-0078 D1. `now` reuses
-# running_dispatches() (also the duplicate-dispatch mutex's read side); `next`
-# and `recent` are new queries this slice authors.
+# Run-board query (PRD #1170 walking skeleton, slice #1172): now/recent from
+# the recorded ledger — strictly a reader, per ADR-0078 D1. `now` reuses
+# running_dispatches() (also the duplicate-dispatch mutex's read side);
+# `recent` is a new query this slice authors. The `next` query (the retired
+# checkpoint verb's ready-set) is retired per ADR-0080 D2 (slice #1219).
 #
 # Staleness threshold + provenance (slice #1173, §2 criteria 1d/2c/2d):
 # RUNBOARD_STALE_THRESHOLD_SECONDS is evidence-based, not guessed. Querying
@@ -583,42 +583,6 @@ def _now_entries(log_path=None, db_path_=None):
             "source": "dispatch span (open, no dispatch_end)",
         })
     return entries
-
-
-def _latest_batch_planned(log_path=None, db_path_=None):
-    """Most recent `batch_planned` span across the whole ledger (ORDER BY
-    ts, rowid DESC — the same tie-break convention as every other query in
-    this module, applied in reverse for "latest"). None when absent."""
-    resolved_db = db_path_ or db_path()
-    fold(log_path=log_path, db_path_=resolved_db, force=False)
-    conn = _connect(resolved_db)
-    try:
-        row = conn.execute(
-            "SELECT * FROM spans WHERE kind = 'batch_planned' "
-            "ORDER BY ts DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-    finally:
-        conn.close()
-    return _row_to_span(row) if row else None
-
-
-def _next_entries(now_entries, log_path=None, db_path_=None):
-    """`next` array (§2 criteria 1b/1e/2c): the latest batch_planned span's
-    ready-set minus anything already in `now`, each entry carrying a
-    `source` provenance label. No batch_planned span -> ([], "none-
-    recorded") rather than silently omitting the marker."""
-    latest = _latest_batch_planned(log_path=log_path, db_path_=db_path_)
-    if latest is None:
-        return [], "none-recorded"
-    attrs = latest.get("attrs", {}) or {}
-    ready = attrs.get("ready") or []
-    running_slices = {str(e.get("slice")) for e in now_entries if e.get("slice") is not None}
-    next_list = [
-        {"slice": str(s), "prd": attrs.get("prd"), "source": "batch_planned ready-set"}
-        for s in ready
-        if str(s) not in running_slices
-    ]
-    return next_list, "batch_planned"
 
 
 def _recent_terminations(limit=20, log_path=None, db_path_=None):
@@ -679,12 +643,9 @@ def _build_runboard(log_path=None, db_path_=None, recent_limit=20):
     resolved_db = db_path_ or db_path()
     fold(log_path=log_path, db_path_=resolved_db, force=False)
     now = _now_entries(log_path=log_path, db_path_=resolved_db)
-    next_list, next_source = _next_entries(now, log_path=log_path, db_path_=resolved_db)
     recent = _recent_terminations(limit=recent_limit, log_path=log_path, db_path_=resolved_db)
     return {
         "now": now,
-        "next": next_list,
-        "next_source": next_source,
         "recent": recent,
         "stale_threshold_seconds": RUNBOARD_STALE_THRESHOLD_SECONDS,
         "ledger": _LEDGER_DISPLAY_NAME,
@@ -704,7 +665,7 @@ def _runboard_background(log_path, db_path_):
         payload = _build_runboard(log_path=log_path, db_path_=db_path_)
     except Exception as exc:
         payload = {
-            "now": [], "next": [], "next_source": "none-recorded", "recent": [],
+            "now": [], "recent": [],
             "stale_threshold_seconds": RUNBOARD_STALE_THRESHOLD_SECONDS,
             "ledger": _LEDGER_DISPLAY_NAME,
             "error": str(exc), "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -791,9 +752,6 @@ def _cmd_runboard(args):
     for e in board["now"]:
         stale_marker = " STALE" if e.get("stale") else ""
         print(f"  slice=#{e['slice']} prd={e.get('prd', '?')} elapsed={e['elapsed_seconds']}s{stale_marker}")
-    print(f"next ({len(board['next'])}, source={board['next_source']}):")
-    for e in board["next"]:
-        print(f"  slice=#{e['slice']} prd={e.get('prd', '?')}")
     print(f"recent ({len(board['recent'])}):")
     for e in board["recent"]:
         label = f"pr=#{e['pr']}" if e["kind"] == "pr_merged" else f"slice=#{e['slice']}"
@@ -815,7 +773,7 @@ def main(argv=None):
     p_running = sub.add_parser("running", help='"running now" query: dispatch spans lacking a terminal dispatch_end')
     p_running.set_defaults(func=_cmd_running)
 
-    p_runboard = sub.add_parser("runboard", help="now/next/recent run-board query (PRD #1170)")
+    p_runboard = sub.add_parser("runboard", help="now/recent run-board query (PRD #1170)")
     p_runboard.set_defaults(func=_cmd_runboard)
 
     args = parser.parse_args(argv)

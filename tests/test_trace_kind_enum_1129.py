@@ -4,8 +4,11 @@ tests/test_trace_kind_enum_1129.py
 Regression test for slice #1129 (PRD #1127 walking skeleton), §2 criterion 9:
 `tools/trace.py`'s `emit_span` must accept ONLY the closed v3 kind enum
 {pr_opened, pr_merged, qa_verified, develop_green, promotion, dispatch,
-dispatch_end, verdict, batch_planned}. An out-of-enum kind must hard-error
-(non-zero / raised exception) and write NOTHING to the trace log.
+dispatch_end, verdict}. An out-of-enum kind must hard-error (non-zero /
+raised exception) and write NOTHING to the trace log. (The enum's ninth
+member, `batch_planned`, was retired per ADR-0080 D2 / slice #1219 — see
+`test_retired_batch_planned_kind_hard_errors_like_any_unknown_kind` below,
+PRD #1214 criterion 2a2's regression coverage.)
 
 Test-first discipline (rule #13 rider / ADR-0067 D3 shape, applied to this
 new-feature slice per its own §2 #9 instruction): this commit lands BEFORE
@@ -18,8 +21,8 @@ the closed enum, and the CLI `emit` subcommand exits non-zero with NO line
 written to the log.
 
 Also asserts every existing writer-produced kind (the five PRD #1075 kinds
-plus the four new PRD #1127 kinds) remains accepted — the enum is additive,
-never subtractive, over the pre-existing five.
+plus the three surviving PRD #1127 kinds) remains accepted — the enum is
+additive, never subtractive, over the pre-existing five.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_trace_kind_enum_1129.py -v
@@ -39,7 +42,7 @@ TRACE_PY = REPO_ROOT / "tools" / "trace.py"
 
 VALID_KINDS = (
     "pr_opened", "pr_merged", "qa_verified", "develop_green", "promotion",
-    "dispatch", "dispatch_end", "verdict", "batch_planned",
+    "dispatch", "dispatch_end", "verdict",
 )
 
 
@@ -81,6 +84,24 @@ class TestClosedKindEnum(unittest.TestCase):
                 _read_jsonl(log_path), [],
                 "an out-of-enum kind must write NOTHING to the trace log",
             )
+
+    def test_retired_batch_planned_kind_hard_errors_like_any_unknown_kind(self):
+        """PRD #1214 criterion 2a2 / ADR-0080 D2, slice #1219: the retired
+        `batch_planned` kind must hard-error EXACTLY like any other
+        out-of-enum kind (it is not special-cased) and write nothing."""
+        mod = _load_trace_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = os.path.join(tmp, "trace-v3.jsonl")
+            os.environ["TRACE_LOG_OVERRIDE"] = log_path
+
+            with self.assertRaises(ValueError):
+                mod.emit_span(trace_id="x-retired", kind="batch_planned", attrs={})
+
+            self.assertEqual(
+                _read_jsonl(log_path), [],
+                "the retired batch_planned kind must write NOTHING to the trace log",
+            )
+            self.assertNotIn("batch_planned", mod.VALID_KINDS)
 
     def test_every_valid_kind_is_accepted(self):
         mod = _load_trace_module()

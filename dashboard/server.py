@@ -9,7 +9,7 @@ Architecture/Live/Health/Firing tabs and their 15 UI-only routes deleted):
         GET /api/status           -> JSON aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859)
         GET /api/meta             -> JSON {sha, started_at, stale} server-identity endpoint (ADR-0056/0057/0058)
         GET /api/trace-runs[?limit=N] -> JSON recorded pipeline-span chains from the v3 trace store — the Run-board's recorded-runs panel (slice #1082, PRD #1075 criterion 9; relocated into the Run-board by ADR-0080 D1)
-        GET /api/runboard             -> JSON {now, next, next_source, recent, stale_threshold_seconds, ledger, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172 + #1173 provenance/staleness)
+        GET /api/runboard             -> JSON {now, recent, stale_threshold_seconds, ledger, fetched_at} — the Run-board tab's landing-view renderer (PRD #1170, slice #1172 + #1173 provenance/staleness; `next` panel retired per ADR-0080 D2)
 
 Start: python dashboard/server.py
 Config: DASH_PORT env var (default 8765)
@@ -497,8 +497,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(_tracestore_mod.serve_runboard())
             except Exception as exc:
                 self._send_json(
-                    {"error": str(exc), "now": [], "next": [],
-                     "next_source": "none-recorded", "recent": [],
+                    {"error": str(exc), "now": [], "recent": [],
                      "stale_threshold_seconds": _tracestore_mod.RUNBOARD_STALE_THRESHOLD_SECONDS,
                      "ledger": _tracestore_mod._LEDGER_DISPLAY_NAME}, 500
                 )

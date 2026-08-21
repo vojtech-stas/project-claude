@@ -425,13 +425,13 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     # ADR-0078: run-board as the dashboard's landing view
     "PIP-022": (
-        "`/api/runboard` serves now/next/recent strictly from recorded v3 "
+        "`/api/runboard` serves now/recent strictly from recorded v3 "
         "spans (never inferred, backfilled, or reconstructed), rendered "
         "as the dashboard's only tab; the "
         "production check fails outright if any rendered row cannot be "
         "traced to a canonical-ledger span, the board renders normally "
         "while the ledger is unreadable, or the ledger holds no "
-        "dispatch/batch_planned span in the verification window "
+        "dispatch span in the verification window "
         "(ADR-0078 D1, as amended by ADR-0080 D1 — the "
         "architecture-view-one-click-away clause retired; the dashboard is "
         "reduced to the run-board plus a thin health strip)."

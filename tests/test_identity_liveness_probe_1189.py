@@ -314,33 +314,34 @@ class TestSessionStartOccupiedDifferentiation(unittest.TestCase):
     'occupied by a foreign listener' from a real 'unreachable' (no listener)
     in the injected context line (#1184 site 2).
 
-    This is a static content check rather than a live-fixture functional
-    test: unlike dashboard-autostart.sh and check_stale_server(), this site
-    has no parameterizable base-URL seam (it is an inline `python3 -c`
-    heredoc-style string), so redirecting it at the fixture would require
-    adding test-only plumbing to a production hook script — out of scope.
-    The functional identity-verifying behaviour is exercised directly by
-    Group B (identical urllib HTTPError-vs-URLError classification logic).
+    Repointed by #1204: this site no longer inlines its own `python3 -c`
+    urllib-based HTTPError/missing-sha classification — it now calls the
+    shared `dashboard_probe_identity()` contract (lib-root.sh) and maps that
+    function's three-way "ok"/"occupied"/"no-server" result onto the same
+    banner wording (the inline probe's per-address-family socket timeout
+    cost 4.14s on an EMPTY port — issue #1204's root cause). This remains a
+    static content check (session-start.sh still has no parameterizable
+    base-URL seam of its own); the functional identity-verifying
+    classification logic is exercised directly by Group A above
+    (TestSharedBashIdentityProbe, against real fixture HTTP servers).
     """
 
-    def test_httperror_classified_occupied_not_unreachable(self):
+    def test_calls_shared_probe_identity_contract(self):
         content = SESSION_START_SH.read_text(encoding="utf-8")
         self.assertIn(
-            "urllib.error.HTTPError", content,
-            msg="session-start.sh must catch HTTPError separately (an HTTP "
-                "error response means something answered, not 'no listener')",
-        )
-        self.assertIn(
-            "OCCUPIED", content,
-            msg="session-start.sh must label a foreign-listener response OCCUPIED",
+            "dashboard_probe_identity", content,
+            msg="session-start.sh must call the shared dashboard_probe_identity() "
+                "contract (lib-root.sh) instead of inlining its own probe (#1204)",
         )
 
-    def test_missing_sha_classified_occupied(self):
+    def test_occupied_case_still_labeled_occupied(self):
         content = SESSION_START_SH.read_text(encoding="utf-8")
         self.assertIn(
-            "missing sha field", content,
-            msg="session-start.sh must classify a /api/meta payload without "
-                "a sha field as occupied, not silently treat it as fresh",
+            "OCCUPIED", content,
+            msg="session-start.sh must still label the shared probe's "
+                "'occupied' result OCCUPIED in the banner — the #1184 "
+                "incident-class signal is load-bearing and must survive "
+                "the #1204 repoint",
         )
 
 

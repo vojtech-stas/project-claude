@@ -178,36 +178,30 @@ if [ "$GH_OK" -eq 1 ]; then
 fi
 
 # ---- Dashboard freshness (no gh required) -----------------------------------
-# Identity-verifying (#1184 incident fix, slice #1189): distinguish "no
-# listener at all" from "occupied by a foreign listener" (an HTTPError means
-# SOMETHING answered — never conflate that with the server being down).
-if command -v python3 >/dev/null 2>&1; then
-  DASH_FRESH=$(python3 -c "
-import urllib.request, urllib.error, json, datetime, sys
-try:
-    resp = urllib.request.urlopen('http://localhost:8765/api/meta', timeout=2)
-    body = resp.read()
-    try:
-        data = json.loads(body)
-    except Exception:
-        print('dashboard OCCUPIED (foreign listener: non-JSON /api/meta response)')
-        sys.exit(0)
-    sha = data.get('sha', '')
-    if not sha:
-        print('dashboard OCCUPIED (foreign listener: /api/meta missing sha field)')
-        sys.exit(0)
-    ts = data.get('ts', '')
-    if ts:
-        dt = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        age_m = int((datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 60)
-        print(f'dashboard up ({age_m}m since last sync)')
-    else:
-        print('dashboard up (no ts in /api/meta)')
-except urllib.error.HTTPError as e:
-    print(f'dashboard OCCUPIED (foreign listener: HTTP {e.code} on /api/meta)')
-except Exception as e:
-    print(f'dashboard unreachable ({e})')
-" 2>/dev/null || echo "(check failed)")
+# Identity-verifying (#1184 incident fix, slice #1189), repointed by #1204 to
+# the ONE shared probe contract (lib-root.sh's dashboard_probe_identity(),
+# curl --max-time) instead of duplicating an inline python socket-based
+# probe: the old inline probe's per-address-family timeout paid 4.14s on an
+# EMPTY port (2s IPv6 + 2s IPv4) -- worse than the squatted-port case. Same
+# three-way distinction as before: "no listener at all" vs "occupied by a
+# foreign listener" (something answered but failed identity) vs "up"
+# (verified).
+if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  DASH_PROBE=$(dashboard_probe_identity "python3" "http://localhost:8765" 2 2>/dev/null || echo "")
+  case "$DASH_PROBE" in
+    ok\ *)
+      DASH_FRESH="dashboard up (sha ${DASH_PROBE#ok })"
+      ;;
+    occupied\ *)
+      DASH_FRESH="dashboard OCCUPIED (foreign listener: ${DASH_PROBE#occupied })"
+      ;;
+    no-server)
+      DASH_FRESH="dashboard unreachable (no listener on 8765)"
+      ;;
+    *)
+      DASH_FRESH="(check failed)"
+      ;;
+  esac
 fi
 
 # ---- Build context string ---------------------------------------------------

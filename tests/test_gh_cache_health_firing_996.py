@@ -6,7 +6,11 @@ Verifies that:
         under a simulated slow/failing gh.  No serial stall.
   cr.4  A health row whose gh data is unavailable within the timeout reports
         "computing"/last-known while other rows still return normally.
-  cr.5  prd_firing.fetch_prd_firing() cold load returns in <10s when gh is slow.
+
+cr.5 (prd_firing.fetch_prd_firing() cold-load timing) was removed by PRD #1214
+slice #1218 (module deletion) — prd_firing.py exercised exclusively via
+dynamic importlib import (`_reimport("prd_firing")`), missed by the slice's
+static-import audit, deleted with its subject.
 
 All tests monkeypatch at the gh_cache.gh_fetch layer (the single injection point
 routed through by slice #996), so no subprocess patching is needed.  stdlib
@@ -20,7 +24,7 @@ import time
 import unittest
 
 # ---------------------------------------------------------------------------
-# Add dashboard/ to sys.path so "import health" / "import prd_firing" resolve.
+# Add dashboard/ to sys.path so "import health" resolves.
 # ---------------------------------------------------------------------------
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_TESTS_DIR)
@@ -54,10 +58,6 @@ class _GhResult:
 
 def _make_computing_result():
     return _GhResult(value=None, fetched_at="2026-01-01T00:00:00+00:00", source="computing")
-
-
-def _make_live_result(value: str):
-    return _GhResult(value=value, fetched_at="2026-01-01T00:00:00+00:00", source="live")
 
 
 def _slow_gh_fetch(args, *, ttl, timeout):
@@ -257,87 +257,6 @@ class TestCr4DegradeLabel(unittest.TestCase):
         )
         self.assertEqual(rc, 1, "computing sentinel should yield rc=1")
         self.assertEqual(out, "")
-
-
-# ===========================================================================
-# cr.5 — prd_firing cold build returns <10s when gh is slow
-# ===========================================================================
-
-class TestCr5PrdFiringNoStall(unittest.TestCase):
-    """Verify fetch_prd_firing() returns quickly when gh is slow."""
-
-    def _patch_prd_firing(self, prd_mod):
-        prd_mod._gh_fetch_impl = _slow_gh_fetch
-        prd_mod._GH_CACHE_AVAILABLE = True
-
-    def test_cold_load_no_stall(self):
-        """fetch_prd_firing() returns in <10s under a slow gh (cr.5)."""
-        prd_firing = _reimport("prd_firing")
-        self._patch_prd_firing(prd_firing)
-
-        # Clear the module-level cache so we get a cold load
-        prd_firing._cache.clear()
-
-        t0 = time.monotonic()
-        result = prd_firing.fetch_prd_firing(limit=10)
-        elapsed = time.monotonic() - t0
-
-        self.assertLess(elapsed, 10.0, f"fetch_prd_firing() took {elapsed:.2f}s — serial stall")
-        # Result should be honest-empty when gh is unavailable
-        self.assertIn("prs", result)
-        self.assertIsInstance(result["prs"], list)
-        self.assertIn("pr_count", result)
-
-    def test_empty_payload_when_gh_unavailable(self):
-        """fetch_prd_firing() returns honest-empty when gh_fetch always returns computing."""
-        prd_firing = _reimport("prd_firing")
-        self._patch_prd_firing(prd_firing)
-
-        prd_firing._cache.clear()
-        result = prd_firing.fetch_prd_firing(limit=5)
-
-        self.assertEqual(result["pr_count"], 0)
-        self.assertEqual(result["prs"], [])
-        self.assertIn("fetched_at", result)
-
-    def test_gh_run_uses_gh_cache(self):
-        """_gh_run() routes through _gh_fetch_impl when available."""
-        prd_firing = _reimport("prd_firing")
-
-        calls = []
-
-        def _recording_gh_fetch(args, *, ttl, timeout):
-            calls.append({"args": list(args), "ttl": ttl, "timeout": timeout})
-            return _make_computing_result()
-
-        prd_firing._gh_fetch_impl = _recording_gh_fetch
-        prd_firing._GH_CACHE_AVAILABLE = True
-
-        rc, out = prd_firing._gh_run(["pr", "list"])
-
-        self.assertGreater(len(calls), 0, "_gh_fetch_impl was not called")
-        self.assertEqual(rc, 1, "computing result should yield rc=1")
-        self.assertEqual(out, "")
-
-    def test_gh_run_timeout_under_budget(self):
-        """_gh_run routes through gh_cache with the module-level TTL."""
-        prd_firing = _reimport("prd_firing")
-
-        captured_timeout = []
-
-        def _capture_gh_fetch(args, *, ttl, timeout):
-            captured_timeout.append(timeout)
-            return _make_live_result("[]")
-
-        prd_firing._gh_fetch_impl = _capture_gh_fetch
-        prd_firing._GH_CACHE_AVAILABLE = True
-
-        prd_firing._gh_run(["pr", "list"], timeout=30)
-
-        self.assertEqual(len(captured_timeout), 1)
-        # Hard timeout should be <= 5s regardless of the caller-supplied timeout
-        self.assertLessEqual(captured_timeout[0], 5.0,
-                             "gh_cache timeout must be ≤5s (hard cap)")
 
 
 if __name__ == "__main__":

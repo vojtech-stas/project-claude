@@ -22,7 +22,7 @@ from pathlib import Path
 _DISCOVERY_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # sys.path injection so telemetry_root is importable when discovery.py is
-# imported standalone (e.g. by tests), mirroring live.py's pattern.
+# imported standalone (e.g. by tests).
 _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in sys.path:
     sys.path.insert(0, _DASHBOARD_DIR_STR)

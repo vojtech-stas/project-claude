@@ -233,7 +233,7 @@ _KNOWN_CRITICS = {
 
 # ---------------------------------------------------------------------------
 # /api/health TTL cache — health checks can take 1-2 s on cold start.
-# Background-thread + TTL, mirroring live.py's _live_progress_background pattern.
+# Background-thread + TTL cache pattern.
 # ---------------------------------------------------------------------------
 _health_cache: dict = {}       # {"data": {...}, "ts": float}
 _health_computing: bool = False

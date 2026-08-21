@@ -8,16 +8,16 @@ GitHub does NOT auto-close referenced issues, so:
 
 These tests FAIL on develop before the fix (commit #1) and PASS after (commit #2).
 
-Three assertion groups:
+Trimmed by PRD #1214 slice #1218 (module deletion): Groups B and C exercised
+prd_firing.py exclusively and were deleted with their subject. Only Group A
+survives — it exercises collector.py/comparison.py (kept modules).
+
   A) Trail comparison: a PRD with slices closed by develop-base PRs resolves
      E-SLICE-PR / E-PR-REVIEW / E-REVIEW-MERGE as 'confirmed', not 'missing'.
-  B) Firing tree: a slice-issue dispatch nests under its parent PRD (not phantom PRD).
-  C) Firing tree: a backlog-critic dispatch on a non-prd captured issue does NOT
-     create a 'PRD #N' node.
 
-Test strategy: mock the gh layer inside collector and prd_firing so no live
-network calls are made; inject synthetic data that mimics the develop-delivery
-scenario (closingIssuesReferences EMPTY, Closes #N in PR body).
+Test strategy: mock the gh layer inside collector so no live network calls
+are made; inject synthetic data that mimics the develop-delivery scenario
+(closingIssuesReferences EMPTY, Closes #N in PR body).
 
 Runner: stdlib unittest (NO top-level pytest import).
   python -m pytest tests/test_twotier_correlation_1007.py -v
@@ -28,7 +28,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
@@ -181,16 +181,6 @@ _DEVELOP_PRS_LIST = [
     },
 ]
 
-# Sub-issue labels: issue number → labels (for is_prd check in firing tree)
-_ISSUE_LABELS = {
-    993: ["prd"],
-    995: ["slice"],
-    996: ["slice"],
-    997: ["slice"],
-    727: ["captured"],  # non-PRD captured issue
-}
-
-
 # ---------------------------------------------------------------------------
 # Group A: Trail comparison evaluators — develop-base PRD
 # ---------------------------------------------------------------------------
@@ -290,210 +280,6 @@ class TestTrailComparisonDevelopBase(unittest.TestCase):
                 s.get("closing_pr_number"),
                 f"Slice #{s.get('number')} missing closing_pr_number"
             )
-
-
-# ---------------------------------------------------------------------------
-# Group B: Firing tree — slice dispatches nest under parent PRD
-# ---------------------------------------------------------------------------
-
-class TestFiringTreePrdNesting(unittest.TestCase):
-    """resolve_prd_for_issue must resolve a slice issue to its parent PRD.
-
-    Before fix: every #N in closes_issues is labeled 'PRD #N' regardless of label.
-    After fix: prd_firing.resolve_prd_for_issue(995) → 993 (the prd-labeled parent).
-    """
-
-    def _make_issue_resolver(self):
-        """Return a resolver that uses _ISSUE_LABELS and sub-issue parent data."""
-        _inject_dashboard()
-        import prd_firing
-
-        # Mock gh calls used by resolve_prd_for_issue
-        def fake_gh_run(args, timeout=30):
-            cmd = " ".join(str(a) for a in args)
-            # Issue view to get labels
-            if "issue" in args and "view" in args:
-                num = None
-                for i, a in enumerate(args):
-                    if str(a).isdigit():
-                        num = int(a)
-                        break
-                if num in _ISSUE_LABELS:
-                    labels = [{"name": n} for n in _ISSUE_LABELS[num]]
-                    return 0, json.dumps({"labels": labels, "number": num})
-            # sub-issue parent query
-            if "api" in args and "graphql" in args:
-                # Return PRD #993 as parent of slice #995
-                return 0, json.dumps({
-                    "data": {"repository": {"issue": {
-                        "parent": {"number": 993, "labels": {"nodes": [{"name": "prd"}]}}
-                    }}}
-                })
-            return 1, ""
-
-        return prd_firing, fake_gh_run
-
-    def test_resolve_slice_to_parent_prd(self):
-        """resolve_prd_for_issue(995) must return 993 (its parent PRD)."""
-        _inject_dashboard()
-        import prd_firing
-
-        if not hasattr(prd_firing, "resolve_prd_for_issue"):
-            self.fail(
-                "prd_firing.resolve_prd_for_issue not found — "
-                "fix (commit #2) has not been applied yet. "
-                "This test MUST fail before the fix."
-            )
-
-        def fake_gh_run(args, timeout=30):
-            if "issue" in args and "view" in args:
-                for a in args:
-                    try:
-                        num = int(a)
-                    except (ValueError, TypeError):
-                        continue
-                    if num in _ISSUE_LABELS:
-                        labels = [{"name": n} for n in _ISSUE_LABELS[num]]
-                        return 0, json.dumps({"labels": labels, "number": num,
-                                              "parent": {"number": 993}})
-                return 1, ""
-            if "graphql" in args or ("api" in args):
-                return 0, json.dumps({
-                    "data": {"repository": {"issue": {
-                        "parent": {
-                            "number": 993,
-                            "labels": {"nodes": [{"name": "prd"}]}
-                        }
-                    }}}
-                })
-            return 1, ""
-
-        with patch.object(prd_firing, "_gh_run", side_effect=fake_gh_run):
-            result = prd_firing.resolve_prd_for_issue(995)
-
-        self.assertEqual(
-            result, 993,
-            f"resolve_prd_for_issue(995) expected 993, got {result}"
-        )
-
-    def test_timeline_annotated_with_parent_prd(self):
-        """parse_pr_firing_timeline result for a slice PR must include prd_number."""
-        _inject_dashboard()
-        import prd_firing
-
-        pr = {
-            "number": 998,
-            "title": "feat: slice 1",
-            "createdAt": "2026-06-05T10:00:00Z",
-            "mergedAt": "2026-06-05T15:00:00Z",
-            "body": "Closes #995\n\n## Scope\nimpl",
-            "comments": [],
-        }
-
-        if not hasattr(prd_firing, "resolve_prd_for_issue"):
-            # Before fix: no prd_number in timeline — this test fails
-            result = prd_firing.parse_pr_firing_timeline(pr)
-            self.assertIn(
-                "prd_number", result,
-                "parse_pr_firing_timeline must include prd_number after fix. "
-                "This test MUST fail before the fix (commit #2)."
-            )
-            return
-
-        def fake_resolve(issue_num):
-            return 993 if issue_num in (995, 996, 997) else None
-
-        with patch.object(prd_firing, "resolve_prd_for_issue", side_effect=fake_resolve):
-            result = prd_firing.parse_pr_firing_timeline(pr)
-
-        self.assertIn(
-            "prd_number", result,
-            f"parse_pr_firing_timeline must include prd_number: {result}"
-        )
-        self.assertEqual(
-            result.get("prd_number"), 993,
-            f"prd_number expected 993, got {result.get('prd_number')}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Group C: Firing tree — non-PRD captured issue is NOT a 'PRD #N' node
-# ---------------------------------------------------------------------------
-
-class TestFiringTreeNonPrdIssue(unittest.TestCase):
-    """A dispatch that closes a captured (non-prd) issue must NOT create a PRD node.
-
-    Scenario: backlog-critic assesses captured issue #727 (label: captured, not prd).
-    The PR body says 'Closes #727'.
-
-    Before fix: prd_firing returns closes_issues=[727] and the UI labels it 'PRD #727'.
-    After fix: resolve_prd_for_issue(727) returns None (not a prd-labeled issue),
-    and the timeline is tagged is_prd=False / prd_number=None.
-    """
-
-    def test_non_prd_issue_not_labeled_prd(self):
-        """A closes_issues entry for a captured issue must NOT resolve to a PRD node."""
-        _inject_dashboard()
-        import prd_firing
-
-        if not hasattr(prd_firing, "resolve_prd_for_issue"):
-            # Before fix: no resolve_prd_for_issue — can't distinguish. Fail.
-            self.fail(
-                "prd_firing.resolve_prd_for_issue not found — "
-                "fix has not been applied. Test MUST fail before fix."
-            )
-
-        def fake_resolve(issue_num):
-            # 727 is a captured issue — no parent PRD
-            if _ISSUE_LABELS.get(issue_num, []) == ["captured"]:
-                return None
-            return None
-
-        with patch.object(prd_firing, "resolve_prd_for_issue", side_effect=fake_resolve):
-            result = prd_firing.resolve_prd_for_issue(727)
-
-        self.assertIsNone(
-            result,
-            f"resolve_prd_for_issue(727) expected None for captured issue, got {result}"
-        )
-
-    def test_backlog_critic_pr_no_prd_node(self):
-        """A PR closing captured #727 must have prd_number=None in its timeline."""
-        _inject_dashboard()
-        import prd_firing
-
-        pr = {
-            "number": 750,
-            "title": "chore: backlog-critic pass on captured issues",
-            "createdAt": "2026-06-08T10:00:00Z",
-            "mergedAt": None,
-            "body": "Closes #727\n\nBacklog triage.",
-            "comments": [],
-        }
-
-        if not hasattr(prd_firing, "resolve_prd_for_issue"):
-            # Before fix: timeline has no prd_number field — test expects it missing
-            result = prd_firing.parse_pr_firing_timeline(pr)
-            # Pre-fix: prd_number absent → the UI naively creates 'PRD #727' from closes_issues
-            # This is the bug. We assert the field IS present (future state) to make it fail.
-            self.assertIn(
-                "prd_number", result,
-                "parse_pr_firing_timeline must include prd_number=None for non-PRD closes. "
-                "Test MUST fail before fix (commit #2)."
-            )
-            return
-
-        def fake_resolve(issue_num):
-            return None  # 727 is captured, not a PRD slice
-
-        with patch.object(prd_firing, "resolve_prd_for_issue", side_effect=fake_resolve):
-            result = prd_firing.parse_pr_firing_timeline(pr)
-
-        self.assertIn("prd_number", result, f"Missing prd_number in {result}")
-        self.assertIsNone(
-            result.get("prd_number"),
-            f"prd_number must be None for PR closing captured issue: {result.get('prd_number')}"
-        )
 
 
 if __name__ == "__main__":

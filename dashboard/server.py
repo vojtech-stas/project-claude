@@ -368,7 +368,7 @@ def _build_status() -> dict:
 
 # ---------------------------------------------------------------------------
 # Known critics (explicit allow-list per implementer note 1).
-# 7 critics per ADR-0046 D1 (parsimony principle; codebase-critic added ADR-0046 D2).
+# 6 critics per ADR-0046 D1 (parsimony principle; roster cut 7 -> 6 by ADR-0081 D2).
 # CHECK 7 regexes server.py SOURCE for this literal — it must stay here.
 # ---------------------------------------------------------------------------
 KNOWN_CRITICS = {
@@ -376,7 +376,6 @@ KNOWN_CRITICS = {
     "prd-critic",
     "adr-critic",
     "slicer-critic",
-    "glossary-critic",
     "backlog-critic",
     "codebase-critic",
 }

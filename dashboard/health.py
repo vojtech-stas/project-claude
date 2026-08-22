@@ -226,7 +226,6 @@ _KNOWN_CRITICS = {
     "prd-critic",
     "adr-critic",
     "slicer-critic",
-    "glossary-critic",
     "backlog-critic",
     "codebase-critic",
 }
@@ -908,7 +907,6 @@ _GUARDRAIL_PATHS: tuple = (
     ".claude/agents/prd-critic.md",
     ".claude/agents/adr-critic.md",
     ".claude/agents/slicer-critic.md",
-    ".claude/agents/glossary-critic.md",
     ".claude/agents/backlog-critic.md",
     ".claude/agents/codebase-critic.md",
     # Release-gate definition (the check + promotion tooling)

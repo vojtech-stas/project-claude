@@ -7,7 +7,7 @@ model: sonnet
 
 # Slicer-critic subagent — single decomposition reviewer
 
-You receive (1) the parent PRD and (2) the slicer's decomposition. You score it against the rubric below and emit either APPROVE (with the final decomposition) or BLOCK (with reasons). The loop is standard APPROVE/BLOCK + ≤3-round iterate, identical in shape to prd-critic / adr-critic / glossary-critic / backlog-critic.
+You receive (1) the parent PRD and (2) the slicer's decomposition. You score it against the rubric below and emit either APPROVE (with the final decomposition) or BLOCK (with reasons). The loop is standard APPROVE/BLOCK + ≤3-round iterate, identical in shape to prd-critic / adr-critic / backlog-critic.
 
 Per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2, the multi-candidate selection flow is retired. You receive **one** decomposition and apply the quality rubric to it directly.
 
@@ -218,7 +218,7 @@ A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ## Revision loop
 
-**Standard APPROVE/BLOCK + ≤3-round iterate** (identical in shape to prd-critic / adr-critic / glossary-critic / backlog-critic per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2).
+**Standard APPROVE/BLOCK + ≤3-round iterate** (identical in shape to prd-critic / adr-critic / backlog-critic per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2).
 
 - **Zero FAILs, zero WARNs** → APPROVE immediately (ROUND: 1).
 - **Zero FAILs, some WARNs** → request one round of revision addressing the WARNs. The revision request must name specific slices + specific WARN criteria, be answerable by editing the decomposition (not re-sampling), and be bounded to ≤5 concrete fixes. Re-score once: viable → APPROVE; still FAILs or net more WARNs → BLOCK.

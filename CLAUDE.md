@@ -96,7 +96,7 @@ The slicer step is **mandatory and non-bypassable**. Slices are NEVER hand-creat
 
 Per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 (reframing [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D7), the gate on adding a critic is **not a number** but a **parsimony principle**: minimize critics; each must earn its place against a distinct concern that no existing critic's rubric absorbs; adding one requires an ADR that makes that justification explicit. The default disposition for future critic-shaped problems is "extend an existing critic"; net-new critics are the exception, not the rule.
 
-The project currently runs **7 critics**: `reviewer`, `prd-critic`, `adr-critic`, `slicer-critic`, `glossary-critic`, `backlog-critic`, `codebase-critic`. The `codebase-critic` (added per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D2) earned its place as the first critic to provide per-PRD macro judgment over cumulative codebase change — a concern no existing critic absorbs.
+The project currently runs **6 critics**: `reviewer`, `prd-critic`, `adr-critic`, `slicer-critic`, `backlog-critic`, `codebase-critic`. The dedicated glossary critic was retired per [ADR-0081](decisions/0081-post-audit-dead-weight-retirements.md) D2 — the same parsimony principle applied in reverse: a glossary edit is a concern the `reviewer` already absorbs on every PR. The `codebase-critic` (added per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D2) earned its place as the first critic to provide per-PRD macro judgment over cumulative codebase change — a concern no existing critic absorbs.
 
 ---
 
@@ -114,7 +114,6 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4 |
 | qa-tester subagent | `.claude/agents/qa-tester.md` | three-mode executor: bash-mode (QA-plan row walk), ui-mode (headless Playwright/Chrome Bash-driven click-recipe driver), production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0049 D3, ADR-0050 D1-D5); browser route uses **live Claude-in-Chrome MCP when a browser is connected, else headless Playwright/Chrome Bash-driven fallback** per ADR-0074 D1-D5 |
 | codebase-critic subagent | `.claude/agents/codebase-critic.md` | two modes: (1) per-PRD macro critic — reference/doc currency + architectural drift + refactoring proposals; fires at the last slice before the reviewer (per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md)); (2) whole-repo mode (`WHOLE_REPO: true`) — map+seam-spot-read for cross-subsystem drift; dispatched at `/ship` start, once per session, as a background non-blocking subagent (per [ADR-0051](decisions/0051-whole-repo-macro-audit-cadence.md)) |
-| `/glossary` skill (add\|fold subcommands) | `.claude/skills/glossary/SKILL.md` | interactive single-entry (`add`) and bulk fold (`fold`) flows for the glossary INDEX; per [ADR-0038](decisions/0038-skill-vs-agent-rule.md) D3 |
 | Fresh-clone setup | `bootstrap.sh` at repo root | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 | Settings + Claude Code hooks | `.claude/settings.json` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); scripts in `.claude/hooks/<name>.sh`; canonical logger: `log-tool-event.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | JSONL of v2 workflow events (schema v2: `{"v":2, "ts", "session_id", "src":"hook", ...}`) per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
@@ -154,7 +153,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 
 ### Glossary (key terms)
 
-Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5. To add a term: run `/glossary add` (gated by [`glossary-critic`](.claude/agents/glossary-critic.md) per [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D5).
+Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/0012-glossary-consolidation-single-tier.md) D5 (as amended by [ADR-0081](decisions/0081-post-audit-dead-weight-retirements.md) D2), checked by the DOCS-9 health row. To add a term: edit this section in a normal reviewer-gated PR, keeping the entry shape and scope categories of [ADR-0007](decisions/0007-vocabulary-glossary-and-grill-me-extension.md) D2/D3.
 
 - **PRD** — feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`; top tier of the PRD→Slice→PR hierarchy; one feature-sized deliverable per PRD.
 - **ADR** — Architecture Decision Record; immutable, supersession-based numbered file in `decisions/`; never edited, only superseded by a newer ADR.

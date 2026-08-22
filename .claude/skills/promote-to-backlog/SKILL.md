@@ -5,7 +5,7 @@ description: Run the captured→backlog autopilot on a single `captured`-labeled
 
 This skill is the autopilot half of the captured→backlog mechanism (the critic half is [`backlog-critic`](../../agents/backlog-critic.md)). Per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2 and D3, it runs **inline in the same agent context** that just created the captured-labeled issue — there is no daemon, no webhook, no GitHub Action.
 
-**Shape differs from `/glossary add`.** This skill is **non-interactive** and takes the issue number as its single argument. It performs a label swap (not a code change) so it does **not** open a PR. The agent that invoked it stays in control of the surrounding workflow; this skill just runs the autopilot beat.
+**Shape note.** This skill is **non-interactive** and takes the issue number as its single argument. It performs a label swap (not a code change) so it does **not** open a PR. The agent that invoked it stays in control of the surrounding workflow; this skill just runs the autopilot beat.
 
 ## Invocation
 
@@ -71,4 +71,3 @@ If the issue number is missing, return `INVALID_INPUT: no issue number supplied`
 - Full role synthesis (single-fire rationale, edges): this file.
 - [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) — D1 (two-tier architecture); D2 (autopilot semantics this skill implements); D3 (inline-firing convention); D4 (rubric the critic enforces); D8 (bootstrap-mode acknowledgment).
 - [`.claude/agents/backlog-critic.md`](../../agents/backlog-critic.md) — the critic this skill invokes.
-- [`.claude/skills/glossary/SKILL.md`](../glossary/SKILL.md) — sibling autopilot skill (`/glossary add` — interactive single-term flow that also invokes a critic before publishing); diverges in interactivity and PR-vs-label-swap shape but shares the critic-invocation pattern.

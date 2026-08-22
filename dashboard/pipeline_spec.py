@@ -144,12 +144,6 @@ NODES = {
     },
 
     # --- skills (Side workflows) -------------------------------------------
-    "glossary": {
-        "kind": "skill",
-        "label": "/glossary",
-        "stage": "SS",
-        "path": ".claude/skills/glossary/SKILL.md",
-    },
     "promote-to-backlog": {
         "kind": "skill",
         "label": "/promote-to-backlog",
@@ -158,12 +152,6 @@ NODES = {
     },
 
     # --- agents (Side workflows) -------------------------------------------
-    "glossary-critic": {
-        "kind": "agent",
-        "label": "glossary-critic",
-        "stage": "SS",
-        "path": ".claude/agents/glossary-critic.md",
-    },
     "backlog-critic": {
         "kind": "agent",
         "label": "backlog-critic",
@@ -223,12 +211,6 @@ NODES = {
     "backlog-issue": {
         "kind": "artifact",
         "label": "backlog issue",
-        "stage": "SS",
-        "path": None,
-    },
-    "glossary-pr": {
-        "kind": "artifact",
-        "label": "glossary PR",
         "stage": "SS",
         "path": None,
     },
@@ -666,62 +648,6 @@ EDGES = [
         "label": "whole-repo bg",
         "style": "dashed",
         "description": "codebase-critic whole-repo background mode dispatched at /ship start (ADR-0051 D2).",
-    },
-
-    # =========================================================================
-    # Side workflows: glossary
-    # =========================================================================
-
-    # user → /glossary (runtime)
-    {
-        "id": "E-USER-GLOSSARY",
-        "from_node": "user",
-        "to_node": "glossary",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "user_invokes_glossary",
-        "label": "/glossary",
-        "style": "dashed",
-        "description": "User invokes /glossary add|fold to add/consolidate vocab entries.",
-    },
-
-    # /glossary → glossary-critic (runtime)
-    {
-        "id": "E-GLOSSARY-CRITIC",
-        "from_node": "glossary",
-        "to_node": "glossary-critic",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "glossary_dispatches_glossary_critic",
-        "label": "",
-        "style": "solid",
-        "description": "/glossary dispatches glossary-critic for APPROVE/BLOCK gate. Conditional: glossary is an optional side-workflow independent of the main PRD orchestration sequence; not every PRD window includes a /glossary invocation (issue #719 proposed workflow change #3).",
-    },
-
-    # glossary-critic APPROVE → glossary-pr (github: PR opened)
-    {
-        "id": "E-GLOSSARYCRITIC-APPROVE",
-        "from_node": "glossary-critic",
-        "to_node": "glossary-pr",
-        "evidence": "github",
-        "required": "conditional",
-        "predicate": "glossary_critic_approved_pr_opened",
-        "label": "APPROVE",
-        "style": "solid",
-        "description": "glossary-critic APPROVE triggers glossary PR creation.",
-    },
-
-    # glossary-pr → reviewer (github: PR verdict)
-    {
-        "id": "E-GLOSSARYPR-REVIEWER",
-        "from_node": "glossary-pr",
-        "to_node": "reviewer",
-        "evidence": "github",
-        "required": "conditional",
-        "predicate": "glossary_pr_reviewed",
-        "label": "",
-        "style": "solid",
-        "description": "Glossary PR reviewed by reviewer agent.",
     },
 
     # =========================================================================

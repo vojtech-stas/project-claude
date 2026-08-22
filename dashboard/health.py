@@ -1403,9 +1403,6 @@ def _attach_descriptions(checks: list) -> list:
 _NO_DATA_MARKERS: tuple = (
     "not found",           # log/file absent (hook-fires.jsonl, workflow-events.jsonl, etc.)
     "log absent",          # explicit log-absent phrasing
-    "no eval run",         # EVAL checks: honest no-baseline bucket
-    "honest no-baseline",  # EVAL checks: no-baseline bucket (ADR-0067 D5)
-    "no run recorded",     # EVAL checks: no run in results.json
     "no events in window", # CAPTURE-SLO: no events in rolling window
     "no sessions found",   # CAPTURE-SLO: no sessions in events log
     "no promotion events", # META-TRIPWIRE / R-SENSITIVE-DETECTOR day-one
@@ -1489,9 +1486,6 @@ _CHECK_GROUP_MAP: dict = {
     "TESTS-COLLECTED": "No drift",
     "TEST-ORDERING": "No drift",
     "QUARANTINE-SLA": "No drift",
-    "EVAL-REVIEWER": "No drift",
-    "EVAL-PRD-CRITIC": "No drift",
-    "EVAL-SLICER-CRITIC": "No drift",
     # Verification integrity — proof-presence, merge-integrity, capture-shape
     "BLIND-RATE": "Verification integrity",
     "RESIDUAL-RATIO": "Verification integrity",
@@ -1561,16 +1555,13 @@ PURPOSE_GROUP_MAP: dict = {
     "DOCS-11": "Docs in sync",
     "SILENT-DRIFT": "Docs in sync",
     # --- Rules enforced ---
-    # Rule coverage, registry parity, spec coverage, eval health
+    # Rule coverage, registry parity, spec coverage
     "RULE-COVERAGE":      "Rules enforced",
     "PARITY":             "Rules enforced",
     "SPEC-COVERAGE":      "Rules enforced",
     "BLIND-RATE":         "Rules enforced",
     "TEST-ORDERING":      "Rules enforced",
     "QUARANTINE-SLA":     "Rules enforced",
-    "EVAL-REVIEWER":      "Rules enforced",
-    "EVAL-PRD-CRITIC":    "Rules enforced",
-    "EVAL-SLICER-CRITIC": "Rules enforced",
     # --- Telemetry live ---
     # The three hook checks render as ONE composite "Telemetry live" row (§2 #6).
     # They are listed here so _attach_purpose_group marks them correctly, even
@@ -4619,143 +4610,6 @@ def check_quarantine_sla() -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Eval checks (ADR-0067 D5) — golden-set critic evals — slice #817
-# ---------------------------------------------------------------------------
-
-_EVALS_RESULTS_FILE = _HEALTH_REPO_ROOT / "tests" / "evals" / "results.json"
-_EVAL_STALE_DAYS = 14
-
-
-def _check_eval_critic(critic_id: str, check_id: str) -> dict:
-    """Shared implementation for EVAL-REVIEWER / EVAL-PRD-CRITIC / EVAL-SLICER-CRITIC.
-
-    Returns WARN (honest no-baseline) when results.json absent or has no run for this
-    critic.  Returns WARN when results are stale (>14 days) or pass_rate < 1.0.
-    Returns PASS only when pass_rate == 1.0 and the run is fresh.
-
-    Per ADR-0067 D5: the eval runner is on-demand only — results.json absence is
-    expected on a fresh repo and must never produce a false FAIL.
-    """
-    if not _EVALS_RESULTS_FILE.exists():
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": (
-                f"tests/evals/results.json not found — no eval run yet for {critic_id}; "
-                "honest no-baseline bucket (ADR-0067 D5)"
-            ),
-            "pass_rate": None,
-            "last_run_ts": None,
-        }
-    try:
-        import json as _json  # noqa: PLC0415 — local import to avoid top-level cost
-        data = _json.loads(
-            _EVALS_RESULTS_FILE.read_text(encoding="utf-8", errors="replace")
-        )
-    except Exception as exc:
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": f"tests/evals/results.json unreadable: {exc}",
-            "pass_rate": None,
-            "last_run_ts": None,
-        }
-
-    critic_data = data.get(critic_id)
-    if not critic_data:
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": (
-                f"no run recorded for critic '{critic_id}' in results.json; "
-                "honest no-baseline bucket (ADR-0067 D5)"
-            ),
-            "pass_rate": None,
-            "last_run_ts": None,
-        }
-
-    last_run_ts = critic_data.get("ts")
-    pass_rate = critic_data.get("pass_rate")
-    total = critic_data.get("total", 0)
-    passed = critic_data.get("passed", 0)
-
-    # Staleness check
-    stale = False
-    if last_run_ts:
-        try:
-            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
-            run_dt = _dt.fromisoformat(last_run_ts.replace("Z", "+00:00"))
-            age_days = (_dt.now(_tz.utc) - run_dt).days
-            stale = age_days > _EVAL_STALE_DAYS
-        except Exception:
-            stale = False
-
-    if stale:
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": (
-                f"eval results for '{critic_id}' are stale (>{_EVAL_STALE_DAYS} days); "
-                f"re-run: python tools/run_evals.py --critic {critic_id}"
-            ),
-            "pass_rate": pass_rate,
-            "last_run_ts": last_run_ts,
-        }
-
-    if pass_rate is None:
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": (
-                f"eval run for '{critic_id}' has no pass_rate (0 cases?); "
-                "honest no-baseline bucket (ADR-0067 D5)"
-            ),
-            "pass_rate": None,
-            "last_run_ts": last_run_ts,
-        }
-
-    if pass_rate < 1.0:
-        failed = total - passed
-        return {
-            "id": check_id,
-            "result": "WARN",
-            "detail": (
-                f"eval pass_rate={pass_rate:.2%} for '{critic_id}' "
-                f"({passed}/{total} passed, {failed} failed); "
-                "review failing cases in tests/evals/results.json"
-            ),
-            "pass_rate": pass_rate,
-            "last_run_ts": last_run_ts,
-        }
-
-    return {
-        "id": check_id,
-        "result": "PASS",
-        "detail": (
-            f"eval pass_rate=100% for '{critic_id}' ({passed}/{total} cases); "
-            f"run ts={last_run_ts}"
-        ),
-        "pass_rate": pass_rate,
-        "last_run_ts": last_run_ts,
-    }
-
-
-def check_eval_reviewer() -> dict:
-    """EVAL-REVIEWER: golden-set evals for the reviewer critic (ADR-0067 D5)."""
-    return _check_eval_critic("reviewer", "EVAL-REVIEWER")
-
-
-def check_eval_prd_critic() -> dict:
-    """EVAL-PRD-CRITIC: golden-set evals for the prd-critic (ADR-0067 D5)."""
-    return _check_eval_critic("prd-critic", "EVAL-PRD-CRITIC")
-
-
-def check_eval_slicer_critic() -> dict:
-    """EVAL-SLICER-CRITIC: golden-set evals for the slicer-critic (ADR-0067 D5)."""
-    return _check_eval_critic("slicer-critic", "EVAL-SLICER-CRITIC")
-
-
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -6802,10 +6656,6 @@ CHECK_REGISTRY: dict[str, callable] = {
     "TESTS-COLLECTED":  check_tests_collected,
     "TEST-ORDERING":    check_test_ordering,
     "QUARANTINE-SLA":   check_quarantine_sla,
-    # Eval checks (ADR-0067 D5) — slice #817
-    "EVAL-REVIEWER":      check_eval_reviewer,
-    "EVAL-PRD-CRITIC":    check_eval_prd_critic,
-    "EVAL-SLICER-CRITIC": check_eval_slicer_critic,
     # Hygiene checks (ADR-0068 D1/D3 wave 4 slice #818)
     "UNTRACKED-SIZE":    check_untracked_size,
     "LOG-ROTATION":      check_log_rotation,
@@ -7016,10 +6866,6 @@ def _build_health_data() -> dict:
         check_tests_collected(),
         check_test_ordering(),
         check_quarantine_sla(),
-        # Eval rows (ADR-0067 D5) — slice #817
-        check_eval_reviewer(),
-        check_eval_prd_critic(),
-        check_eval_slicer_critic(),
     ])
     verification_checks = _enrich_all([
         check_blind_dispatch_rate(),

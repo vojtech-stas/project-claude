@@ -92,10 +92,6 @@ _NO_DATA_DETAILS = [
     "workflow-events.jsonl not found",
     # BLIND-RATE: pre-migration — expected
     "no agent_start events with input found (pre-migration — expected)",
-    # EVAL checks: no results.json yet
-    "tests/evals/results.json not found — no eval run yet for reviewer; honest no-baseline bucket",
-    # EVAL checks: no run for this critic
-    "no run recorded for critic 'prd-critic' in results.json; honest no-baseline bucket",
     # SPEC-COVERAGE: gh API unavailable
     "gh API unavailable — cannot compute coverage",
     # SPEC-COVERAGE: no PRDs

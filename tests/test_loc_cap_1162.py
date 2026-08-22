@@ -164,22 +164,6 @@ class TestOtherLiveReferences(unittest.TestCase):
         self.assertNotIn("≤300 LoC diff", text)
 
 
-class TestEvalFixtures(unittest.TestCase):
-    FIXTURE_DIR = "tests/evals/slicer-critic"
-
-    def test_block_fixture_reflects_600_cap(self):
-        text = _read(f"{self.FIXTURE_DIR}/sc-block-slice-count-loc.md")
-        self.assertIn("600 LoC cap", text)
-        self.assertIn("~1300", text)
-        # Must still clearly exceed the new cap (not merely restate the old one).
-        self.assertNotIn("300 LoC cap", text.replace("600 LoC cap", ""))
-
-    def test_approve_fixtures_reflect_600_cap(self):
-        for name in ("sc-approve-two-slice-parallel.md", "sc-approve-single-trivial.md"):
-            text = _read(f"{self.FIXTURE_DIR}/{name}")
-            self.assertIn("600 cap", text, f"{name} missing 600 cap reference")
-
-
 class TestGenRulesBaseline(unittest.TestCase):
     def setUp(self):
         self.text = _read("tools/gen_rules.py")

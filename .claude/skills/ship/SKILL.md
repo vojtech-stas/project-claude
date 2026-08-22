@@ -1,19 +1,18 @@
 ---
 name: ship
-description: Run the autonomous pipeline from grilled context to posted PRD-and-slices on GitHub. Use after /grill-me when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand off the grilled idea to the autonomous pipeline.
+description: Run the full autonomous lifecycle for a feature - assess how concrete the input is and grill first when it is still vague, then PRD authoring, slice decomposition, per-slice implementation, auto-merge, and the production-verify gate. Use when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand a feature idea off to the autonomous pipeline; pre-grilled input is welcome but not required.
 ---
 
 # /ship — autonomous pipeline orchestrator
 
-Chains `/to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge)` so the human only needs two commands per feature: `/grill-me` to define the *what*, then `/ship` to drive it through PRD authoring, slice decomposition, per-slice implementation, and auto-merge.
+Chains `conditional /grill-me → /to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge) → regenerate-docs → qa-tester (production-verify)` so the human only needs one command per feature: `/ship` settles the *what* itself — grilling first when the input is still vague (step 1) — then drives it through PRD authoring, slice decomposition, per-slice implementation, auto-merge, doc regeneration, and the production-verify gate.
 
 Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): CLAUDE.md §3 (Hierarchy + workflow conventions). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
 
 ## When NOT to use this skill
 
-- Mid-grill, before the user has explicitly said the design is settled — run `/grill-me` first.
 - For trivial one-line fixes — use the `hotfix/<thing>` lane (I3).
-- When there is no conversation context to synthesize — `/ship` consumes context, it does not interview.
+- When the user wants to interrogate a design without committing to build it — invoke `/grill-me` on its own; it remains individually invocable ([ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) D2), whereas `/ship` carries whatever its own step-1 grill settles straight on into PRD authoring and implementation.
 
 ## Conduct
 
@@ -114,7 +113,31 @@ evidence for this run; note it explicitly in the step 7 final report.
 
 **If count > 0:** log "capture alive: N fresh events" and proceed.
 
+### Pre-step — Ensure dashboard running (idempotent)
+
+Invoke `.claude/hooks/dashboard-autostart.sh` as a subprocess so the human can watch the build live:
+
+```bash
+bash "${CLAUDE_PROJECT_DIR}/.claude/hooks/dashboard-autostart.sh"
+```
+
+This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already up. Authorized by ADR-0033 D1 (tooling-spawn carveout). If the script fails or is missing, emit a one-line warning and continue — the dashboard is observability-only; its absence does not block the build.
+
 1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If context is thin, design with sensible defaults and record every defaulted decision in the PRD draft — `prd-critic` and `adr-critic` are the safety net that audits those decisions before the PRD posts. Proceed without stopping unless a fork is genuinely user-only (i.e. a design choice where a wrong guess would require rework that cannot be corrected by later slices — name the specific fork and stop only for that decision).
+
+   **Assess + grill (conditional, ADR-0034 D3 — rehosted from `/build` step 2 per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4).**
+
+   Auto-assess the input concreteness. Ask: **"Is there enough here to write a mechanically-verifiable PRD §2 without more questions?"**
+
+   Concreteness signals (any combination suffices):
+   - A GitHub issue number with a symptom + root-cause + proposed-fix body
+   - A structured spec with acceptance criteria
+   - A grilled conversation with all major design questions resolved
+   - A CLAUDE.md slice body or equivalent with "What ships" and "Acceptance criteria"
+
+   **If vague** (open idea, vague noun-phrase, no acceptance criteria visible): announce `"Input is vague — invoking /grill-me"` then invoke [`.claude/skills/grill-me/SKILL.md`](../grill-me/SKILL.md). Wait for the grill to complete. If the user stops the grill early without a settled design, STOP with `RESULT: STOPPED, REASON: grill incomplete — re-run /ship when design is settled`.
+
+   **If concrete**: announce `"Input is concrete — skipping grill, proceeding to step 2"` and proceed immediately to step 2. **Do NOT ask a blocking "grill or skip?" confirmation question** (ADR-0034 D3 / 5A).
 
 2. **Stage 2 — `/to-prd`.** Invoke [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md) unchanged. It runs `prd-critic` (+ `adr-critic` under shared round counter when a macro-ADR is drafted) internally per [ADR-0004](../../../decisions/0004-bypass-prevention.md) D1's joint-APPROVE gate, then publishes via `gh issue create`. Capture the PRD issue number.
 
@@ -196,11 +219,17 @@ evidence for this run; note it explicitly in the step 7 final report.
      5. On SHA-smoke failure or a RELEASE-READY evaluation error (green-develop step fails): revert via trivial lane; do NOT mark PRD done until green-develop is clean.
      **Note on condition (e):** `needs-human` open items commonly hold the gate (e.g. during a wave's own slices). This is correct and honest — the gate reports the true state; promotion waits. The develop integration branch continues to accept PRs normally while the gate is held.
 
-6. **Production-verify gate (MANDATORY when `/ship` is invoked standalone — per ADR-0037 D1).**
+   - **5g. Regenerate docs (rehosted from `/build` step 4 per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4).** Run the doc-generator as a subprocess so the PRs arrive doc-current:
 
-   **Dedup rule:** When `/build` calls `/ship` internally (step 3 of `/build`), the production-verify gate is owned by `/build` step 5 — `/ship` does NOT run it. Standalone `/ship` runs it; `/build`-nested `/ship` does NOT. Distinguish by whether the caller is `/build` (caller passes `invoked_by: build` context) or a direct user invocation.
+     ```bash
+     python "${CLAUDE_PROJECT_DIR}/dashboard/server.py" --generate-readme
+     ```
 
-   When running standalone: dispatch `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
+     If the generator exits non-zero, emit a warning with the error output and continue — doc-regeneration failure is a soft error at this step (the reviewer's `R-DOCS-CURRENT` rule is the hard gate). If it exits zero, confirm `README.md` updated (note byte count).
+
+6. **Production-verify gate (MANDATORY — per ADR-0037 D1).**
+
+   Dispatch `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
 
    Input to pass:
    - The full PRD body (fetch via `gh issue view <PRD_NUMBER> --json body`)
@@ -278,7 +307,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 
    **INVALID_INPUT from qa-tester:** surface the reason and STOP — do not loop.
 
-7. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, any forward-block summary, and (standalone) the production-verify proof. Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
+7. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, any forward-block summary, and the production-verify proof. Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT | BLOCKED
@@ -288,10 +317,10 @@ evidence for this run; note it explicitly in the step 7 final report.
    IMPLEMENTATION_PRS: <comma-separated PR URLs from implementer invocations; empty if pipeline halted before stage 4>
    BLOCKED_SLICES: <comma-separated slice numbers in the `blocked` set per 5d; empty if no failures>
    IN_FLIGHT_AT_FAILURE: <comma-separated slice numbers in `in_flight` at the moment of FIRST failure per 5e; empty if no failures>
-   PRODUCTION_VERIFY: <PASS | FAIL | not-reached | skipped-nested>
+   PRODUCTION_VERIFY: <PASS | FAIL | not-reached>
    ```
 
-   `SLICE_COUNT` / `IMPLEMENTATION_PRS` / `BLOCKED_SLICES` / `IN_FLIGHT_AT_FAILURE` / `PRODUCTION_VERIFY` are per-agent extensions appended after `ARTIFACTS` so human triage and post-run audits find every stuck slice without re-parsing. `PRODUCTION_VERIFY: skipped-nested` when `/build` owns the gate; `PRODUCTION_VERIFY: not-reached` when the pipeline halted before step 6. On `STOPPED` / `INVALID_INPUT`, `ARTIFACTS` may be partial or empty; the extensions are `0` / empty.
+   `SLICE_COUNT` / `IMPLEMENTATION_PRS` / `BLOCKED_SLICES` / `IN_FLIGHT_AT_FAILURE` / `PRODUCTION_VERIFY` are per-agent extensions appended after `ARTIFACTS` so human triage and post-run audits find every stuck slice without re-parsing. `PRODUCTION_VERIFY: not-reached` when the pipeline halted before step 6. On `STOPPED` / `INVALID_INPUT`, `ARTIFACTS` may be partial or empty; the extensions are `0` / empty.
 
 ## References
 
@@ -303,10 +332,10 @@ evidence for this run; note it explicitly in the step 7 final report.
 - [ADR-0035](../../../decisions/0035-worktree-isolation-parallel-dispatch.md) — D1 (superseded by ADR-0036 D1 for the batch-size condition; parallel-batch race origin of the isolation mechanism); D2 (isolation lives in orchestrator; implementer unchanged).
 - [ADR-0056](../../../decisions/0056-no-rule-without-a-check.md) — rule #23's mechanized-enforcement requirement; the format-vs-other classifier lives in the testable [`tools/ci-failure-kind.sh`](../../../tools/ci-failure-kind.sh) helper (regression-tested in [`tests/test_ci_failure_kind_1084.py`](../../../tests/test_ci_failure_kind_1084.py)) rather than inline SKILL.md prose, after a reviewer BLOCK (PR #1087 round 1) proved a naive `grep "CHECK 3"` misclassifies every CI failure as the format class.
 - [ADR-0077](../../../decisions/0077-ceremony-overhead-reduction.md) — D1 (R-LOC cap raised 300→600 LoC; slicer targets 3-5 slices/PRD); D2 (reviewer dispatch made concurrent with CI instead of strictly-serialized after it — supersedes this file's former pre-review CI gate; the #869 format-BLOCK-class protection relocates into [`reviewer.md`](../../agents/reviewer.md)'s own pre-merge gate, closing the same PRD #1075 criterion 6 with one fewer orchestrator-tracked round counter).
-- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer for standalone invocations), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode; dedup with /build nested invocations).
+- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
-- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6 (standalone): [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
+- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 
 ## Local vocabulary
 

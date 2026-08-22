@@ -54,12 +54,6 @@ NODES = {
     },
 
     # --- skills (Stage 1: Idea capture) -------------------------------------
-    "build": {
-        "kind": "skill",
-        "label": "/build",
-        "stage": "S1",
-        "path": ".claude/skills/build/SKILL.md",
-    },
     "grill-me": {
         "kind": "skill",
         "label": "/grill-me",
@@ -245,18 +239,7 @@ EDGES = [
     # Stage 1: Idea capture
     # =========================================================================
 
-    # User invokes /build or /ship directly (runtime: skill_invoke event)
-    {
-        "id": "E-USER-BUILD",
-        "from_node": "user",
-        "to_node": "build",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "user_invokes_build",
-        "label": "/build",
-        "style": "solid",
-        "description": "User invokes /build orchestrator (full-lifecycle conductor).",
-    },
+    # User invokes /ship directly (runtime: skill_invoke event)
     {
         "id": "E-USER-SHIP",
         "from_node": "user",
@@ -278,19 +261,6 @@ EDGES = [
         "label": "/grill-me",
         "style": "dashed",
         "description": "User requests /grill-me to explore design options (in-conversation).",
-    },
-
-    # /build conducts full lifecycle: dispatches /ship + /qa-plan
-    {
-        "id": "E-BUILD-SHIP",
-        "from_node": "build",
-        "to_node": "ship",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "build_dispatches_ship",
-        "label": "",
-        "style": "solid",
-        "description": "/build conducts /ship as its core step (ADR-0034 D1). Conditional: /build must be invoked in a fresh session with live hooks for this edge to be runtime-observed; resumed-session hook blindspot means invocations in resumed sessions produce no skill_invoke events (issue #719).",
     },
 
     # /grill-me → /ship: settled design handed off (in-conversation)
@@ -568,7 +538,7 @@ EDGES = [
     # Stage 4: Acceptance
     # =========================================================================
 
-    # merge → /qa-plan (runtime: /build or /ship triggers qa-plan)
+    # merge → /qa-plan (runtime: /ship triggers qa-plan)
     {
         "id": "E-MERGE-QAPLAN",
         "from_node": "merge",
@@ -578,7 +548,7 @@ EDGES = [
         "predicate": "merge_triggers_qa_plan",
         "label": "",
         "style": "solid",
-        "description": "/build step 5 dispatches /qa-plan after last slice merges.",
+        "description": "/ship step 6 dispatches /qa-plan after last slice merges.",
     },
 
     # /qa-plan → qa-tester (runtime dispatch)

@@ -146,11 +146,6 @@ class TestOtherLiveReferences(unittest.TestCase):
         self.assertIn("≤600 LoC slices", text)
         self.assertNotIn("≤300 LoC slices", text)
 
-    def test_build_skill_states_600(self):
-        text = _read(".claude/skills/build/SKILL.md")
-        self.assertIn("≤600 LoC slices", text)
-        self.assertNotIn("≤300 LoC slices", text)
-
     def test_readme_template_states_600(self):
         text = _read("README.template.md")
         self.assertIn("≤600 LoC diff", text)

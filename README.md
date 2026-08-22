@@ -158,7 +158,6 @@ flowchart TD
   end
   subgraph S4["Stage 5: Acceptance"]
     qa_plan["/qa-plan"]
-    qa_review["/qa-review"]
     qa_tester[qa-tester]
     verify_verdict[(verify verdict)]
   end
@@ -199,7 +198,6 @@ flowchart TD
   merge --> qa_plan
   qa_plan --> qa_tester
   qa_tester -->|PASS/FAIL| verify_verdict
-  merge -.residual.- qa_review
   merge -.per-PRD gate.- codebase_critic
   codebase_critic -.per-PRD.- reviewer
   ship -.whole-repo bg.- codebase_critic
@@ -220,7 +218,7 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class user human
-  class build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,qa_review,ship,to_issues,to_prd skill
+  class build,glossary,grill_me,orchestrator,promote_to_backlog,qa_plan,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,glossary_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
@@ -336,7 +334,6 @@ User-invocable commands under `.claude/skills/`:
 - **[`/grill-me`](.claude/skills/grill-me/SKILL.md)** — Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions "grill me".
 - **[`/promote-to-backlog`](.claude/skills/promote-to-backlog/SKILL.md)** — Run the captured→backlog autopilot on a single `captured`-labeled GitHub issue. Invoked INLINE by whatever agent (subagent, skill, or main Claude) just wrote the capture via `gh issue create --label captured`, per ADR-0008 D3. Calls `backlog-critic`; on APPROVE swaps labels `captured` → `backlog` and posts the verdict as an audit-trail comment; on BLOCK posts the verdict and leaves the captured label in place.
 - **[`/qa-plan`](.claude/skills/qa-plan/SKILL.md)** — Writer/orchestrator for QA automation per ADR-0020 + ADR-0040. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment, dispatches qa-tester, collects PROVISIONAL residuals, posts each as a needs-human-check GitHub issue (writer posts, not qa-tester), reports the single top headline, and auto-closes the PRD on machine-PASS alone (ADR-0040 D2 — no longer waits on all-judgment-ACCEPT). Also the production-verify executor dispatched by /build (step 5) and /ship (step 6 standalone) per ADR-0037 D1.
-- **[`/qa-review`](.claude/skills/qa-review/SKILL.md)** — Main-agent clearing skill for QA residuals (ADR-0040 D4). Lists open needs-human-check issues, presents each as an AskUserQuestion card (recommendation + PRO/CON inferred from the criterion), and records the verdict — accept closes the issue as verified; reject relabels and captures a defect. Tools: Read, Bash, AskUserQuestion only (NO Write/Edit/Agent). Emits a GENERATOR trailer.
 - **[`/ship`](.claude/skills/ship/SKILL.md)** — Run the autonomous pipeline from grilled context to posted PRD-and-slices on GitHub. Use after /grill-me when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand off the grilled idea to the autonomous pipeline.
 - **[`/to-issues`](.claude/skills/to-issues/SKILL.md)** — Break a PRD into independently-grabbable vertical-slice issues on GitHub. Delegates to the `slicer` and `slicer-critic` subagents under the hood. Invocation shape preserved — use when the user says `/to-issues`, asks to break a PRD into slices, or convert a plan into implementation tickets.
 - **[`/to-prd`](.claude/skills/to-prd/SKILL.md)** — Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
@@ -376,7 +373,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 78 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 79 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -396,7 +393,7 @@ To add a term, run **`/glossary add`** — it interviews you for the entry shape
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 9 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 78 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 8 skill(s), 7 critic(s) + 3 generator(s), 8 hook(s), 79 ADR(s).
 
 ## License
 

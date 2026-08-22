@@ -132,12 +132,15 @@ SCOPE_PATHS: dict[str, str] = {
 # scope-migration commit (slice #939, 2026-06-18); bumped by ADR-0076's 6 new
 # PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162),
 # then by ADR-0078's 1 new PIP-* id (slice #1172), then by ADR-0079's 1 new
-# PIP-* id (slice #1197), then by ADR-0080's 1 new PIP-* id (slice #1217).
+# PIP-* id (slice #1197), then by ADR-0080's 1 new PIP-* id (slice #1217),
+# then by ADR-0081's 1 new PIP-* id (slice #1238).
 # --check verifies that the live count equals this value; a mismatch means a
 # rule was silently added or removed without updating this constant.
+# Note: ADR-0081's supersessions are all per-decision, so no ADR leaves the
+# active frontmatter set and no rule_ids are removed — the delta is +1 only.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(24) + REG(3) + SLI(5) + VER(8) = 85
-RULE_IDS_BASELINE: int = 85
+#            ISO(6) + OUT(5) + PIP(25) + REG(3) + SLI(5) + VER(8) = 86
+RULE_IDS_BASELINE: int = 86
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -459,6 +462,21 @@ _RULE_STATEMENTS: dict[str, str] = {
         "documenting a concrete mis-dispatch or planning failure caused by "
         "absent recorded batch state (ADR-0080 D2)."
     ),
+    # ADR-0081: post-audit dead-weight retirements (4 mechanisms, duties rehomed)
+    "PIP-025": (
+        "Four audit-flagged mechanisms are retired with every load-bearing duty "
+        "explicitly rehomed: the dedicated QA-residual clearing skill (the "
+        "`needs-human-check` queue, PROVISIONAL semantics, and machine-PASS "
+        "auto-close all stand — the operator clears residuals via the "
+        "out-of-repo decide-flow or `gh issue list`), the `/glossary` skill and "
+        "its critic (glossary content and the ~35 soft cap stand — additions "
+        "ride normal reviewer-gated PRs and DOCS-9 checks the cap; critic "
+        "roster 7 → 6), the golden-set critic-eval harness (the `tests/` suite, "
+        "R-PROVE, and the flaky quarantine stand), and the `/build` conductor "
+        "(its three non-duplicated steps fold into `/ship`, the single "
+        "lifecycle orchestrator); each returns only via a new ADR that "
+        "re-argues its case (ADR-0081 D1/D2/D3/D4)."
+    ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)
     # -----------------------------------------------------------------------
@@ -577,8 +595,10 @@ _RULE_STATEMENTS: dict[str, str] = {
     "VER-005": (
         "The human residual does NOT block PRD closure; the PRD auto-closes on machine "
         "PRODUCTION_VERIFY: PASS alone; a machine-confident FAIL still blocks per ADR-0037 "
-        "D5 loop; the `/qa-review` skill clears residuals on the human's own cadence "
-        "(ADR-0040 D2/D4)."
+        "D5 loop; the operator clears residuals on their own cadence via the "
+        "out-of-repo decide-flow or `gh issue list --label needs-human-check` — the "
+        "dedicated clearing skill is retired (as amended by ADR-0081), the queue "
+        "and its semantics stand (ADR-0040 D2)."
     ),
     "VER-006": (
         "`qa-tester` browser route MUST drive real interaction — `page.click()`, "
@@ -765,8 +785,9 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     "REG-003": (
         "Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; "
-        "quarantined tests have a 30-day SLA to be fixed or deleted; golden-set critic evals "
-        "live in `tests/evals/` and run on-demand via `tools/run_evals.py` (ADR-0067 D4/D5)."
+        "quarantined tests have a 30-day SLA to be fixed or deleted; the golden-set "
+        "critic-eval harness is retired (as amended by ADR-0081) — ADR-0067 D5 "
+        "superseded, the D4 quarantine clause stands (ADR-0067 D4)."
     ),
     # -----------------------------------------------------------------------
     # glossary scope (ADR-0007, ADR-0012)
@@ -790,9 +811,11 @@ _RULE_STATEMENTS: dict[str, str] = {
         "earn their place in the auto-loaded context (ADR-0012 D1)."
     ),
     "GLO-004": (
-        "The glossary soft-cap is ~35 entries; new entries are added only via `/glossary add` "
-        "(gated by `glossary-critic`); the cap is enforced by `glossary-critic` which BLOCKs "
-        "additions that fail the tightened inclusion threshold (ADR-0012 D2/D5)."
+        "The glossary soft-cap is ~35 entries; new entries ride normal reviewer-gated PRs "
+        "like any other CLAUDE.md edit, and the cap is mechanically enforced by the DOCS-9 "
+        "health row — the dedicated add/fold skill and its critic bouncer are retired "
+        "(as amended by ADR-0081) — while the tightened inclusion threshold stands "
+        "(ADR-0012 D2/D5)."
     ),
 }
 

@@ -136,7 +136,7 @@ LABELS=(
     "captured|8b949e|Graveyard of backlog-critic rejects per ADR-0008 D1; lazy human review (cull or rescue)"
     "trivial|fbca04|≤10 LoC runtime; I3 trivial-lane PR; reviewer fast-paths"
     "needs-human|d93f0b|Round-3 BLOCK escalation per I5"
-    "needs-human-check|e4e669|QA-plan residual queue; cleared by /qa-review skill"
+    "needs-human-check|e4e669|QA-plan residual queue; cleared by the operator via decide-flow / gh issue list"
     "root-cause|B60205|rule #13 root-cause capture (3-part shape per ADR-0063)"
 )
 

@@ -158,7 +158,7 @@ def _build_repo_map() -> str:
         (".claude/hooks/",   "Claude Code hook scripts"),
         ("dashboard/",       "Local web visualizer (architecture + health)"),
         ("tools/",           "CLI scripts for CI, generation, and promotion"),
-        ("tests/",           "Regression test suite (pytest + evals/)"),
+        ("tests/",           "Regression test suite (pytest)"),
         ("docs/prds/",       "Future repo-local PRD storage"),
     ]
     for dir_path, dir_desc in _DIRS:

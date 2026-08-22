@@ -134,7 +134,6 @@ The whole autonomous composition at a glance: the human enters at **`/grill-me`*
 flowchart TD
   subgraph S1["Stage 1: Idea capture"]
     user["User"]
-    build["/build"]
     grill_me["/grill-me"]
     ship["/ship"]
   end
@@ -168,10 +167,8 @@ flowchart TD
     captured_issue[(captured issue)]
     backlog_issue[(backlog issue)]
   end
-  user -->|/build| build
   user -->|/ship| ship
   user -./grill-me.- grill_me
-  build --> ship
   grill_me -.settled design.- ship
   ship --> to_prd
   to_prd --> prd_critic
@@ -211,7 +208,7 @@ flowchart TD
   classDef reviewer_cls fill:#ef4444,color:#fff
   classDef artifact fill:#9ca3af,color:#fff
   class user human
-  class build,grill_me,orchestrator,promote_to_backlog,qa_plan,ship,to_issues,to_prd skill
+  class grill_me,orchestrator,promote_to_backlog,qa_plan,ship,to_issues,to_prd skill
   class implementer,qa_tester,slicer gen
   class adr_critic,backlog_critic,codebase_critic,prd_critic,slicer_critic critic
   class reviewer reviewer_cls
@@ -321,11 +318,10 @@ Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionS
 
 User-invocable commands under `.claude/skills/`:
 
-- **[`/build`](.claude/skills/build/SKILL.md)** — Full-lifecycle orchestrator — one command from idea to merged + verified PR. Use when user says "/build", "build this", "implement this", "let's ship", or wants to drive a feature all the way through from idea to production-verified done. Chains dashboard-autostart → grill (conditional) → /ship → doc-regeneration → production-verify gate (mandatory, blocking per ADR-0037 D1). Thin conductor per ADR-0034 D1; sub-skills remain standalone.
 - **[`/grill-me`](.claude/skills/grill-me/SKILL.md)** — Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions "grill me".
 - **[`/promote-to-backlog`](.claude/skills/promote-to-backlog/SKILL.md)** — Run the captured→backlog autopilot on a single `captured`-labeled GitHub issue. Invoked INLINE by whatever agent (subagent, skill, or main Claude) just wrote the capture via `gh issue create --label captured`, per ADR-0008 D3. Calls `backlog-critic`; on APPROVE swaps labels `captured` → `backlog` and posts the verdict as an audit-trail comment; on BLOCK posts the verdict and leaves the captured label in place.
-- **[`/qa-plan`](.claude/skills/qa-plan/SKILL.md)** — Writer/orchestrator for QA automation per ADR-0020 + ADR-0040. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment, dispatches qa-tester, collects PROVISIONAL residuals, posts each as a needs-human-check GitHub issue (writer posts, not qa-tester), reports the single top headline, and auto-closes the PRD on machine-PASS alone (ADR-0040 D2 — no longer waits on all-judgment-ACCEPT). Also the production-verify executor dispatched by /build (step 5) and /ship (step 6 standalone) per ADR-0037 D1.
-- **[`/ship`](.claude/skills/ship/SKILL.md)** — Run the autonomous pipeline from grilled context to posted PRD-and-slices on GitHub. Use after /grill-me when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand off the grilled idea to the autonomous pipeline.
+- **[`/qa-plan`](.claude/skills/qa-plan/SKILL.md)** — Writer/orchestrator for QA automation per ADR-0020 + ADR-0040. Takes a PRD number (defaults to the most-recently-merged PRD), LLM-extracts each §2 acceptance criterion into a bash check or JUDGMENT flag, persists the plan as a PRD comment, dispatches qa-tester, collects PROVISIONAL residuals, posts each as a needs-human-check GitHub issue (writer posts, not qa-tester), reports the single top headline, and auto-closes the PRD on machine-PASS alone (ADR-0040 D2 — no longer waits on all-judgment-ACCEPT). Also the production-verify executor dispatched by /ship (step 6) per ADR-0037 D1.
+- **[`/ship`](.claude/skills/ship/SKILL.md)** — Run the full autonomous lifecycle for a feature - assess how concrete the input is and grill first when it is still vague, then PRD authoring, slice decomposition, per-slice implementation, auto-merge, and the production-verify gate. Use when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand a feature idea off to the autonomous pipeline; pre-grilled input is welcome but not required.
 - **[`/to-issues`](.claude/skills/to-issues/SKILL.md)** — Break a PRD into independently-grabbable vertical-slice issues on GitHub. Delegates to the `slicer` and `slicer-critic` subagents under the hood. Invocation shape preserved — use when the user says `/to-issues`, asks to break a PRD into slices, or convert a plan into implementation tickets.
 - **[`/to-prd`](.claude/skills/to-prd/SKILL.md)** — Turn the current conversation context into a PRD and publish it to the project issue tracker. Use when user wants to create a PRD from the current context.
 
@@ -345,7 +341,7 @@ Specialist agents under `.claude/agents/`:
 **Generators** (output-producing agents):
 
 - **[`implementer`](.claude/agents/implementer.md)** — Implement a single `slice`-labeled GitHub issue end-to-end — read the slice + parent PRD + relevant ADRs, create a branch per CLAUDE.md naming, write code/edits per scope discipline, commit per Conventional Commits, open a PR with `Closes #<slice>`, hand off to reviewer. Per ADR-0010, the orchestrator (/ship) invokes this subagent on each posted slice after stage 3.
-- **[`qa-tester`](.claude/agents/qa-tester.md)** — Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (headless Playwright/Chrome click-recipe driver), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0050 D1-D5, ADR-0074 D1). The browser route is live-MCP-preferred-when-connected (drives Claude-in-Chrome MCP, records a GIF click-through, reads console errors) with headless Playwright as the fallback when no browser is connected (per ADR-0074 D1). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1, driver updated per ADR-0050 D2): headless Playwright/Chrome dogfood self-test then click recipes via Bash-written Python scripts, LLM-judges inner_text/screenshot results, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2, extended by ADR-0050 + ADR-0074): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan`, `/build` (step 5), and `/ship` (standalone gate).
+- **[`qa-tester`](.claude/agents/qa-tester.md)** — Executor subagent: bash-mode (QA-plan row-by-row), ui-mode (headless Playwright/Chrome click-recipe driver), and production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0050 D1-D5, ADR-0074 D1). The browser route is live-MCP-preferred-when-connected (drives Claude-in-Chrome MCP, records a GIF click-through, reads console errors) with headless Playwright as the fallback when no browser is connected (per ADR-0074 D1). bash-mode (per ADR-0020 D3): given a structured QA-plan table, walks rows, returns verdicts + GENERATOR trailer. ui-mode (per ADR-0025 D1, driver updated per ADR-0050 D2): headless Playwright/Chrome dogfood self-test then click recipes via Bash-written Python scripts, LLM-judges inner_text/screenshot results, PROVISIONAL_PASS is the RESIDUAL signal (ADR-0040 D1) — returned to the writer, never auto-resolved. production-verify mode (per ADR-0037 D2, extended by ADR-0050 + ADR-0074): given PRD body + Production check line + merged diff, routes by changed-path glob and exercises the feature in its real running context; emits PASS/FAIL/PROVISIONAL + proof. Dispatched by `/qa-plan` and `/ship` (step 6 production-verify gate).
 - **[`slicer`](.claude/agents/slicer.md)** — Given a PRD (GitHub issue body or markdown text), produce ONE well-justified vertical-slice decomposition of the work. Use when the autonomous pipeline (`/ship` or `/to-issues`) needs a decomposition for the slicer-critic to review. Output is the decomposition with rationale, NOT GitHub issues — posting is downstream.
 
 ### Hooks
@@ -383,7 +379,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 7 skill(s), 6 critic(s) + 3 generator(s), 8 hook(s), 79 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 8 hook(s), 79 ADR(s).
 
 ## License
 

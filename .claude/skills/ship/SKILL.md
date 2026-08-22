@@ -1,19 +1,18 @@
 ---
 name: ship
-description: Run the autonomous pipeline from grilled context to posted PRD-and-slices on GitHub. Use after /grill-me when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand off the grilled idea to the autonomous pipeline.
+description: Run the full autonomous lifecycle for a feature - assess how concrete the input is and grill first when it is still vague, then PRD authoring, slice decomposition, per-slice implementation, auto-merge, and the production-verify gate. Use when the user says "ship it", "/ship", "turn this into a PRD and slices", or otherwise asks to hand a feature idea off to the autonomous pipeline; pre-grilled input is welcome but not required.
 ---
 
 # /ship — autonomous pipeline orchestrator
 
-Chains `/to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge)` so the human only needs two commands per feature: `/grill-me` to define the *what*, then `/ship` to drive it through PRD authoring, slice decomposition, per-slice implementation, and auto-merge.
+Chains `conditional /grill-me → /to-prd → prd-critic (+ adr-critic) → /to-issues → slicer → slicer-critic → gh issue create → implementer (DAG-aware parallel) → reviewer (auto-merge) → regenerate-docs → qa-tester (production-verify)` so the human only needs one command per feature: `/ship` settles the *what* itself — grilling first when the input is still vague (step 1) — then drives it through PRD authoring, slice decomposition, per-slice implementation, auto-merge, doc regeneration, and the production-verify gate.
 
 Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): CLAUDE.md §3 (Hierarchy + workflow conventions). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
 
 ## When NOT to use this skill
 
-- Mid-grill, before the user has explicitly said the design is settled — run `/grill-me` first.
 - For trivial one-line fixes — use the `hotfix/<thing>` lane (I3).
-- When there is no conversation context to synthesize — `/ship` consumes context, it does not interview.
+- When the user wants to interrogate a design without committing to build it — invoke `/grill-me` on its own; it remains individually invocable ([ADR-0034](../../../decisions/0034-build-orchestrator-and-generated-docs.md) D2), whereas `/ship` carries whatever its own step-1 grill settles straight on into PRD authoring and implementation.
 
 ## Conduct
 

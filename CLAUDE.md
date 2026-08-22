@@ -109,7 +109,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Thing | Path | Summary |
 |---|---|---|
 | Pipeline skills | `.claude/skills/<name>/SKILL.md` | `ls .claude/skills/` for the full list |
-| `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | autonomous PRD-to-merge chain |
+| `/ship` orchestrator | `.claude/skills/ship/SKILL.md` | single lifecycle orchestrator — conditional grill → PRD → slices → implement → auto-merge → docs regen → production-verify |
 | Subagents | `.claude/agents/<name>.md` | `ls .claude/agents/` for the full list |
 | implementer subagent | `.claude/agents/implementer.md` | slice → PR, auto-invoked by `/ship` stage 4 |
 | qa-tester subagent | `.claude/agents/qa-tester.md` | three-mode executor: bash-mode (QA-plan row walk), ui-mode (headless Playwright/Chrome Bash-driven click-recipe driver), production-verify mode (auto-routes by change type — browser/hook/skill/static — per ADR-0037 D2, ADR-0049 D3, ADR-0050 D1-D5); browser route uses **live Claude-in-Chrome MCP when a browser is connected, else headless Playwright/Chrome Bash-driven fallback** per ADR-0074 D1-D5 |

@@ -50,7 +50,7 @@ Atomic rules for the `glossary` scope, generated from non-superseded ADR frontma
 
 #### Source: ADR-0012 (`decisions/0012-glossary-consolidation-single-tier.md`)
 - **GLO-003:** The glossary lives in a single tier: CLAUDE.md §4 (auto-loaded on every session); the separate long-tail glossary file (ADR-0007 D1) is retired; all entries must earn their place in the auto-loaded context (ADR-0012 D1).
-- **GLO-004:** The glossary soft-cap is ~35 entries; new entries are added only via `/glossary add` (gated by `glossary-critic`); the cap is enforced by `glossary-critic` which BLOCKs additions that fail the tightened inclusion threshold (ADR-0012 D2/D5).
+- **GLO-004:** The glossary soft-cap is ~35 entries; new entries ride normal reviewer-gated PRs like any other CLAUDE.md edit, and the cap is mechanically enforced by the DOCS-9 health row — the dedicated add/fold skill and its critic bouncer are retired (as amended by ADR-0081) — while the tightened inclusion threshold stands (ADR-0012 D2/D5).
 
 ### Output-contracts rules
 Atomic rules for the `output-contracts` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
@@ -109,13 +109,16 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 #### Source: ADR-0080 (`decisions/0080-frontend-reduced-run-board-batch-plan-retired.md`)
 - **PIP-024:** `tools/pipe/batch-plan` is retired and `batch_planned` leaves `tools/trace.py`'s closed kind enum (zero recorded spans, verified); the Run-board's `next` panel and `next_source` marker are removed — the board shows only `now` and `recent`, both backed by spans that verifiably occur; the verb returns only via a new ADR gated on two `captured` issues from distinct PRDs each documenting a concrete mis-dispatch or planning failure caused by absent recorded batch state (ADR-0080 D2).
 
+#### Source: ADR-0081 (`decisions/0081-post-audit-dead-weight-retirements.md`)
+- **PIP-025:** Four audit-flagged mechanisms are retired with every load-bearing duty explicitly rehomed: the dedicated QA-residual clearing skill (the `needs-human-check` queue, PROVISIONAL semantics, and machine-PASS auto-close all stand — the operator clears residuals via the out-of-repo decide-flow or `gh issue list`), the `/glossary` skill and its critic (glossary content and the ~35 soft cap stand — additions ride normal reviewer-gated PRs and DOCS-9 checks the cap; critic roster 7 → 6), the golden-set critic-eval harness (the `tests/` suite, R-PROVE, and the flaky quarantine stand), and the `/build` conductor (its three non-duplicated steps fold into `/ship`, the single lifecycle orchestrator); each returns only via a new ADR that re-argues its case (ADR-0081 D1/D2/D3/D4).
+
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 
 #### Source: ADR-0067 (`decisions/0067-regression-memory.md`)
 - **REG-001:** The `tests/` suite is wired into CI: `tools/ci-checks.sh` runs `pytest tests/` as a required check; a red test suite blocks the PR merge gate (ADR-0067 D1).
 - **REG-002:** For fix-type slices that address a code defect, the fixing PR MUST include a regression test that fails BEFORE the fix and passes AFTER; the test commit MUST precede the fix commit in branch history — this is R-PROVE / rule #13 regression rider (ADR-0067 D2/D3).
-- **REG-003:** Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; quarantined tests have a 30-day SLA to be fixed or deleted; golden-set critic evals live in `tests/evals/` and run on-demand via `tools/run_evals.py` (ADR-0067 D4/D5).
+- **REG-003:** Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; quarantined tests have a 30-day SLA to be fixed or deleted; the golden-set critic-eval harness is retired (as amended by ADR-0081) — ADR-0067 D5 superseded, the D4 quarantine clause stands (ADR-0067 D4).
 
 ### Verification rules
 Atomic rules for the `verification` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
@@ -127,7 +130,7 @@ Atomic rules for the `verification` scope, generated from non-superseded ADR fro
 
 #### Source: ADR-0040 (`decisions/0040-qa-human-residual-model.md`)
 - **VER-004:** The machine attempts every PRD §2 criterion; a criterion it cannot faithfully verify returns PROVISIONAL and becomes a human residual posted as a `needs-human-check` issue — the residual is discovered empirically, not predicted at plan time (ADR-0040 D1).
-- **VER-005:** The human residual does NOT block PRD closure; the PRD auto-closes on machine PRODUCTION_VERIFY: PASS alone; a machine-confident FAIL still blocks per ADR-0037 D5 loop; the `/qa-review` skill clears residuals on the human's own cadence (ADR-0040 D2/D4).
+- **VER-005:** The human residual does NOT block PRD closure; the PRD auto-closes on machine PRODUCTION_VERIFY: PASS alone; a machine-confident FAIL still blocks per ADR-0037 D5 loop; the operator clears residuals on their own cadence via the out-of-repo decide-flow or `gh issue list --label needs-human-check` — the dedicated clearing skill is retired (as amended by ADR-0081), the queue and its semantics stand (ADR-0040 D2).
 - **VER-006:** `qa-tester` browser route MUST drive real interaction — `page.click()`, `page.fill()`, `page.goto()` — and assert on what a human sees; `page.evaluate()` is a last-resort disambiguator only; eval-only proof → PROVISIONAL, not PASS (ADR-0040 D5).
 
 #### Source: ADR-0050 (`decisions/0050-headless-playwright-browser-driver.md`)

@@ -30,7 +30,7 @@ Per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D1, a criterion 
 
 - **PROVISIONAL is NOT a silent PASS.** The machine attempted the check but could not settle it with confidence. The criterion is unknown, not confirmed.
 - **PROVISIONAL is NOT a FAIL.** The machine did not observe a failure — it observed uncertainty.
-- **PROVISIONAL is the residual.** The writer (`/qa-plan`) receives it as data and queues it as a `needs-human-check` GitHub issue. The human clears it via `/qa-review` on their own cadence (ADR-0040 D4).
+- **PROVISIONAL is the residual.** The writer (`/qa-plan`) receives it as data and queues it as a `needs-human-check` GitHub issue. The operator clears it on their own cadence (ADR-0040 D2; the dedicated clearing skill is retired per ADR-0081 D1).
 
 You RETURN residuals as data — you do NOT post `needs-human-check` issues yourself (the writer owns the GitHub audit-trail per ADR-0020 D4). You do NOT call `AskUserQuestion` (subagents can't). You do NOT fold PROVISIONAL into PASS in your output — the PROVISIONAL count is reported distinctly in the trailer so the writer can queue each one.
 
@@ -443,7 +443,7 @@ When the table-mandated route's required tooling is unavailable in the verificat
    ROUTE: <table-mandated-route> (tooling unavailable)
    REASON: <table-mandated route tooling unavailable — downgrade would produce silent PASS; routed to needs-human-check per ADR-0054 D5 / ADR-0061 D3>
    ```
-3. The calling orchestrator routes this to the `needs-human-check` queue per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D2/D4. Do NOT resolve PROVISIONAL as PASS.
+3. The calling orchestrator routes this to the `needs-human-check` queue per [ADR-0040](../../decisions/0040-qa-human-residual-model.md) D2. Do NOT resolve PROVISIONAL as PASS.
 
 **Rationale:** Silent browser→command-run downgrade shipped the #639 crash. A declared route implies a fidelity contract; breaking that contract without disclosure produces a false PASS. PROVISIONAL preserves flow while keeping a human in the loop — the alternative (hard FAIL) stalls the pipeline on environment variance (A3, rejected per ADR-0054).
 
@@ -544,7 +544,7 @@ Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds
 `RESULT: SUCCESS` when `PRODUCTION_VERIFY: PASS` (all route-specific assertions pass).
 `RESULT: FAIL` when `PRODUCTION_VERIFY: FAIL` (any assertion fails).
 `RESULT: INVALID_INPUT` on missing inputs, mode ambiguity, or route cannot be determined.
-`PRODUCTION_VERIFY: PROVISIONAL` when the table-mandated route's tooling is unavailable — never a weaker-route PASS. The calling orchestrator routes PROVISIONAL to the `needs-human-check` queue (ADR-0040 D2/D4). On PROVISIONAL, `RESULT` is also `FAIL` (gate not passed). Do NOT set `RESULT: SUCCESS` on PROVISIONAL.
+`PRODUCTION_VERIFY: PROVISIONAL` when the table-mandated route's tooling is unavailable — never a weaker-route PASS. The calling orchestrator routes PROVISIONAL to the `needs-human-check` queue (ADR-0040 D2). On PROVISIONAL, `RESULT` is also `FAIL` (gate not passed). Do NOT set `RESULT: SUCCESS` on PROVISIONAL.
 
 The orchestrator (`/build` and `/ship`) reads `PRODUCTION_VERIFY: PASS|FAIL` and enforces the block (per ADR-0037 D3 — the blocking decision belongs to the orchestrator, not to qa-tester). After qa-tester returns the proof path in `ARTIFACTS`, the orchestrator commits the image to `qa-proof/<prd-num>/` on the PR branch and posts a PR comment embedding it via its raw URL (ADR-0049 D3, preserved), then records the verdict via `python tools/pipe/qa-verify --verdict <PRODUCTION_VERIFY value> --route <ROUTE value>` (repoint target, PRD #1075 criterion 1 rider / slice #1086 — this verdict was previously unrecorded outside qa-tester's own trailer).
 
@@ -568,7 +568,7 @@ No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here
 - [ADR-0024](../../decisions/0024-root-cause-workflow-capture-discipline.md) D1 + D3 — CLAUDE.md cross-cutting rule #13 root-cause-capture discipline; ui-mode PROVISIONAL_PASS captures follow the 3-part body shape.
 - [ADR-0031](../../decisions/0031-knowledge-architecture-v2.md) — T4 thin-prompt migration; full role synthesis lives in this file; superseded entirely by ADR-0032.
 - [ADR-0037](../../decisions/0037-production-verification-gate.md) — production-verify mode spec. D1 (mandatory blocking gate per feature), D2 (auto-routing by change type — all four routes: browser, hook-fire, command-run, static-check; browser route extended by ADR-0050 D1-D5), D3 (orchestrator-enforced; qa-tester stays a generator; critic parsimony honored), D4 (PRD "Production check:" line declaration + prd-critic enforcement), D5 (failure loop + escalation — orchestrator's responsibility), D6 (bootstrap-mode).
-- [ADR-0040](../../decisions/0040-qa-human-residual-model.md) — D1 (PROVISIONAL as the residual signal, returned not posted; empirical not predicted), D5 (browser-route fidelity tightening — real-click primary, `page.evaluate()` last-resort; S2 scope). See also [`.claude/skills/qa-plan/SKILL.md`](../skills/qa-plan/SKILL.md) (writer queues residuals) and [`.claude/skills/qa-review/SKILL.md`](../skills/qa-review/SKILL.md) (human clearing skill).
+- [ADR-0040](../../decisions/0040-qa-human-residual-model.md) — D1 (PROVISIONAL as the residual signal, returned not posted; empirical not predicted), D5 (browser-route fidelity tightening — real-click primary, `page.evaluate()` last-resort; S2 scope). See also [`.claude/skills/qa-plan/SKILL.md`](../skills/qa-plan/SKILL.md) (writer queues residuals).
 - [ADR-0046](../../decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 — critic parsimony principle (reframing ADR-0008 D7); no new critic; qa-tester remains a generator.
 - PRD [#166](https://github.com/vojtech-stas/project-claude/issues/166) — parent of bash-mode (Tier 1 of backlog #57); §2 acceptance criteria mapped to the bash-mode plan.
 - PRD [#215](https://github.com/vojtech-stas/project-claude/issues/215) — parent of ui-mode (PRD-Q1; ADR-0025 source); §2 acceptance criteria mapped to ui-mode click recipes.

@@ -134,12 +134,6 @@ NODES = {
         "stage": "S4",
         "path": ".claude/skills/qa-plan/SKILL.md",
     },
-    "qa-review": {
-        "kind": "skill",
-        "label": "/qa-review",
-        "stage": "S4",
-        "path": ".claude/skills/qa-review/SKILL.md",
-    },
 
     # --- agents (Stage 4) ---------------------------------------------------
     "qa-tester": {
@@ -629,19 +623,6 @@ EDGES = [
         "label": "PASS/FAIL",
         "style": "solid",
         "description": "qa-tester emits PRODUCTION_VERIFY: PASS|FAIL verdict.",
-    },
-
-    # /qa-review clears needs-human-check residual (runtime)
-    {
-        "id": "E-MERGE-QAREVIEW",
-        "from_node": "merge",
-        "to_node": "qa-review",
-        "evidence": "runtime",
-        "required": "conditional",
-        "predicate": "merge_triggers_qa_review",
-        "label": "residual",
-        "style": "dashed",
-        "description": "/qa-review clears needs-human-check residual queue (ADR-0040 D4).",
     },
 
     # =========================================================================

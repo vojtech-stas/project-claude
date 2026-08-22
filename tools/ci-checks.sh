@@ -166,6 +166,14 @@ ALLOWLIST = [
     ('.claude/agents/glossary-critic.md', '0007', 9,
      'pedagogical example in rationale; illustrates a bad-citation failure mode'),
 
+    # ADR-0081's Propagation ledger names the adr-critic.md / "ADR-0002 D1"
+    # allowlist entry above to classify a sibling grandfathered hit. It is a
+    # meta-reference to that already-allowlisted FICTIONAL cite, not a live
+    # citation — ADR-0002 still has no D1 (only D9-revised). Allowlisted here
+    # rather than edited, per this list's own header (ADRs are immutable).
+    ('decisions/0081-post-audit-dead-weight-retirements.md', '0002', 1,
+     'meta-reference to the adr-critic.md pedagogical entry; fictional D1'),
+
 ]
 
 def is_allowlisted(filepath, nnnn, did):

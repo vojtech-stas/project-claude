@@ -228,9 +228,9 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
 
      If the generator exits non-zero, emit a warning with the error output and continue — doc-regeneration failure is a soft error at this step (the reviewer's `R-DOCS-CURRENT` rule is the hard gate). If it exits zero, confirm `README.md` updated (note byte count).
 
-6. **Production-verify gate (MANDATORY when `/ship` is invoked standalone — per ADR-0037 D1).**
+6. **Production-verify gate (MANDATORY — per ADR-0037 D1).**
 
-   When running standalone: dispatch `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
+   Dispatch `qa-tester` in production-verify mode with `isolation: "worktree"` (ADR-0036):
 
    Input to pass:
    - The full PRD body (fetch via `gh issue view <PRD_NUMBER> --json body`)
@@ -308,7 +308,7 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
 
    **INVALID_INPUT from qa-tester:** surface the reason and STOP — do not loop.
 
-7. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, any forward-block summary, and (standalone) the production-verify proof. Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
+7. **Report back.** Print the PRD URL, slice URLs, merged/open implementation PR URLs, any forward-block summary, and the production-verify proof. Free-form narrative; not itself a canonical template per PRD #28 §6 OQ#2. End with the canonical GENERATOR trailer as a fenced block (schema per ADR-0005 D1c):
 
    ```
    RESULT: SUCCESS | STOPPED | INVALID_INPUT | BLOCKED
@@ -333,10 +333,10 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
 - [ADR-0035](../../../decisions/0035-worktree-isolation-parallel-dispatch.md) — D1 (superseded by ADR-0036 D1 for the batch-size condition; parallel-batch race origin of the isolation mechanism); D2 (isolation lives in orchestrator; implementer unchanged).
 - [ADR-0056](../../../decisions/0056-no-rule-without-a-check.md) — rule #23's mechanized-enforcement requirement; the format-vs-other classifier lives in the testable [`tools/ci-failure-kind.sh`](../../../tools/ci-failure-kind.sh) helper (regression-tested in [`tests/test_ci_failure_kind_1084.py`](../../../tests/test_ci_failure_kind_1084.py)) rather than inline SKILL.md prose, after a reviewer BLOCK (PR #1087 round 1) proved a naive `grep "CHECK 3"` misclassifies every CI failure as the format class.
 - [ADR-0077](../../../decisions/0077-ceremony-overhead-reduction.md) — D1 (R-LOC cap raised 300→600 LoC; slicer targets 3-5 slices/PRD); D2 (reviewer dispatch made concurrent with CI instead of strictly-serialized after it — supersedes this file's former pre-review CI gate; the #869 format-BLOCK-class protection relocates into [`reviewer.md`](../../agents/reviewer.md)'s own pre-merge gate, closing the same PRD #1075 criterion 6 with one fewer orchestrator-tracked round counter).
-- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer for standalone invocations), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode).
+- [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
-- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6 (standalone): [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
+- Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 
 ## Local vocabulary
 

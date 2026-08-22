@@ -13,12 +13,11 @@ Verifies:
    PR #267/slice #258 incident predates ADR-0077 and is preserved verbatim
    with a note, per CLAUDE.md rule #6 "git log is the changelog" spirit for
    agent-prompt history) rather than silently misdescribing the current cap.
-5. implementer.md, ship/SKILL.md, build/SKILL.md, README.template.md, and the
-   regenerated README.md state 600 in their respective LoC-cap references.
-6. The slicer-critic golden-set eval fixtures reflect the 600 cap.
-7. tools/gen_rules.py's rule_id conservation baseline was bumped to 82 and
+5. implementer.md, ship/SKILL.md, README.template.md, and the regenerated
+   README.md state 600 in their respective LoC-cap references.
+6. tools/gen_rules.py's rule_id conservation baseline was bumped to 82 and
    carries statements for the two new ADR-0077 rule_ids (PIP-020/021).
-8. decisions/0077-ceremony-overhead-reduction.md exists with gen_rules.py
+7. decisions/0077-ceremony-overhead-reduction.md exists with gen_rules.py
    -compatible frontmatter naming exactly PIP-020 and PIP-021.
 
 This is a docs/prompt-surface slice — the "test" is a set of precise,

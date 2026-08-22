@@ -320,7 +320,7 @@ gh pr diff <PR> --name-only | grep -E '^\.claude/agents/.*\.md$'
 
 **Literal pattern:** `R-TRAILER: <agent-file> trailer schema modified or dropped mandatory key(s) VERDICT/REASON/ROUND — per ADR-0054 D2 all three core keys are required in every critic trailer`.
 
-**Rationale:** ROUND-less or schema-drifted trailers silently break round-count recovery in the PRD #651 comparison collector (the PR #559 incident class). Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D2, every critic trailer MUST include `VERDICT`, `REASON`, `ROUND` as the first three keys. Exemption: non-critic agent files (e.g., `implementer.md`, `qa-tester.md`) that emit GENERATOR trailers (not CRITIC trailers) are exempt — check only critic agents: `reviewer.md`, `prd-critic.md`, `adr-critic.md`, `slicer-critic.md`, `codebase-critic.md`, `glossary-critic.md`, `backlog-critic.md`.
+**Rationale:** ROUND-less or schema-drifted trailers silently break round-count recovery in the PRD #651 comparison collector (the PR #559 incident class). Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D2, every critic trailer MUST include `VERDICT`, `REASON`, `ROUND` as the first three keys. Exemption: non-critic agent files (e.g., `implementer.md`, `qa-tester.md`) that emit GENERATOR trailers (not CRITIC trailers) are exempt — check only critic agents: `reviewer.md`, `prd-critic.md`, `adr-critic.md`, `slicer-critic.md`, `codebase-critic.md`, `backlog-critic.md`.
 
 ### R-RULE-CHECK — new CLAUDE.md rule without enforcement mechanism
 

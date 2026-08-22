@@ -160,12 +160,6 @@ ALLOWLIST = [
     ('.claude/agents/adr-critic.md', '0002', 1,
      'pedagogical example in rule body; fictional D1 for illustration only'),
 
-    # Pedagogical example in GC-AUTHORITY-RESOLVABLE rationale — illustrates
-    # what a bad authority citation looks like ("authors citing ADR-0007 D9
-    # when the actual section is D8"). ADR-0007 has no D9 (only D1-D7).
-    ('.claude/agents/glossary-critic.md', '0007', 9,
-     'pedagogical example in rationale; illustrates a bad-citation failure mode'),
-
     # ADR-0081's Propagation ledger names the adr-critic.md / "ADR-0002 D1"
     # allowlist entry above to classify a sibling grandfathered hit. It is a
     # meta-reference to that already-allowlisted FICTIONAL cite, not a live

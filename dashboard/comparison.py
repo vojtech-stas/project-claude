@@ -431,17 +431,6 @@ def _eval_trivial_lane(trail: dict) -> tuple[str, str]:
     return "not-exercised", "no trivial-lane PRs in this run"
 
 
-def _eval_glossarycritic_approve(trail: dict) -> tuple[str, str]:
-    """E-GLOSSARYCRITIC-APPROVE: glossary-critic APPROVE → glossary PR (conditional)."""
-    # Glossary PRs are not sub-issues of PRDs; cannot determine from PRD trail.
-    return "not-exercised", "glossary workflow is a side-workflow (not tracked in PRD trail)"
-
-
-def _eval_glossarypr_reviewer(trail: dict) -> tuple[str, str]:
-    """E-GLOSSARYPR-REVIEWER: glossary PR reviewed (conditional)."""
-    return "not-exercised", "glossary workflow is a side-workflow (not tracked in PRD trail)"
-
-
 def _eval_orch_captured(trail: dict) -> tuple[str, str]:
     """E-ORCH-CAPTURED: any agent created a captured-labeled issue (conditional)."""
     # Cannot determine from PRD trail alone (captured issues are separate from slices).
@@ -477,8 +466,6 @@ _EDGE_EVALUATORS: dict[str, callable] = {
     "E-REVIEWER-NEEDSHUMAN":    _eval_reviewer_needshuman,
     "E-TRIVIAL-LANE":           _eval_trivial_lane,
     # Side workflows (conditional; all not-exercised — not in PRD trail)
-    "E-GLOSSARYCRITIC-APPROVE": _eval_glossarycritic_approve,
-    "E-GLOSSARYPR-REVIEWER":    _eval_glossarypr_reviewer,
     "E-ORCH-CAPTURED":          _eval_orch_captured,
     "E-BACKLOGCRITIC-APPROVE":  _eval_backlogcritic_approve,
     "E-BACKLOGCRITIC-BLOCK":    _eval_backlogcritic_block,

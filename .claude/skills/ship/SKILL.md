@@ -310,7 +310,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 
 ## Local vocabulary
 
-Per [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) D1. Folded to CLAUDE.md by [`/glossary fold`](../glossary/SKILL.md) when entries pass the [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2 citation threshold and `glossary-critic` rubric.
+Per [ADR-0014](../../../decisions/0014-skill-local-vocabulary-and-auto-fold.md) D1. Entries that pass the [ADR-0012](../../../decisions/0012-glossary-consolidation-single-tier.md) D2 citation threshold are candidates for CLAUDE.md §4; promote them by hand in a normal reviewer-gated PR (the automated fold path was retired per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D2).
 
 - **pipeline metadata footer** — the one-line `> **Pipeline metadata** — Approved by prd-critic round <N>/3...` audit trailer that `/to-prd` appends to every posted PRD body so `/ship` and downstream critics can mechanically verify upstream APPROVE without re-running the loop.
   - *Scope:* (a) project jargon coined here

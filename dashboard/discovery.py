@@ -44,7 +44,6 @@ _KNOWN_CRITICS = {
     "prd-critic",
     "adr-critic",
     "slicer-critic",
-    "glossary-critic",
     "backlog-critic",
     "codebase-critic",
 }

@@ -102,14 +102,14 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 
 | Thing | Path | Summary |
 |---|---|---|
-| Skills, subagents, tools, key dirs | — | enumerated in `@.claude/generated/_repo-map.md` (generated). For behaviour, read the file itself — do not restate it here. |
+| Skills, subagents, tools, key dirs | — | enumerated in `@.claude/generated/_repo-map.md` (generated); read it for behaviour. Facts it truncates, restated here: qa-tester's browser route prefers live Claude-in-Chrome MCP when connected, else headless Playwright fallback (ADR-0074 D1-D5, ADR-0049 D3); codebase-critic's whole-repo mode (ADR-0051); `/ship` = grill → PRD → slices → implement → auto-merge → docs-regen → production-verify. |
 | Settings + Claude Code hooks | `.claude/settings.json`, `.claude/hooks/` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); canonical logger `log-tool-event.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | v2 JSONL workflow events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pipeline trace ledger | `.claude/logs/trace-v3.jsonl` (gitignored) | canonical v3 spans. `tools/trace.py` appends + queries (`path --pr <n>`); `dashboard/tracestore.py` folds a disposable SQLite read-model — refoldable from the log, never a second source of truth. Closed kind enum: an unknown kind hard-errors. [ADR-0075](decisions/0075-trace-core-fork-decisions.md) D2/D3 |
 | Guarded pipeline verbs | `tools/pipe/`, `tools/promote.sh` | the ONLY sanctioned path for mechanical transitions (`dispatch`, `pr-open`, `pr-merge`, `qa-verify`, `prd-close`, `record-green`): precondition check → side effect → atomic span; a refused transition exits non-zero and never half-succeeds. Raw `gh pr merge` is denied by hook. PIP-014..018 |
 | Two-tier promotion gate | `tools/promote.sh` | ff `main` to `develop` HEAD; requires RELEASE-READY `verdict="true"` AND the `.claude/PROMOTE_OK` human-ack sentinel (create it manually; the script removes it after success). [ADR-0070](decisions/0070-two-tier-autonomous-delivery.md) D2/D3 |
 | CI gate | `.github/workflows/ci.yml` → `tools/ci-checks.sh` | job name `ci` is the required status-check context on `develop`; run the script locally before pushing. Several checks delegate to the health registry — e.g. CHECK 22 runs RECORD-VS-GH, CHECK 23 the verdict-presence guard. [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
-| Health check registry | `python dashboard/health.py --check <id>` / `--list` | headless run of any registered check; exit 0 on PASS/WARN, 1 on FAIL. `ci-checks.sh` delegates several checks to it |
+| Health check registry | `python dashboard/health.py --check <id>` / `--list` | headless run of any registered check; exit 0 on PASS/WARN, 1 on FAIL. `ci-checks.sh` delegates several checks to it, per ADR-0064 D3 |
 | Pre-commit hooks | `.githooks/`, `.githooks/install.sh` | workflow enforcement; `core.hooksPath` must be `.githooks` |
 | Deploy-gap handshake | `tools/deploy-handshake.sh`, `tools/repair-topology.md` | compares the RUNNING hooks/settings against the DEPLOYED branch; mismatch, detached HEAD, or wrong `core.hooksPath` → loud banner + exit 1 |
 | Decisions (ADRs) | `decisions/NNNN-<slug>.md`; index `decisions/README.md` | immutable — supersede rather than edit. Consult the index before citing a D-ID (rule #18) |
@@ -117,7 +117,7 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog / captured | `gh issue list --label backlog` / `--label captured` | project board #2; `backlog-critic` filters `captured` → `backlog` |
 | Workflow dashboard | `dashboard/` | local visualizer; the Run-board is the ONLY tab, served strictly from recorded v3 spans, plus a thin health strip. [ADR-0078](decisions/0078-run-board-landing-view.md) D1 as amended by [ADR-0080](decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1 |
-| README | `README.template.md` → `dashboard/server.py --generate-readme` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001) |
+| README | `README.template.md` → `dashboard/server.py --generate-readme` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001, ADR-0034 D4/D7) |
 | Regression tests | `tests/`, `tests/quarantine.txt` | pytest, wired into CI; flaky tests quarantined within 24 h with a 30-day SLA. [ADR-0067](decisions/0067-regression-memory.md) |
 | Fresh-clone setup | `bootstrap.sh` | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 

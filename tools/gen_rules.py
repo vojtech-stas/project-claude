@@ -952,8 +952,20 @@ def generate(check_mode: bool = False) -> int:
     active_adrs = [a for a in adrs if not _is_superseded(a)]
 
     if not active_adrs:
-        print("gen_rules.py: no active ADRs with frontmatter found.", file=sys.stderr)
-        return 0
+        # An empty active-ADR set is never a legitimate no-op in this repo
+        # (baseline is RULE_IDS_BASELINE rule_ids across dozens of ADRs) — it
+        # is definitionally a broken checkout (missing/unreadable decisions/,
+        # or frontmatter that stopped parsing). Fail loud rather than report
+        # success while the entire generated-rule layer silently vanishes
+        # (#1301).
+        print(
+            "gen_rules.py: FAIL — zero active ADRs with frontmatter found; "
+            "this is treated as a broken checkout (missing/unreadable "
+            "decisions/, or frontmatter parse failure), not a valid no-op. "
+            "Refusing to leave stale generated output in place (#1301).",
+            file=sys.stderr,
+        )
+        return 1
 
     # Group by scope
     scopes: dict[str, list[dict]] = {}

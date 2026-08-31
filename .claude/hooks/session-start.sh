@@ -49,16 +49,18 @@ DIV="(fetch failed)"
 git fetch origin develop 2>/dev/null && DIV=$(git rev-list --count HEAD..origin/develop 2>/dev/null || echo "?")
 LOG=$(git log --oneline -5 2>/dev/null || echo "(no log)")
 
-# ---- hooks path warning -------------------------------------------------------
-HOOKS_WARN=""
-if command -v git >/dev/null 2>&1; then
-  HOOKS=$(git config --get core.hooksPath 2>/dev/null || echo "__unset__")
-  if [ "$HOOKS" != ".githooks" ]; then
-    HOOKS_WARN=$(printf "\n*** WARNING: git core.hooksPath is not '.githooks' (got: %s). Fix: run ./.githooks/install.sh ***\n" "$HOOKS")
-  fi
-fi
-
 # ---- deploy-gap handshake (PRD #1075 criterion 4 / slice #1079) --------------
+# NOTE (#1282 root-cause fix): this block is now the ONLY core.hooksPath
+# check in this script. A standalone "hooks path warning" block used to
+# live here too, bare-string-comparing `git config --get core.hooksPath`
+# against the literal ".githooks" -- the exact bug #1093 already fixed
+# in deploy-handshake.sh's own comparison below (path-identity via
+# `cd ... && pwd -P`, not string equality), but never ported to this
+# second call site. Since deploy-handshake.sh's hooksPath check already
+# runs as part of the handshake below and reports any GENUINE mismatch
+# via DEPLOY_WARN, the standalone block was a duplicate implementation of
+# the same invariant -- and the only one of the two still wrong. Deleting
+# it (one invariant, one implementation) rather than fixing it twice.
 # SPIDR-R choice (documented per the slice's own risk callout): this is the
 # highest-stakes slice in the PRD (a session-start hard block that could brick
 # every session bootstrap on a false positive, and this dispatch cannot
@@ -205,10 +207,10 @@ if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
 fi
 
 # ---- Build context string ---------------------------------------------------
-CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s%s\n" \
+CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
   "$BR" "$DIV" "$LOG" \
   "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" "$DASH_FRESH" \
-  "$HOOKS_WARN" "$JQ_WARN" "$GH_WARN" "$DEPLOY_WARN" \
+  "$JQ_WARN" "$GH_WARN" "$DEPLOY_WARN" \
   | head -c 6144 | head -n 60)
 
 # ---- Emit session_start event (PRD #876 consolidation) ----------------------

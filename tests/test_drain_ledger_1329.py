@@ -14,11 +14,14 @@ no-ledger WARN leg that also proves the ledger path is genuinely injectable.
 
 PRD §2 criterion 15's remaining FAIL legs (fix-queued parity, parked) are
 deliberately NOT here — the slicer-critic assigned them to the follow-up
-slices that ship the emitting protocols. The exceptions are the #1335 and
-#1339 regression legs below: they do not test the parked *protocol*, they pin
-that a malformed `remaining` — a list holding objects (#1335), or a value that
-is not a list at all (#1339) — reports a named FAIL instead of crashing the
-row or passing it vacuously.
+slices that ship the emitting protocols. The exceptions are the malformed-shape
+regression legs below: they do not test the parked *protocol*, they pin that a
+value violating the documented record schema reports a named FAIL instead of
+crashing the row or passing it vacuously. Three of them cover `remaining` — a
+list holding objects (#1335), or a value that is not a list at all (#1339). The
+fourth walks that same class one layer deeper, over every required field the
+row consumes as a hash key: `kind`, `item` on all six kinds that carry it, and
+`escalated`'s `label`.
 
 Rule #21 / CRI-004: every ledger in this file is written under pytest's
 `tmp_path`, never into `.claude/logs/drain/`. That is the reason
@@ -161,6 +164,110 @@ def test_drain_ledger_fails_on_bare_string_remaining_field(tmp_path):
     assert result["result"] == "FAIL", result["detail"]
     assert "non-list remaining field" in result["detail"]
     assert "issue:1338" in result["detail"]
+
+
+def _identity_cases() -> list:
+    """Every malformed-identity shape the row must NAME rather than crash on.
+
+    Each entry is (label, records, expected-detail fragments). The class is
+    "an unvalidated JSON value reaches a hash-requiring operation": a set
+    `add`/`discard`, a `in`-test against a set, or a dict-key assignment. A
+    dict- or list-valued field there raises `TypeError: unhashable type`,
+    which replaces the row's verdict with a traceback and reds the CI gate
+    that delegates to it — the #1335/#1339 defect, one layer deeper.
+
+    The table walks EVERY kind that carries `item`, plus the two other
+    identity fields the row consumes the same way: the universal `kind`
+    (looked up in the closed set) and `escalated`'s `label` (looked up in the
+    allowed-label set). Fields the row only checks for presence — `open_prs`,
+    `bucket`, `lane`, `pr` — are deliberately absent: they never reach such an
+    operation, so failing them would be an invariant nothing owes (VER-009).
+    """
+    def base() -> list:
+        return _valid_run()
+
+    def with_record(rec, index=None) -> list:
+        records = base()
+        records.insert(len(records) - 1 if index is None else index, rec)
+        return records
+
+    def mutated(index, field, value) -> list:
+        records = base()
+        records[index] = dict(records[index], **{field: value})
+        return records
+
+    ident = ("must be a non-empty string",)
+    return [
+        # The universal field, hashed against the closed kind set.
+        ("kind is a list",
+         with_record({"kind": ["triaged"], "ts": "2026-09-02T10:00:01Z"}, 1),
+         ("outside the closed set",)),
+        # Every kind that carries `item`.
+        ("triaged.item is an object",
+         mutated(1, "item", {"n": 1337}), ident + ("`item`",)),
+        ("triaged.item is an empty string",
+         mutated(1, "item", ""), ident + ("`item`",)),
+        ("item_start.item is a list",
+         mutated(2, "item", ["issue:1337"]), ident + ("`item`",)),
+        ("item_done.item is an object",
+         mutated(3, "item", {"n": 1337}), ident + ("`item`",)),
+        ("escalated.item is an object",
+         with_record({"kind": "escalated", "ts": "2026-09-02T10:10:00Z",
+                      "item": {"n": 1337}, "label": "needs-human-check",
+                      "label_applied": True}),
+         ident + ("`item`",)),
+        ("escalated.label is an object",
+         with_record({"kind": "escalated", "ts": "2026-09-02T10:10:00Z",
+                      "item": "issue:1341", "label": {"name": "needs-human"},
+                      "label_applied": True}),
+         ident + ("`label`",)),
+        ("fix_queued.item is an object",
+         with_record({"kind": "fix_queued", "ts": "2026-09-02T10:10:00Z",
+                      "item": {"handle": "fix:x"}}),
+         ident + ("`item`",)),
+        ("fixed_in_run.item is a list",
+         with_record({"kind": "fixed_in_run", "ts": "2026-09-02T10:10:00Z",
+                      "item": ["fix:x"], "pr": 1342}),
+         ident + ("`item`",)),
+    ]
+
+
+def test_drain_ledger_names_malformed_identity_fields(tmp_path):
+    """FAIL legs: an unhashable identity field is a named FAIL, not a crash.
+
+    `check_drain_ledger` fed `rec.get("item")` straight into `set.add`,
+    `set.discard`, a set membership test and a dict-key assignment, and did
+    the same with `kind` and `escalated`'s `label`. A drain writer emitting a
+    structured value in any of those positions therefore did not get a
+    verdict — it got `TypeError: unhashable type`, an empty stdout and a red
+    CI gate with nothing naming the offending record.
+
+    A guard states its observation instead of crashing (ADR-0083 D5 /
+    VER-009), so each shape below owes the same named schema FAIL the
+    malformed-`remaining` legs above established. Every case is collected
+    rather than asserted in place: before the guard, the first one aborts the
+    loop, and the report should list the whole class, not its first member.
+    """
+    problems = []
+    for label, records, fragments in _identity_cases():
+        case_dir = tmp_path / label.replace(" ", "-").replace(".", "-")
+        try:
+            _write_ledger(case_dir, "drain-test-1.jsonl", records)
+            result = health.check_drain_ledger(ledger_dir=str(case_dir))
+        except Exception as exc:   # noqa: BLE001 — a crash IS the finding
+            problems.append(f"{label}: crashed ({type(exc).__name__}: {exc})")
+            continue
+        if result["result"] != "FAIL":
+            problems.append(
+                f"{label}: {result['result']} — {result['detail']}")
+            continue
+        for fragment in fragments:
+            if fragment not in result["detail"]:
+                problems.append(
+                    f"{label}: FAIL detail lacks {fragment!r} — "
+                    f"{result['detail']}")
+
+    assert not problems, "; ".join(problems)
 
 
 def test_drain_ledger_warns_when_no_ledger_present(tmp_path):

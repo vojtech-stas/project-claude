@@ -22,6 +22,12 @@ protocol that the check rejects would be a defect in the pair, and without a
 PASS control every FAIL assertion here is satisfied by a row that FAILs on
 everything.
 
+The resume-drop leg pins the other half of that pairing: D9 step 3 tells a
+resumed run to close a dropped item with `item_done`, and the row's
+concurrency condition is what makes that instruction load-bearing rather than
+decorative — parked-open `item_start` records that are never closed stack on
+top of the resumed run's fresh starts.
+
 The DRAIN-LEDGER condition set is NOT extended by this slice: ADR-0085 D6
 enumerates what the ledger owes, both conditions already exist in
 `dashboard/health.py`, and a check may only FAIL a subject on an invariant
@@ -62,6 +68,7 @@ def _prefix() -> list:
 
 
 def _check(tmp_path: Path, records: list) -> dict:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "drain-park-1.jsonl"
     path.write_text(
         "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
@@ -146,6 +153,61 @@ def test_drain_ledger_passes_on_park_then_resume_then_land(tmp_path):
     result = _check(tmp_path, records)
 
     assert result["result"] == "PASS", result["detail"]
+
+
+def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
+    """PASS leg: D9 step 3's drop is closed with `item_done`.
+
+    A park freezes the ledger with its in-flight items' `item_start` records
+    still open. When the resumed run finds one of those items already done in
+    live state it drops it rather than re-running it — but dropping removes
+    the item from `remaining`, not from the *flight set* the concurrency
+    condition counts. Without the closing `item_done`, three parked-open items
+    plus three fresh starts read as six concurrently open `item_start`
+    records, and the row FAILs a run that never had more than three in flight.
+
+    The negative control below is what makes this leg load-bearing: it shows
+    the FAIL is real, so the PASS is D9's sentence doing work rather than a
+    row that blesses everything.
+    """
+    items = ["issue:1400", "issue:1401", "issue:1402"]
+    later = ["issue:1410", "issue:1411", "issue:1412"]
+    triaged = [
+        {"kind": "triaged", "ts": "2026-09-02T14:00:01Z",
+         "item": it, "bucket": "autonomous", "lane": n}
+        for n, it in enumerate(items + later, start=1)
+    ]
+    parked_run = (
+        [{"kind": "run_start", "ts": "2026-09-02T14:00:00Z",
+          "run_id": "drain-park-2",
+          "counts": {"prd": 1, "slice": 4, "backlog": 67, "captured": 100},
+          "open_prs": 1}]
+        + triaged
+        + [{"kind": "item_start", "ts": "2026-09-02T14:00:02Z", "item": it}
+           for it in items]
+        + [{"kind": "parked", "ts": "2026-09-02T14:30:00Z",
+            "remaining": items + later},
+           {"kind": "resumed", "ts": "2026-09-03T09:00:00Z"}]
+    )
+    fresh_starts = [
+        {"kind": "item_start", "ts": "2026-09-03T09:10:00Z", "item": it}
+        for it in later
+    ]
+
+    # Negative control: the drops leave their item_start records open.
+    unclosed = _check(tmp_path / "unclosed", parked_run + fresh_starts)
+    assert unclosed["result"] == "FAIL", unclosed["detail"]
+    assert "concurrently open" in unclosed["detail"]
+
+    # D9 step 3: each dropped item is closed with `item_done` first.
+    drops = [
+        {"kind": "item_done", "ts": "2026-09-03T09:05:00Z", "item": it}
+        for it in items
+    ]
+    result = _check(tmp_path / "closed", parked_run + drops + fresh_starts)
+
+    assert result["result"] == "PASS", result["detail"]
+    assert "peak concurrency 3/3" in result["detail"]
 
 
 def test_drain_ledger_fails_when_resumed_run_ends_with_the_fix_unlanded(

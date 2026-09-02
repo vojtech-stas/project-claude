@@ -8,6 +8,9 @@
 # Layered behavior (in order):
 #  1. Read full stdin once into variable (no head -c cap — ADR-0057 D1c).
 #  2. Emit attempt beacon — pure bash, before any parsing (ADR-0057 D1a).
+#  2b. Arm the single-terminal EXIT trap (ADR-0083 D1/D2): every one of the seven
+#      exit sites below ends in exactly one terminal beacon; ASK/DENY are
+#      completions (`status:"ok"` + additive `outcome`), never forged crashes.
 #  3. Subagent context skip (CLAUDE_AGENT_TYPE set) — exit 0; subagents ARE the PR pipeline.
 #  4. Parse stdin via python3: extract tool_input.file_path + session_id.
 #     On parse failure: emit ERROR beacon w/ session_id, exit 0 (ADR-0057 D1b/D2).
@@ -42,9 +45,31 @@ printf '{"hook":"pre-tool-edit","status":"attempt","ts":"%s"}\n' \
   "$(date -u -Iseconds 2>/dev/null)" \
   >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
 
+# Step 2b: terminal-beacon contract (ADR-0083 D1/D2).
+# This script has seven exit sites. Rather than bolting an emit onto each one —
+# which is how sites go silent again the next time one is added — a single EXIT
+# trap covers all of them, guarded so exactly one terminal is ever written.
+# ADR-0083 D2: `status` is the closed lifecycle set {attempt, ok, ERROR}. A
+# deliberate policy decision (ASK/DENY) is a COMPLETION, not a crash, so it
+# exits `status:"ok"` and records the decision additively in `outcome`.
+_TERMINAL_EMITTED=0
+_OUTCOME=""
+
+_emit_terminal_beacon() {
+  [ "$_TERMINAL_EMITTED" = "1" ] && return 0
+  _TERMINAL_EMITTED=1
+  local extra=""
+  [ -n "$_OUTCOME" ] && extra=",\"outcome\":\"$_OUTCOME\""
+  printf '{"hook":"pre-tool-edit","status":"ok","ts":"%s","session_id":"%s"%s}\n' \
+    "$(date -u -Iseconds 2>/dev/null)" "${_SID:-}" "$extra" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+}
+trap _emit_terminal_beacon EXIT
+
 REASON='Main-agent write to tracked file — CLAUDE.md rule #10 says flow through PR pipeline. Confirm if this is an I3 trivial-lane edit (≤10 LoC, `trivial` label, branch `hotfix/<issue#>-…`); cancel and use /to-prd or /ship otherwise.'
 
 emit_ask() {
+  _OUTCOME="ask"
   if command -v jq >/dev/null 2>&1; then
     jq -cn --arg r "$REASON" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: $r}}'
   else
@@ -57,6 +82,7 @@ emit_ask() {
 # ADR-0028 D2: spec-gate denies tracked-file edits when branch lacks an in-flight PRD/slice issue.
 emit_deny() {
   local reason="$1"
+  _OUTCOME="deny"
   if command -v jq >/dev/null 2>&1; then
     jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
   else
@@ -102,6 +128,9 @@ fi
 if [ "$_PY_OK" != "1" ]; then
   # ADR-0057 D1b: parser failure → ERROR beacon with session_id, then fail-open.
   _ERR_MSG=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','parse-failed'))" 2>/dev/null || echo "parse-failed")
+  # This IS the terminal for this path — claim it so the EXIT trap does not
+  # append a second one (ADR-0083 D1: exactly one terminal per fire).
+  _TERMINAL_EMITTED=1
   printf '{"hook":"pre-tool-edit","status":"ERROR","ts":"%s","session_id":"%s","reason":"%s"}\n' \
     "$(date -u -Iseconds 2>/dev/null)" "$_SID" "$_ERR_MSG" \
     >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true

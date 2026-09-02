@@ -60,5 +60,5 @@ When every needs-decision fork from the opening triage has an answer, close the 
 
 1. **Restate the triage table** (just-do vs needs-decision, unchanged from the opening step, so the reader has the full queue in one place).
 2. **List every fork-decision** made during the session, keyed by its stable `Q<n>` number, with the chosen option and the one-line reason.
-3. **Frame it as ready to feed an autonomous `/goal`-style build run** — the just-do items plus the now-decided needs-decision items are both actionable; the summary is the input an autonomous run would consume.
+3. **Frame it as ready to feed an autonomous `/ship` run** — the just-do items plus the now-decided needs-decision items are both actionable; the summary is the input an autonomous run consumes. When the settled items are a queue rather than one feature, name the real entry point: `/ship`'s **Queue-drain entry mode** ([ADR-0085](../../../decisions/0085-queue-drain-mode.md) D1), whose "drain plan" sub-form replays this triage against the live queue before anything is dispatched.
 4. **Do NOT auto-launch the build.** The operator reviews the handoff summary and decides when (and whether) to kick off the run — that review checkpoint stays with the operator, it is not automated away by this skill.

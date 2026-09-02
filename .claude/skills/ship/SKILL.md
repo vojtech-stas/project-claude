@@ -16,7 +16,7 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 
 ## Conduct
 
-**Run-to-done.** When multiple goals or PRDs are queued — either explicitly by the user ("ship everything in the backlog") or by the run's own decomposition (a multi-slice PRD) — execute them consecutively to completion (merged + production-verified + closed) without pausing between goals. One wrap-up report at the end covers all goals. Stops mid-run are reserved exclusively for:
+**Run-to-done.** When multiple goals or PRDs are queued — by the run's own decomposition (a multi-slice PRD), or by the user naming several features in one invocation — execute them consecutively to completion (merged + production-verified + closed) without pausing between goals. One wrap-up report at the end covers all goals. A request to work the *whole open queue* ("ship everything in the backlog", "drain the queue") is no longer a loose reading of this paragraph: it is a distinct entry mode with its own assembly, triage, escalation and ledger obligations — see **Queue-drain entry mode** below, which owns that case entirely. Run-to-done is the semantics both modes share; the drain adds what run-to-done alone never specified (which items are the run's, which need the operator, and how the run survives being killed). Stops mid-run are reserved exclusively for:
 - Destructive or irreversible operations (branch deletion, ref rewrites, force-push) — confirm with the user before proceeding.
 - Genuine user-only scope forks — when a design decision cannot be resolved from the grilled context and a wrong choice would require rework; name the specific fork and stop only for that decision.
 - Round-3 strict-stops (rule #19 / I5) — a `needs-human` escalation after three BLOCK rounds; this overrides the run-to-done drive unconditionally.
@@ -27,6 +27,85 @@ Full role synthesis (chain rationale, forward-block semantics, terminal-state co
 3. **Re-decompose**: if the blocked path is a design dead-end, re-run the slicer on the affected PRD with updated context.
 
 In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change as a `captured`-labeled issue) before continuing. Stopping without rerouting is a last resort, not a first response.
+
+## Queue-drain entry mode
+
+Per [ADR-0085](../../../decisions/0085-queue-drain-mode.md). This is an **entry mode on `/ship`**, not a second orchestrator ([ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4): every stage below is the ordinary pipeline, driven over a whole queue instead of one feature. Plain `/ship <feature>` is unaffected when no trigger is present.
+
+### D1. Trigger detection and sub-forms
+
+Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship drain"**, **"deploy all open PRDs"** — or an unambiguous paraphrase of them. Two bounded sub-forms:
+
+- **Plan-only** ("drain plan") — assemble, triage, build lanes, write the ledger, then **stop**. Zero dispatches, zero GitHub mutations: no labels applied, no issues created, no comments posted, no PRs touched. The cheap real-data inspection surface; its zero-mutation property is independently witnessed by `trace-v3.jsonl` gaining no new `dispatch` spans across the run window.
+- **Bounded** ("drain N item(s)") — the full lifecycle, limited to the first N queue items in lane order. The smoke-test form; `N=1` is the walking-skeleton vehicle.
+
+Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
+
+### D2. Queue assembly
+
+Re-count the queue **live at every run start** — never carry a figure over from a previous run or from a document. Assemble from open `prd`-, `slice`-, `backlog`- and `captured`-labeled issues plus open **non-draft** PRs. Write the `run_start` record with the resulting snapshot before anything else happens; that record is what makes the run's own claims about its queue checkable afterwards.
+
+### D3. Triage — three buckets, one litmus
+
+Classify every queue item by the grill litmus: *would a reasonable senior engineer need to ask the owner before doing this?*
+
+| Bucket | Meaning | Action |
+|---|---|---|
+| **autonomous** | the default — the answer is no | proceeds through the pipeline unattended |
+| **operator-owed** | a genuine design fork, or a destructive/irreversible call | apply `needs-human-check`, record it, **keep going** |
+| **class-ack** | a coherent bulk-closure class (e.g. obsolete-by-supersession captures) | ONE class-level escalation on the same surface — never per-item asks, never a unilateral class closure |
+
+Each item gets one `triaged` record naming its bucket and carrying its **lane** as a field. There is no `lane` record kind — the kind set is closed.
+
+Escalations are titled with a **`Drain triage:`** prefix so the `needs-human-check` queue, which also holds QA residuals ([ADR-0040](../../../decisions/0040-qa-human-residual-model.md) D1/D2), stays sortable for the operator.
+
+### D4. Escalation is label-and-continue, on a two-label split
+
+- **At triage** → `needs-human-check`. Deliberately NOT `needs-human`: [ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D2 condition (e) makes RELEASE-READY require zero open `needs-human` items, so parking ordinary design forks there would freeze `main` promotion for the whole drain.
+- **At a round-3 critic BLOCK** → `needs-human` **and** a summary comment on the item's parent context (the parent PRD issue, or the item itself when parentless). This is the I5 strict-stop ([ADR-0048](../../../decisions/0048-critic-loop-r3-policy-and-complete-class-revision.md) D1); it holds the promotion gate on purpose, and it stops **that item only** — unrelated lanes continue.
+
+Both write an `escalated` record carrying `label` and `label_applied: true` **at the moment the label is applied** — that recorded evidence, not a later GitHub query, is what the DRAIN-LEDGER row checks. **The run never blocks on a human answer**, so the mode holds with or without a live operator.
+
+### D5. Per-item routing
+
+- **slice** → implement it through the existing stage 4/5 (implementer → reviewer → merge) exactly as a normal run does.
+- **backlog** → the standard PRD pipeline, one feature-sized deliverable per PRD (PIP-002). Related items combine into one PRD only when they are genuinely fragments of one feature; bundling unrelated items is a smell `prd-critic` gates. Slices are minted **only** through `/to-issues` (rule #16).
+- **captured** → the captured→backlog autopilot FIRST ([ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2/D3): run `backlog-critic` on it; APPROVE → it proceeds as backlog work; **BLOCK → it stays captured and undrained**, at most folded into a class-ack. Never implement a BLOCKed capture.
+- **open PR** → carry it to a terminal state through the guarded verbs.
+
+### D6. Lanes and concurrency
+
+Predict file overlap coarsely from the paths named in issue bodies and titles. Overlapping items **serialize into one lane**; independent lanes run in parallel in isolated worktrees (I4a / [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) D1). **Unknown overlap serializes** — a wrong independence guess costs a merge conflict; a wrong serialization guess costs only time. **At most 3 items are in flight concurrently** (open `item_start` records minus their `item_done`); the DRAIN-LEDGER row FAILs a ledger that exceeds it. Merges stay serialized through the PR gate ([ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D2). Pace GitHub mutations across the run.
+
+### D7. Fix-in-run
+
+A discovery made mid-run whose remedy fits the trivial lane (I3 — definition unchanged) is **appended to this run's queue**, not filed and forgotten: append `fix_queued`, land it as its own `hotfix/*` PR, append `fixed_in_run` with the merged PR. If the run reaches its terminal record with the item unlanded, capture it **then** and record the issue in a `captured_ref` — since the ledger is append-only, that means appending a second `fix_queued` record for the same item carrying the ref. Discoveries too big for the trivial lane capture as before; workflow mistakes still owe a root-cause capture (rule #13); code-defect fixes keep the regression rider ([ADR-0067](../../../decisions/0067-regression-memory.md) D2/D3).
+
+### D8. Ledger write protocol
+
+Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved against the **git-common-dir root** so every worktree shares one ledger ([ADR-0075](../../../decisions/0075-trace-core-fork-decisions.md) D2). The kind set is **closed** — adding one requires a superseding ADR:
+
+| Kind | Required fields beyond `kind` | Written when |
+|---|---|---|
+| `run_start` | `counts` (`prd`/`slice`/`backlog`/`captured`), `open_prs` | first, before any other action |
+| `triaged` | `item`, `bucket`, `lane` | once per queue item |
+| `item_start` / `item_done` | `item` | item enters / leaves flight |
+| `escalated` | `item`, `label`, `label_applied` | at the moment the label is applied |
+| `fix_queued` | `item` (+ `captured_ref` when deferred) | trivial-lane discovery queued |
+| `fixed_in_run` | `item`, `pr` | its hotfix PR merges |
+| `parked` | `remaining` (non-empty, in resume order) | quota cut or operator stop |
+| `resumed` | — | a later session picks the run up |
+| `run_end` | — | queue exhausted or bound reached |
+
+Every `item_start` MUST follow a `triaged` record for that item. This ledger is **not** new trace-v3 kinds: `tools/trace.py`'s enum (PIP-015) and the Run-board contract (PIP-022) are untouched, which is what leaves trace-v3 free to act as the plan-only form's independent dispatch witness.
+
+**Park/resume.** On a quota cut or an operator stop, write `parked` naming every remaining item **in resume order**, including every `fix_queued` still unlanded — an empty list, or a fix that escapes through the park path, is a DRAIN-LEDGER FAIL. A resumed session reads the ledger rather than reconstructing intent from memory, then appends `resumed`.
+
+**Self-check.** After `run_end` (or `parked`), run `python dashboard/health.py --check DRAIN-LEDGER`; it validates the newest ledger offline and prints `PASS: DRAIN-LEDGER — …`. Report its verdict in the wrap-up.
+
+### D9. Invariants the drain never overrides
+
+No triage verdict relaxes any of these: the drain **never** creates `.claude/PROMOTE_OK` ([ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D4 — guardrail promotions wait for the human); a round-3 BLOCK strict-stops that item; destructive or irreversible operations confirm with the operator first; every dispatch passes `isolation: "worktree"` and a result without `worktreePath` is a dispatch failure ([ADR-0058](../../../decisions/0058-worktree-isolation-as-asserted-interface.md) D1/D2); slice issues are created only through the slicer flow.
 
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 

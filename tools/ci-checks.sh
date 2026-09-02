@@ -1095,6 +1095,44 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CHECK 24: queue-drain mode enforcement (ADR-0085 D6 / PRD #1326 §2 criteria
+# 21-22, slice #1329). Two legs:
+#   (a) DRAIN-LEDGER delegation — health-registry form, identical in shape to
+#       CHECK 22/RECORD-VS-GH. Deliberately NOT a `grep DRAIN tools/ci-checks.sh`
+#       self-match (prd-critic recommendation 7: a check whose only assertion is
+#       its own banner text is self-satisfying); this binds the criterion to the
+#       row's BEHAVIOUR. The row is offline-decidable and WARNs (exit 0) when no
+#       ledger exists, so a fresh checkout passes honestly rather than by luck.
+#   (b) grill-me `/goal`-absence — the handoff summary must name the real
+#       drain entry mode, not the aspirational "/goal-style" placeholder that
+#       described a skill which was never built.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 24: queue-drain mode (DRAIN-LEDGER delegation + /goal absence) ---"
+if ! command -v python3 > /dev/null 2>&1 || [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 24a — python3 or dashboard/health.py not available (soft-degrade)"
+else
+    CHECK24_OUTPUT=$(python3 dashboard/health.py --check DRAIN-LEDGER 2>&1)
+    CHECK24_EXIT=$?
+    if [ "$CHECK24_EXIT" -eq 0 ]; then
+        pass "CHECK 24a (DRAIN-LEDGER): $CHECK24_OUTPUT"
+    else
+        fail "CHECK 24a (DRAIN-LEDGER): $CHECK24_OUTPUT"
+    fi
+fi
+
+GRILL_SKILL=".claude/skills/grill-me/SKILL.md"
+if [ ! -f "$GRILL_SKILL" ]; then
+    fail "CHECK 24b: $GRILL_SKILL not found"
+else
+    GOAL_REFS=$(grep -c '/goal' "$GRILL_SKILL" || true)
+    if [ "$GOAL_REFS" -eq 0 ]; then
+        pass "CHECK 24b: grill-me handoff carries no '/goal' placeholder (count=0)"
+    else
+        fail "CHECK 24b: grill-me SKILL.md still references '/goal' on $GOAL_REFS line(s) — name the /ship queue-drain entry mode instead (ADR-0085 D6)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

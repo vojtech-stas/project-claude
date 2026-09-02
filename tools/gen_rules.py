@@ -142,9 +142,11 @@ SCOPE_PATHS: dict[str, str] = {
 # ADR-0083's supersession of ADR-0057 D2 is likewise per-decision: ADR-0057
 # keeps `superseded_by: []`, so HOK-008/HOK-009 stay in the active set and the
 # ADR-0083 delta is +2 (VER-009, VER-010) with nothing removed.
+# ADR-0085 (slice #1329) adds 4 new PIP-* ids (PIP-026..PIP-029) and has
+# `supersedes: []`, so nothing leaves the active set: the delta is +4.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(25) + REG(3) + SLI(5) + VER(10) = 88
-RULE_IDS_BASELINE: int = 88
+#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(5) + VER(10) = 92
+RULE_IDS_BASELINE: int = 92
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -480,6 +482,49 @@ _RULE_STATEMENTS: dict[str, str] = {
         "(its three non-duplicated steps fold into `/ship`, the single "
         "lifecycle orchestrator); each returns only via a new ADR that "
         "re-argues its case (ADR-0081 D1/D2/D3/D4)."
+    ),
+    # ADR-0085: /ship queue-drain entry mode (whole-queue autonomous runs)
+    "PIP-026": (
+        "`/ship`'s queue-drain entry mode is the sole whole-queue drain path: "
+        "the queue assembles from open `prd`/`slice`/`backlog`/`captured` "
+        "issues plus open non-draft PRs; captured items enter execution only "
+        "via the captured→backlog autopilot (ADR-0008 D2, the sweep ADR-0008 "
+        "D3 anticipates) and backlog items ride the standard PRD→slicer flow "
+        "(rule #16); triage uses the reasonable-engineer litmus with "
+        "label-and-continue escalation onto `needs-human-check` — never "
+        "`needs-human`, which stays the round-3/I5 strict-stop surface that "
+        "gates ADR-0070 D2 promotion — and the run never blocks on a human "
+        "answer; hard invariants (no agent-created PROMOTE_OK per ADR-0070 "
+        "D4, round-3 strict-stop, destructive-op confirmation, worktree "
+        "isolation, slicer-only slice creation) are absolute and not "
+        "triage-overridable (ADR-0085 D1/D2)."
+    ),
+    "PIP-027": (
+        "Drain parallelism lifts the slice model to queue level: file-overlap "
+        "lanes, independent lanes parallel in isolated worktrees, at most 3 "
+        "items concurrently in flight (enforced by DRAIN-LEDGER), unknown "
+        "overlap serializes, merges serialize through the PR gate per "
+        "ADR-0062 D2 (ADR-0085 D3)."
+    ),
+    "PIP-028": (
+        "Every drain run appends to `.claude/logs/drain/<run-id>.jsonl` at the "
+        "git-common-dir root with the closed kind set {run_start, triaged, "
+        "item_start, item_done, escalated, fix_queued, fixed_in_run, parked, "
+        "resumed, run_end} and lane assignment as a field on `triaged`; "
+        "trace-v3's enum is untouched; a park writes a `parked` record naming "
+        "remaining items in resume order, including every still-unlanded "
+        "`fix_queued`; the DRAIN-LEDGER health row enforces schema, kinds, "
+        "recorded-escalation completeness, triage-precedence, the concurrency "
+        "bound, and fix-queued parity — evaluated from the ledger alone, never "
+        "from live GitHub state (ADR-0085 D4/D6)."
+    ),
+    "PIP-029": (
+        "Trivial-lane discoveries land inside the drain run as their own "
+        "`hotfix/*` PRs recorded `fixed_in_run`; a drain run may not reach its "
+        "terminal record with a `fix_queued` item that lacks a `fixed_in_run`, "
+        "a `captured_ref`, or (on a park) a place in the remaining-items list; "
+        "I3's definition, rule #13 root-cause captures, and the ADR-0067 "
+        "regression rider are unchanged (ADR-0085 D5)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

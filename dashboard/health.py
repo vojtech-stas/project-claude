@@ -6691,6 +6691,18 @@ _DRAIN_ESCALATION_LABELS = frozenset({"needs-human-check", "needs-human"})
 _DRAIN_CONCURRENCY_CAP = 3
 
 
+def _drain_repr(value: object, limit: int = 60) -> str:
+    """Bounded `repr` of a malformed ledger value for a FAIL message.
+
+    Naming the offending shape IS the observation (VER-009); pasting all of
+    an arbitrarily large one crowds the four other findings the row's detail
+    string carries.  Same restraint the non-string-entry guard already shows
+    by quoting only `bad[0]` — applied to the value's size, not just count.
+    """
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit] + "…(truncated)"
+
+
 def _drain_ledger_dir(explicit: str | None = None) -> Path:
     """Resolve the drain-ledger directory.
 
@@ -6797,8 +6809,8 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
         # against the closed set and raise instead of being reported.
         if not isinstance(kind, str) or kind not in _DRAIN_KINDS:
             failures.append(
-                f"line {lineno}: record kind {kind!r} is outside the closed "
-                "set (ADR-0085 D4)"
+                f"line {lineno}: record kind {_drain_repr(kind)} is outside "
+                "the closed set (ADR-0085 D4)"
             )
             continue
         missing = [f for f in _DRAIN_REQUIRED_FIELDS[kind] if f not in rec]
@@ -6815,7 +6827,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
         if bad_ids:
             failures.append(
                 f"line {lineno}: {kind} record identity field(s) "
-                + ", ".join(f"`{f}` = {rec[f]!r}" for f in bad_ids)
+                + ", ".join(f"`{f}` = {_drain_repr(rec[f])}" for f in bad_ids)
                 + " must be a non-empty string"
             )
             continue
@@ -6898,14 +6910,19 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 if bad:
                     failures.append(
                         f"parked record carries non-string remaining entries "
-                        f"(first: {bad[0]!r}); remaining must hold item ids"
+                        f"(first: {_drain_repr(bad[0])}); must hold item ids"
                     )
                 remaining = [e for e in remaining if isinstance(e, str)]
             elif kind == "parked" and remaining:
                 failures.append(
                     f"parked record carries a non-list remaining field "
-                    f"({remaining!r}); remaining must hold item ids"
+                    f"({_drain_repr(remaining)}); remaining must hold item ids"
                 )
+                # One defect, one finding: the parity comparison below would
+                # run against an empty set and convict every queued fix on a
+                # value this record never made readable (VER-009).
+                terminal_seen = True
+                continue
             remaining_set = set(remaining) if isinstance(remaining, list) else set()
             for fq_item, has_ref in fix_queued.items():
                 if fq_item in fixed_items or has_ref or fq_item in remaining_set:

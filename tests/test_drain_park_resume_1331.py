@@ -190,8 +190,8 @@ def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
     live state it drops it rather than re-running it — but dropping removes
     the item from `remaining`, not from the *flight set* the concurrency
     condition counts. Without the closing `item_done`, three parked-open items
-    plus three fresh starts read as six concurrently open `item_start`
-    records, and the row FAILs a run that never had more than three in flight.
+    plus three fresh starts read as six distinct items concurrently in
+    flight, and the row FAILs a run that never had more than three.
 
     The negative control below is what makes this leg load-bearing: it shows
     the FAIL is real, so the PASS is QD9's sentence doing work rather than a
@@ -224,7 +224,7 @@ def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
     # Negative control: the drops leave their item_start records open.
     unclosed = _check(tmp_path / "unclosed", parked_run + fresh_starts)
     assert unclosed["result"] == "FAIL", unclosed["detail"]
-    assert "concurrently open" in unclosed["detail"]
+    assert "concurrently in flight" in unclosed["detail"]
 
     # QD9 step 3: each dropped item is closed with `item_done` first.
     drops = [

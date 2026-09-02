@@ -32,7 +32,7 @@ In all three cases, capture the root cause per rule #13 (symptom + root cause + 
 
 Per [ADR-0085](../../../decisions/0085-queue-drain-mode.md). This is an **entry mode on `/ship`**, not a second orchestrator ([ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4): every stage below is the ordinary pipeline, driven over a whole queue instead of one feature. Plain `/ship <feature>` is unaffected when no trigger is present.
 
-### D1. Trigger detection and sub-forms
+### QD1. Trigger detection and sub-forms
 
 Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship drain"**, **"deploy all open PRDs"** — or an unambiguous paraphrase of them. Two bounded sub-forms:
 
@@ -41,11 +41,11 @@ Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship
 
 Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
 
-### D2. Queue assembly
+### QD2. Queue assembly
 
 Re-count the queue **live at every run start** — never carry a figure over from a previous run or from a document. Assemble from open `prd`-, `slice`-, `backlog`- and `captured`-labeled issues plus open **non-draft** PRs. Write the `run_start` record with the resulting snapshot before anything else happens; that record is what makes the run's own claims about its queue checkable afterwards.
 
-### D3. Triage — three buckets, one litmus
+### QD3. Triage — three buckets, one litmus
 
 Classify every queue item by the grill litmus: *would a reasonable senior engineer need to ask the owner before doing this?*
 
@@ -59,26 +59,26 @@ Each item gets one `triaged` record naming its bucket and carrying its **lane** 
 
 Escalations are titled with a **`Drain triage:`** prefix so the `needs-human-check` queue, which also holds QA residuals ([ADR-0040](../../../decisions/0040-qa-human-residual-model.md) D1/D2), stays sortable for the operator.
 
-### D4. Escalation is label-and-continue, on a two-label split
+### QD4. Escalation is label-and-continue, on a two-label split
 
 - **At triage** → `needs-human-check`. Deliberately NOT `needs-human`: [ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D2 condition (e) makes RELEASE-READY require zero open `needs-human` items, so parking ordinary design forks there would freeze `main` promotion for the whole drain.
 - **At a round-3 critic BLOCK** → `needs-human` **and** a summary comment on the item's parent context (the parent PRD issue, or the item itself when parentless). This is the I5 strict-stop ([ADR-0048](../../../decisions/0048-critic-loop-r3-policy-and-complete-class-revision.md) D1); it holds the promotion gate on purpose, and it stops **that item only** — unrelated lanes continue.
 
 Both write an `escalated` record carrying `label` and `label_applied: true` **at the moment the label is applied** — that recorded evidence, not a later GitHub query, is what the DRAIN-LEDGER row checks. **The run never blocks on a human answer**, so the mode holds with or without a live operator.
 
-### D5. Per-item routing
+### QD5. Per-item routing
 
-- **prd** → `/to-issues` when it has **no open slices** (rule #16 — slices are minted only there). When it already has open slices, *those slices* are the queue items and the PRD is represented by them; it is never enqueued a second time alongside them, or the same work would be routed twice. It still counts in `run_start.counts.prd`, which snapshots the open queue rather than the items in flight (D2).
+- **prd** → `/to-issues` when it has **no open slices** (rule #16 — slices are minted only there). When it already has open slices, *those slices* are the queue items and the PRD is represented by them; it is never enqueued a second time alongside them, or the same work would be routed twice. It still counts in `run_start.counts.prd`, which snapshots the open queue rather than the items in flight (QD2).
 - **slice** → implement it through the existing stage 4/5 (implementer → reviewer → merge) exactly as a normal run does.
 - **backlog** → the standard PRD pipeline, one feature-sized deliverable per PRD (PIP-002). Related items combine into one PRD only when they are genuinely fragments of one feature; bundling unrelated items is a smell `prd-critic` gates. Slices are minted **only** through `/to-issues` (rule #16).
 - **captured** → the captured→backlog autopilot FIRST ([ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D2/D3): run `backlog-critic` on it; APPROVE → it proceeds as backlog work; **BLOCK → it stays captured and undrained**, at most folded into a class-ack. Never implement a BLOCKed capture.
 - **open PR** → carry it to a terminal state through the guarded verbs.
 
-### D6. Lanes and concurrency
+### QD6. Lanes and concurrency
 
 Predict file overlap coarsely from the paths named in issue bodies and titles. Overlapping items **serialize into one lane**; independent lanes run in parallel in isolated worktrees (I4a / [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) D1). **Unknown overlap serializes** — a wrong independence guess costs a merge conflict; a wrong serialization guess costs only time. **At most 3 items are in flight concurrently** (open `item_start` records minus their `item_done`); the DRAIN-LEDGER row FAILs a ledger that exceeds it. Merges stay serialized through the PR gate ([ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D2). Pace GitHub mutations across the run.
 
-### D7. Fix-in-run
+### QD7. Fix-in-run
 
 A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
 
@@ -86,13 +86,13 @@ A discovery made mid-run whose remedy fits the trivial lane is **appended to thi
 
 **2 — Record at discovery**, before starting the work: append `fix_queued`. A fix discovered but unrecorded is exactly the loss this protocol exists to prevent. Its `item` is the fix's own handle for the whole run — there is no issue number yet and may never be one — and **every later record about that fix repeats that handle verbatim**: the DRAIN-LEDGER parity assertion matches on it, so a renamed handle reads as an unlanded fix. Form the handle as `fix:<kebab-slug>` `(advisory — the row matches handles, it does not parse their shape; a colliding or unreadable handle in a real run is the evidence trigger to mechanize the form)`.
 
-**3 — Land it in-run.** One fix per PR: branch `hotfix/<short-summary>` from `develop`, label it `trivial`, open with `tools/pipe/pr-open`, and merge with `tools/pipe/pr-merge` — the reviewer's trivial fast-path is still the gate (the verb refuses a PR with no `VERDICT: APPROVE` comment), and merges stay serialized with the rest of the run (D6). When the discovery is a **code defect**, the regression rider is unchanged: a test that fails before the fix and passes after, committed before it ([ADR-0067](../../../decisions/0067-regression-memory.md) D2/D3). On merge, append `fixed_in_run` with the handle and the PR number.
+**3 — Land it in-run.** One fix per PR: branch `hotfix/<short-summary>` from `develop`, label it `trivial`, open with `tools/pipe/pr-open`, and merge with `tools/pipe/pr-merge` — the reviewer's trivial fast-path is still the gate (the verb refuses a PR with no `VERDICT: APPROVE` comment), and merges stay serialized with the rest of the run (QD6). When the discovery is a **code defect**, the regression rider is unchanged: a test that fails before the fix and passes after, committed before it ([ADR-0067](../../../decisions/0067-regression-memory.md) D2/D3). On merge, append `fixed_in_run` with the handle and the PR number.
 
 Fix work emits **no `item_start`/`item_done`** — a fix is not a queue item and has no `triaged` record, so an `item_start` for one is a DRAIN-LEDGER FAIL, and it does not consume a concurrency slot.
 
-**4 — Or defer it, visibly.** If the run reaches its terminal record with the fix unlanded, capture it **then** as a `captured`-labeled issue and append a **second** `fix_queued` record carrying the same handle plus `captured_ref` (e.g. `"issue:1400"`) — the ledger is append-only, so a second record is how a field arrives late. Both steps happen **before** `run_end`; a fix that reaches the terminal with neither `fixed_in_run` nor `captured_ref` FAILs DRAIN-LEDGER, which is the point: no silent loss. On a park it is instead named in the `parked` record's remaining list (D9).
+**4 — Or defer it, visibly.** If the run reaches its terminal record with the fix unlanded, capture it **then** as a `captured`-labeled issue and append a **second** `fix_queued` record carrying the same handle plus `captured_ref` (e.g. `"issue:1400"`) — the ledger is append-only, so a second record is how a field arrives late. Both steps happen **before** `run_end`; a fix that reaches the terminal with neither `fixed_in_run` nor `captured_ref` FAILs DRAIN-LEDGER, which is the point: no silent loss. On a park it is instead named in the `parked` record's remaining list (QD9).
 
-### D8. Ledger write protocol
+### QD8. Ledger write protocol
 
 Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved against the **git-common-dir root** so every worktree shares one ledger ([ADR-0075](../../../decisions/0075-trace-core-fork-decisions.md) D2). The kind set is **closed** — adding one requires a superseding ADR:
 
@@ -110,11 +110,11 @@ Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved
 
 Every `item_start` MUST follow a `triaged` record for that item. This ledger is **not** new trace-v3 kinds: `tools/trace.py`'s enum (PIP-015) and the Run-board contract (PIP-022) are untouched, which is what leaves trace-v3 free to act as the plan-only form's independent dispatch witness.
 
-**Park/resume** is a protocol of its own — D9 owns the trigger, the `parked` record's composition, and how a later run picks the file up.
+**Park/resume** is a protocol of its own — QD9 owns the trigger, the `parked` record's composition, and how a later run picks the file up.
 
 **Self-check.** After `run_end` (or `parked`), run `python dashboard/health.py --check DRAIN-LEDGER`; it validates the newest ledger offline and prints `PASS: DRAIN-LEDGER — …`. Report its verdict in the wrap-up.
 
-### D9. Park and resume
+### QD9. Park and resume
 
 A drain run that cannot finish must **stop recorded, not stop silently** ([ADR-0085](../../../decisions/0085-queue-drain-mode.md) D4). The ledger is the run's durable state across session death and quota cuts; the park record is what makes a killed run resumable instead of a queue the next session re-derives from memory.
 
@@ -123,15 +123,15 @@ A drain run that cannot finish must **stop recorded, not stop silently** ([ADR-0
 **2 — Write `parked` before stopping.** It is the run's last action, not the next run's plan: write it while the session can still write. Its `remaining` list names, in resume order:
 
 - every queue item the run still owes work — `triaged`, not yet `item_done`, and not escalated past (an operator-owed item was labeled and left behind by design, so it is not remaining work). Items in flight belong on the list; their work restarts from live state, not from wherever it was interrupted.
-- every `fix_queued` handle (D7) with no `fixed_in_run` and no `captured_ref`. **A park is the fix-in-run protocol's second terminal**: a queued fix that is neither landed, captured, nor named here is exactly the silent loss D7 exists to prevent, and DRAIN-LEDGER FAILs it at `parked` precisely as it does at `run_end`.
+- every `fix_queued` handle (QD7) with no `fixed_in_run` and no `captured_ref`. **A park is the fix-in-run protocol's second terminal**: a queued fix that is neither landed, captured, nor named here is exactly the silent loss QD7 exists to prevent, and DRAIN-LEDGER FAILs it at `parked` precisely as it does at `run_end`.
 
 An empty `remaining` is a DRAIN-LEDGER FAIL: a park with nothing left to do is a `run_end`, and the two terminals are not interchangeable. That the list is *complete* and its order sensible stays judgment `(advisory — the row checks that a park names something and that no unlanded fix escapes, both offline; it cannot know what the queue still held. Evidence trigger: a resumed run discovering an item the park should have named.)`
 
-**3 — Resuming.** A later run resumes the most recent ledger whose terminal record is `parked` — a ledger ending in `run_end` is finished, and one with no terminal belongs to a run that died without parking, whose items return through ordinary queue assembly (D2) like any other open issue. Append `resumed`, then work `remaining` in the recorded order. Resume does **not** open a new ledger; the run continues in its own file, which is why `resumed` is a kind at all. A resumed run that parks again writes a fresh `parked` record with the shortened list, under these same rules.
+**3 — Resuming.** A later run resumes the most recent ledger whose terminal record is `parked` — a ledger ending in `run_end` is finished, and one with no terminal belongs to a run that died without parking, whose items return through ordinary queue assembly (QD2) like any other open issue. Append `resumed`, then work `remaining` in the recorded order. Resume does **not** open a new ledger; the run continues in its own file, which is why `resumed` is a kind at all. A resumed run that parks again writes a fresh `parked` record with the shortened list, under these same rules.
 
-The ledger supplies **intent, never truth**. It says which items this run had and in what order; that is the whole of what it is trusted for. Before touching any listed item, re-derive its live state (`gh issue view`, `gh pr view`, `git log`) — labels move, PRs merge and issues close while a run is down, and live state remains the source of truth (CAP-002 / [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D2, which the ledger supplements rather than replaces). An item the list names but live state shows already done is dropped, not re-run `(advisory — reconciling list against live state is judgment; evidence trigger: a resumed run redoing work that had already landed.)` **A dropped item is closed with `item_done` before the run proceeds** — dropping takes it out of `remaining`, `item_done` takes it out of the *flight set*, and an `item_start` frozen open by the park would otherwise hold one of D6's three concurrency slots for the rest of the run and FAIL DRAIN-LEDGER on a run that never had more than three items in flight.
+The ledger supplies **intent, never truth**. It says which items this run had and in what order; that is the whole of what it is trusted for. Before touching any listed item, re-derive its live state (`gh issue view`, `gh pr view`, `git log`) — labels move, PRs merge and issues close while a run is down, and live state remains the source of truth (CAP-002 / [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D2, which the ledger supplements rather than replaces). An item the list names but live state shows already done is dropped, not re-run `(advisory — reconciling list against live state is judgment; evidence trigger: a resumed run redoing work that had already landed.)` **A dropped item is closed with `item_done` before the run proceeds** — dropping takes it out of `remaining`, `item_done` takes it out of the *flight set*, and an `item_start` frozen open by the park would otherwise hold one of QD6's three concurrency slots for the rest of the run and FAIL DRAIN-LEDGER on a run that never had more than three items in flight.
 
-### D10. Invariants the drain never overrides
+### QD10. Invariants the drain never overrides
 
 No triage verdict relaxes any of these: the drain **never** creates `.claude/PROMOTE_OK` ([ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D4 — guardrail promotions wait for the human); a round-3 BLOCK strict-stops that item; destructive or irreversible operations confirm with the operator first; every dispatch passes `isolation: "worktree"` and a result without `worktreePath` is a dispatch failure ([ADR-0058](../../../decisions/0058-worktree-isolation-as-asserted-interface.md) D1/D2); slice issues are created only through the slicer flow.
 

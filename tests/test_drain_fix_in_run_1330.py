@@ -3,7 +3,7 @@ tests/test_drain_fix_in_run_1330.py
 
 Regression tests for PRD #1326 slice #1330 — the fix-in-run protocol
 (ADR-0085 D5) that `.claude/skills/ship/SKILL.md`'s Queue-drain entry mode
-D7 now documents, seen through the DRAIN-LEDGER health row that enforces it.
+QD7 now documents, seen through the DRAIN-LEDGER health row that enforces it.
 
 This file carries PRD §2 criterion 15's SECOND named FAIL leg: a `fix_queued`
 that reaches the run's terminal record with neither a `fixed_in_run` nor a
@@ -12,7 +12,7 @@ slice #1329's file).  The `parked`-terminal leg belongs to slice #1331, which
 ships the park/resume emitting protocol.
 
 The two PASS legs are not decoration: they assert that the exact record
-sequences D7 tells the orchestrator to emit — land-in-run, and defer-with-a-
+sequences QD7 tells the orchestrator to emit — land-in-run, and defer-with-a-
 second-`fix_queued` — actually discharge the parity condition.  Without them a
 row that FAILs every fix_queued would satisfy the FAIL assertion, and the
 documented protocol could be one the check rejects.
@@ -82,7 +82,7 @@ def test_drain_ledger_fails_on_unresolved_fix_queued(tmp_path):
 
 
 def test_drain_ledger_passes_when_fix_lands_in_run(tmp_path):
-    """PASS leg: D7 step 3 — the hotfix PR merged, `fixed_in_run` recorded."""
+    """PASS leg: QD7 step 3 — the hotfix PR merged, `fixed_in_run` recorded."""
     result = _check(tmp_path, _run_with(
         {"kind": "fix_queued", "ts": "2026-09-02T12:10:00Z", "item": FIX},
         {"kind": "fixed_in_run", "ts": "2026-09-02T12:20:00Z",
@@ -93,11 +93,11 @@ def test_drain_ledger_passes_when_fix_lands_in_run(tmp_path):
 
 
 def test_drain_ledger_passes_when_fix_deferred_with_captured_ref(tmp_path):
-    """PASS leg: D7 step 4 — deferred, and the capture pinned before run_end.
+    """PASS leg: QD7 step 4 — deferred, and the capture pinned before run_end.
 
     The ledger is append-only, so the reference arrives as a SECOND
     `fix_queued` record carrying the same handle plus `captured_ref`.  That is
-    the shape D7 prescribes; this asserts the row accepts it.
+    the shape QD7 prescribes; this asserts the row accepts it.
     """
     result = _check(tmp_path, _run_with(
         {"kind": "fix_queued", "ts": "2026-09-02T12:10:00Z", "item": FIX},

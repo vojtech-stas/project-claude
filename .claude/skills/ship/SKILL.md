@@ -89,7 +89,7 @@ A discovery made mid-run whose remedy fits the trivial lane is **appended to thi
 
 Fix work emits **no `item_start`/`item_done`** — a fix is not a queue item and has no `triaged` record, so an `item_start` for one is a DRAIN-LEDGER FAIL, and it does not consume a concurrency slot.
 
-**4 — Or defer it, visibly.** If the run reaches its terminal record with the fix unlanded, capture it **then** as a `captured`-labeled issue and append a **second** `fix_queued` record carrying the same handle plus `captured_ref` (e.g. `"issue:1400"`) — the ledger is append-only, so a second record is how a field arrives late. Both steps happen **before** `run_end`; a fix that reaches the terminal with neither `fixed_in_run` nor `captured_ref` FAILs DRAIN-LEDGER, which is the point: no silent loss. On a park it is instead named in the `parked` record's remaining list (D8).
+**4 — Or defer it, visibly.** If the run reaches its terminal record with the fix unlanded, capture it **then** as a `captured`-labeled issue and append a **second** `fix_queued` record carrying the same handle plus `captured_ref` (e.g. `"issue:1400"`) — the ledger is append-only, so a second record is how a field arrives late. Both steps happen **before** `run_end`; a fix that reaches the terminal with neither `fixed_in_run` nor `captured_ref` FAILs DRAIN-LEDGER, which is the point: no silent loss. On a park it is instead named in the `parked` record's remaining list (D9).
 
 ### D8. Ledger write protocol
 
@@ -109,11 +109,28 @@ Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved
 
 Every `item_start` MUST follow a `triaged` record for that item. This ledger is **not** new trace-v3 kinds: `tools/trace.py`'s enum (PIP-015) and the Run-board contract (PIP-022) are untouched, which is what leaves trace-v3 free to act as the plan-only form's independent dispatch witness.
 
-**Park/resume.** On a quota cut or an operator stop, write `parked` naming every remaining item **in resume order**, including every `fix_queued` still unlanded — an empty list, or a fix that escapes through the park path, is a DRAIN-LEDGER FAIL. A resumed session reads the ledger rather than reconstructing intent from memory, then appends `resumed`.
+**Park/resume** is a protocol of its own — D9 owns the trigger, the `parked` record's composition, and how a later run picks the file up.
 
 **Self-check.** After `run_end` (or `parked`), run `python dashboard/health.py --check DRAIN-LEDGER`; it validates the newest ledger offline and prints `PASS: DRAIN-LEDGER — …`. Report its verdict in the wrap-up.
 
-### D9. Invariants the drain never overrides
+### D9. Park and resume
+
+A drain run that cannot finish must **stop recorded, not stop silently** ([ADR-0085](../../../decisions/0085-queue-drain-mode.md) D4). The ledger is the run's durable state across session death and quota cuts; the park record is what makes a killed run resumable instead of a queue the next session re-derives from memory.
+
+**1 — When to park.** Park on an operator stop, or when the run judges a quota cut close enough that starting another item would strand it half-done `(advisory — no quota-remaining API exists, so the trigger is orchestrator judgment; the checkable obligation is the parked record and its shape, never the detection heuristic. Evidence trigger: a run that dies mid-item leaving no parked record.)`
+
+**2 — Write `parked` before stopping.** It is the run's last action, not the next run's plan: write it while the session can still write. Its `remaining` list names, in resume order:
+
+- every queue item the run still owes work — `triaged`, not yet `item_done`, and not escalated past (an operator-owed item was labeled and left behind by design, so it is not remaining work). Items in flight belong on the list; their work restarts from live state, not from wherever it was interrupted.
+- every `fix_queued` handle (D7) with no `fixed_in_run` and no `captured_ref`. **A park is the fix-in-run protocol's second terminal**: a queued fix that is neither landed, captured, nor named here is exactly the silent loss D7 exists to prevent, and DRAIN-LEDGER FAILs it at `parked` precisely as it does at `run_end`.
+
+An empty `remaining` is a DRAIN-LEDGER FAIL: a park with nothing left to do is a `run_end`, and the two terminals are not interchangeable. That the list is *complete* and its order sensible stays judgment `(advisory — the row checks that a park names something and that no unlanded fix escapes, both offline; it cannot know what the queue still held. Evidence trigger: a resumed run discovering an item the park should have named.)`
+
+**3 — Resuming.** A later run resumes the most recent ledger whose terminal record is `parked` — a ledger ending in `run_end` is finished, and one with no terminal belongs to a run that died without parking, whose items return through ordinary queue assembly (D2) like any other open issue. Append `resumed`, then work `remaining` in the recorded order. Resume does **not** open a new ledger; the run continues in its own file, which is why `resumed` is a kind at all. A resumed run that parks again writes a fresh `parked` record with the shortened list, under these same rules.
+
+The ledger supplies **intent, never truth**. It says which items this run had and in what order; that is the whole of what it is trusted for. Before touching any listed item, re-derive its live state (`gh issue view`, `gh pr view`, `git log`) — labels move, PRs merge and issues close while a run is down, and live state remains the source of truth (CAP-002 / [ADR-0006](../../../decisions/0006-backlog-and-session-continuity.md) D2, which the ledger supplements rather than replaces). An item the list names but live state shows already done is dropped, not re-run `(advisory — reconciling list against live state is judgment; evidence trigger: a resumed run redoing work that had already landed.)`
+
+### D10. Invariants the drain never overrides
 
 No triage verdict relaxes any of these: the drain **never** creates `.claude/PROMOTE_OK` ([ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D4 — guardrail promotions wait for the human); a round-3 BLOCK strict-stops that item; destructive or irreversible operations confirm with the operator first; every dispatch passes `isolation: "worktree"` and a result without `worktreePath` is a dispatch failure ([ADR-0058](../../../decisions/0058-worktree-isolation-as-asserted-interface.md) D1/D2); slice issues are created only through the slicer flow.
 

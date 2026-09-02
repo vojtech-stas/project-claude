@@ -6849,8 +6849,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     triaged_items: set = set()
     # `open_items` is a SET of item ids, so a repeated `item_start` for one
     # already-open item counts once — the cap bounds distinct items in flight,
-    # which is what D3 bounds.  A duplicate-lifecycle condition, if one is ever
-    # owed, belongs to the slices that add park/resume semantics.
+    # which is what D3 bounds, and QD9's park/resume freezes an item's single
+    # `item_start` open across a park rather than re-emitting it.  A
+    # duplicate-lifecycle FAIL is deliberately absent — ADR-0085 D6's
+    # enumerated FAIL set does not include one (#1334 is the standing record;
+    # revisit on a real ledger that double-starts one item).
     open_items: set = set()
     max_concurrent = 0
     fix_queued: dict = {}      # item -> True when a captured_ref was recorded

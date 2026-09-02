@@ -6697,8 +6697,12 @@ def _drain_ledger_dir(explicit: str | None = None) -> Path:
 def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     """DRAIN-LEDGER: the newest queue-drain run ledger is well-formed.
 
-    Implements ADR-0085 D6 / PRD #1326 §2 criterion 14 in full — all seven
-    FAIL conditions, decidable offline from the ledger file alone:
+    Implements ADR-0085 D6 / PRD #1326 §2 criterion 14 in full — the seven
+    FAIL conditions below, decidable offline from the ledger file alone.
+    Their fields are read strictly: a value whose shape violates the
+    documented record schema (a `remaining` that is not a list of item ids)
+    is a named FAIL too, never read vacuously — that is part of implementing
+    these conditions, not an eighth one:
 
       1. a record kind outside the closed set (or malformed JSONL)
       2. missing required fields (run_start's count fields included)
@@ -6857,6 +6861,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                         f"(first: {bad[0]!r}); remaining must hold item ids"
                     )
                 remaining = [e for e in remaining if isinstance(e, str)]
+            elif kind == "parked" and remaining:
+                failures.append(
+                    f"parked record carries a non-list remaining field "
+                    f"({remaining!r}); remaining must hold item ids"
+                )
             remaining_set = set(remaining) if isinstance(remaining, list) else set()
             for fq_item, has_ref in fix_queued.items():
                 if fq_item in fixed_items or has_ref or fq_item in remaining_set:

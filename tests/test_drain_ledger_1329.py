@@ -208,9 +208,13 @@ def _identity_cases() -> list:
     The table walks EVERY kind that carries `item`, plus the two other
     identity fields the row consumes the same way: the universal `kind`
     (looked up in the closed set) and `escalated`'s `label` (looked up in the
-    allowed-label set). Fields the row only checks for presence — `open_prs`,
-    `bucket`, `lane`, `pr` — are deliberately absent: they never reach such an
-    operation, so failing them would be an invariant nothing owes (VER-009).
+    allowed-label set). One row rides a SECOND rationale rather than the hash
+    one: `escalated`'s `item` is only formatted, into the escalated failures,
+    where it is the sole thing naming which item escalated — unvalidated it
+    either garbles that finding or, behind a well-formed `label`, raises
+    nothing at all (#1356). Fields the row only checks for presence —
+    `open_prs`, `bucket`, `lane`, `pr` — are deliberately absent: they reach
+    neither use, so failing them would be an invariant nothing owes (VER-009).
     """
     def base() -> list:
         return _valid_run()

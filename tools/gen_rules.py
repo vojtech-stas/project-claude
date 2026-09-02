@@ -133,14 +133,18 @@ SCOPE_PATHS: dict[str, str] = {
 # PIP-* ids (slice #1129), then by ADR-0077's 2 new PIP-* ids (slice #1162),
 # then by ADR-0078's 1 new PIP-* id (slice #1172), then by ADR-0079's 1 new
 # PIP-* id (slice #1197), then by ADR-0080's 1 new PIP-* id (slice #1217),
-# then by ADR-0081's 1 new PIP-* id (slice #1238).
+# then by ADR-0081's 1 new PIP-* id (slice #1238), then by ADR-0083's 2 new
+# VER-* ids (slice #1310).
 # --check verifies that the live count equals this value; a mismatch means a
 # rule was silently added or removed without updating this constant.
 # Note: ADR-0081's supersessions are all per-decision, so no ADR leaves the
 # active frontmatter set and no rule_ids are removed — the delta is +1 only.
+# ADR-0083's supersession of ADR-0057 D2 is likewise per-decision: ADR-0057
+# keeps `superseded_by: []`, so HOK-008/HOK-009 stay in the active set and the
+# ADR-0083 delta is +2 (VER-009, VER-010) with nothing removed.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(25) + REG(3) + SLI(5) + VER(8) = 86
-RULE_IDS_BASELINE: int = 86
+#            ISO(6) + OUT(5) + PIP(25) + REG(3) + SLI(5) + VER(10) = 88
+RULE_IDS_BASELINE: int = 88
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -523,8 +527,13 @@ _RULE_STATEMENTS: dict[str, str] = {
     "HOK-008": (
         "Every hook script MUST emit an attempt beacon BEFORE any parsing or branching; "
         "on any internal error it MUST emit an ERROR beacon to `hook-fires.jsonl` rather "
-        "than exiting silently; payloads are parsed in full via python3 — never truncated "
-        "with `head -c` (ADR-0057 D1, fail-loud contract)."
+        "than exiting silently; every terminal path MUST append exactly one terminal "
+        "beacon before exiting — a deliberate policy decision (DENY/ASK/WARN) is a "
+        "completion, so it exits `status:\"ok\"` and records the decision in the additive "
+        "`outcome` field, never in `status`; `status` is drawn from the closed set "
+        "{attempt, ok, ERROR} and nothing else; payloads are parsed in full via python3 — "
+        "never truncated with `head -c` (ADR-0057 D1, fail-loud contract, as amended by "
+        "ADR-0083 D1/D2)."
     ),
     "HOK-009": (
         "A fifth hook category is permitted: **context injection** — a SessionStart hook "
@@ -566,7 +575,7 @@ _RULE_STATEMENTS: dict[str, str] = {
         "(ADR-0013 D2/D3)."
     ),
     # -----------------------------------------------------------------------
-    # verification scope (ADR-0037, ADR-0040, ADR-0050)
+    # verification scope (ADR-0037, ADR-0040, ADR-0050, ADR-0083)
     # -----------------------------------------------------------------------
     # ADR-0037: production-verify gate — D1 (mandatory gate) + D2 (auto-routing) + D4 (PRD declares)
     "VER-001": (
@@ -617,6 +626,26 @@ _RULE_STATEMENTS: dict[str, str] = {
         "The qa-tester browser route is driven entirely via `Bash` (write a Python script to "
         "a tmp path via heredoc, execute it, read results); all `mcp__Claude_Preview__*` "
         "calls are dropped; no tracked files are written by the qa-tester (ADR-0050 D2)."
+    ),
+    # ADR-0083: honest substrate — D3 (check authority) + D5 (guard advisory) + D4 (proof tokens).
+    # VER-009 fuses D3 and D5; the `(advisory)` marker is scoped to the D5 half only, because
+    # D3's half is mechanized (regression test + reviewer rubric) while judging an arbitrary
+    # guard's advisory text against every state consistent with its observation is not.
+    "VER-009": (
+        "A check may only FAIL a subject on an invariant that subject owes — an accepted ADR "
+        "decision, a generated rule id, or a documented interface contract; if the invariant "
+        "is not owed the check is wrong, not the subject, and a check's subject set is "
+        "defined rather than assumed. **(advisory)** When a guard blocks or warns, its "
+        "message states the observation and the states consistent with it, never asserting a "
+        "single cause it cannot distinguish (ADR-0083 D3/D5)."
+    ),
+    "VER-010": (
+        "A proof token MUST match a shape the evidence itself produces — a beacon record, a "
+        "verification transcript — and MUST NOT match the ordinary prose used to refer to "
+        "that evidence (a filename, a log path, a route name, a check id); a PR's route "
+        "union is conjunctive, satisfied only when EVERY class in the union has a matching "
+        "token; and a check reporting a miss names the route class that lacked a token "
+        "(ADR-0083 D4)."
     ),
     # -----------------------------------------------------------------------
     # commits scope (ADR-0001)

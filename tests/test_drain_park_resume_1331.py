@@ -16,13 +16,13 @@ that ships the emitting protocol:
     `remaining` or FAILs.
 
 The PASS legs are load-bearing, not decoration: they assert that the exact
-record sequence D9 prescribes — park naming the unlanded fix, `resumed`, then
+record sequence QD9 prescribes — park naming the unlanded fix, `resumed`, then
 the fix landing before `run_end` — is one the row accepts. A documented
 protocol that the check rejects would be a defect in the pair, and without a
 PASS control every FAIL assertion here is satisfied by a row that FAILs on
 everything.
 
-The resume-drop leg pins the other half of that pairing: D9 step 3 tells a
+The resume-drop leg pins the other half of that pairing: QD9 step 3 tells a
 resumed run to close a dropped item with `item_done`, and the row's
 concurrency condition is what makes that instruction load-bearing rather than
 decorative — parked-open `item_start` records that are never closed stack on
@@ -84,7 +84,7 @@ def _check(tmp_path: Path, records: list) -> dict:
 def test_drain_ledger_fails_on_empty_parked_remaining(tmp_path):
     """FAIL leg (PRD §2 #14, condition 7): a park that names nothing.
 
-    D9 makes the two terminals non-interchangeable: a run with nothing left to
+    QD9 makes the two terminals non-interchangeable: a run with nothing left to
     do writes `run_end`. A `parked` record carrying an empty list claims the
     run was interrupted while recording no way to pick it back up — the
     resumable-state property the ledger exists for, asserted but not delivered.
@@ -143,9 +143,9 @@ def test_drain_ledger_reports_an_unreadable_park_once(tmp_path):
 
 
 def test_drain_ledger_passes_when_park_names_the_unlanded_fix(tmp_path):
-    """PASS leg: D9 step 2 — `remaining` carries the queue item AND the fix.
+    """PASS leg: QD9 step 2 — `remaining` carries the queue item AND the fix.
 
-    This is the record shape D9 tells the orchestrator to emit at a park, so
+    This is the record shape QD9 tells the orchestrator to emit at a park, so
     the row must accept it; it is also the control that makes the FAIL leg
     above mean "the fix was missing" rather than "parks always FAIL".
     """
@@ -160,7 +160,7 @@ def test_drain_ledger_passes_when_park_names_the_unlanded_fix(tmp_path):
 
 
 def test_drain_ledger_passes_on_park_then_resume_then_land(tmp_path):
-    """PASS leg: the full D9 lifecycle in ONE ledger file.
+    """PASS leg: the full QD9 lifecycle in ONE ledger file.
 
     Resume does not open a new ledger — the resumed run appends `resumed` to
     the parked run's own file and works `remaining` in the recorded order.
@@ -183,7 +183,7 @@ def test_drain_ledger_passes_on_park_then_resume_then_land(tmp_path):
 
 
 def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
-    """PASS leg: D9 step 3's drop is closed with `item_done`.
+    """PASS leg: QD9 step 3's drop is closed with `item_done`.
 
     A park freezes the ledger with its in-flight items' `item_start` records
     still open. When the resumed run finds one of those items already done in
@@ -194,7 +194,7 @@ def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
     records, and the row FAILs a run that never had more than three in flight.
 
     The negative control below is what makes this leg load-bearing: it shows
-    the FAIL is real, so the PASS is D9's sentence doing work rather than a
+    the FAIL is real, so the PASS is QD9's sentence doing work rather than a
     row that blesses everything.
     """
     items = ["issue:1400", "issue:1401", "issue:1402"]
@@ -226,7 +226,7 @@ def test_drain_ledger_passes_when_resume_closes_its_dropped_items(tmp_path):
     assert unclosed["result"] == "FAIL", unclosed["detail"]
     assert "concurrently open" in unclosed["detail"]
 
-    # D9 step 3: each dropped item is closed with `item_done` first.
+    # QD9 step 3: each dropped item is closed with `item_done` first.
     drops = [
         {"kind": "item_done", "ts": "2026-09-03T09:05:00Z", "item": it}
         for it in items

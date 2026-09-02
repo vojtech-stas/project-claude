@@ -230,7 +230,7 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 
 **Check:** Run `git fetch origin main` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (`origin/main`):
 ```bash
-gh pr view <PR> --json files --jq '.files[] | select(.path | startswith(".claude/agents/") or startswith(".claude/skills/") or startswith(".claude/hooks/") or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
+gh pr view <PR> --json files --jq '.files[] | select((.path | startswith(".claude/agents/")) or (.path | startswith(".claude/skills/")) or (.path | startswith(".claude/hooks/")) or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
 ```
 
 If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 600. Split the slice or move non-runtime content out of .claude/`.

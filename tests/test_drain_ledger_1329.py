@@ -14,9 +14,11 @@ no-ledger WARN leg that also proves the ledger path is genuinely injectable.
 
 PRD §2 criterion 15's remaining FAIL legs (fix-queued parity, parked) are
 deliberately NOT here — the slicer-critic assigned them to the follow-up
-slices that ship the emitting protocols. The one exception is the #1335
-regression leg below: it does not test the parked *protocol*, it pins that a
-malformed `remaining` list reports a named FAIL instead of crashing the row.
+slices that ship the emitting protocols. The exceptions are the #1335 and
+#1339 regression legs below: they do not test the parked *protocol*, they pin
+that a malformed `remaining` — a list holding objects (#1335), or a value that
+is not a list at all (#1339) — reports a named FAIL instead of crashing the
+row or passing it vacuously.
 
 Rule #21 / CRI-004: every ledger in this file is written under pytest's
 `tmp_path`, never into `.claude/logs/drain/`. That is the reason
@@ -113,6 +115,51 @@ def test_drain_ledger_fails_on_object_shaped_remaining_entry(tmp_path):
     assert result["result"] == "FAIL", result["detail"]
     assert "non-string remaining entries" in result["detail"]
     # The FAIL names the offending entry, not merely the record kind.
+    assert "issue:1338" in result["detail"]
+
+
+def test_drain_ledger_fails_on_object_shaped_remaining_field(tmp_path):
+    """FAIL leg (#1339 regression rider): `remaining` is a JSON object.
+
+    A truthy non-list `remaining` clears the empty-list condition yet yields
+    an empty parity set, so the fix-queued interlock would compare against
+    nothing and PASS a ledger it never actually read. Silent degradation is
+    the class VER-009 forbids: the shape violates the documented schema, so
+    it owes the same named schema FAIL as a malformed list entry (#1335).
+    """
+    records = _valid_run()[:-1]   # park is this run's terminal, not run_end
+    records.append({
+        "kind": "parked", "ts": "2026-09-02T10:20:01Z",
+        "remaining": {"next": "issue:1338"},
+    })
+    _write_ledger(tmp_path, "drain-test-1.jsonl", records)
+
+    result = health.check_drain_ledger(ledger_dir=str(tmp_path))
+
+    assert result["result"] == "FAIL", result["detail"]
+    assert "non-list remaining field" in result["detail"]
+    # The FAIL quotes the malformed value, not merely the record kind.
+    assert "issue:1338" in result["detail"]
+
+
+def test_drain_ledger_fails_on_bare_string_remaining_field(tmp_path):
+    """FAIL leg (#1339 regression rider): `remaining` is a bare string.
+
+    The second non-list shape, and the quieter one: a string is iterable, so
+    a future reader could silently take its characters for item ids. The row
+    reports the observation instead (ADR-0083 D5).
+    """
+    records = _valid_run()[:-1]
+    records.append({
+        "kind": "parked", "ts": "2026-09-02T10:20:01Z",
+        "remaining": "issue:1338",
+    })
+    _write_ledger(tmp_path, "drain-test-1.jsonl", records)
+
+    result = health.check_drain_ledger(ledger_dir=str(tmp_path))
+
+    assert result["result"] == "FAIL", result["detail"]
+    assert "non-list remaining field" in result["detail"]
     assert "issue:1338" in result["detail"]
 
 

@@ -852,10 +852,10 @@ _RULE_STATEMENTS: dict[str, str] = {
         "required check; a red test suite blocks the PR merge gate (ADR-0067 D1)."
     ),
     "REG-002": (
-        "For fix-type slices that address a code defect, the fixing PR MUST include a "
-        "regression test that fails BEFORE the fix and passes AFTER; the test commit MUST "
-        "precede the fix commit in branch history — this is R-PROVE / rule #13 regression "
-        "rider (ADR-0067 D2/D3)."
+        "R-PROVE: on fix-type slice PRs the regression test's commit MUST precede the fix "
+        "commit in branch history (ADR-0067 D2); separately, rule #13's regression rider "
+        "obliges a regression test that fails BEFORE the fix and passes AFTER when a "
+        "root-cause capture documents a CODE defect (ADR-0067 D3)."
     ),
     "REG-003": (
         "Flaky tests are quarantined within 24 h by moving them to `tests/quarantine.txt`; "

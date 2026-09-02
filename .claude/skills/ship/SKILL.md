@@ -79,7 +79,17 @@ Predict file overlap coarsely from the paths named in issue bodies and titles. O
 
 ### D7. Fix-in-run
 
-A discovery made mid-run whose remedy fits the trivial lane (I3 — definition unchanged) is **appended to this run's queue**, not filed and forgotten: append `fix_queued`, land it as its own `hotfix/*` PR, append `fixed_in_run` with the merged PR. If the run reaches its terminal record with the item unlanded, capture it **then** and record the issue in a `captured_ref` — since the ledger is append-only, that means appending a second `fix_queued` record for the same item carrying the ref. Discoveries too big for the trivial lane capture as before; workflow mistakes still owe a root-cause capture (rule #13); code-defect fixes keep the regression rider ([ADR-0067](../../../decisions/0067-regression-memory.md) D2/D3).
+A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
+
+**1 — Qualify.** Apply I3's own test to the **remedy**, not to the discovery: a two-line grep fix found while reading a 200-line defect still qualifies. Uncertain → it does not qualify. Non-qualifying discoveries capture as before (rule #11), and a workflow mistake owes its root-cause capture (rule #13) whether or not a code remedy lands here — fix-in-run covers the remedy, never the capture obligation.
+
+**2 — Record at discovery**, before starting the work: append `fix_queued`. A fix discovered but unrecorded is exactly the loss this protocol exists to prevent. Its `item` is the fix's own handle for the whole run — there is no issue number yet and may never be one — and **every later record about that fix repeats that handle verbatim**: the DRAIN-LEDGER parity assertion matches on it, so a renamed handle reads as an unlanded fix. Form the handle as `fix:<kebab-slug>` `(advisory — the row matches handles, it does not parse their shape; a colliding or unreadable handle in a real run is the evidence trigger to mechanize the form)`.
+
+**3 — Land it in-run.** One fix per PR: branch `hotfix/<short-summary>` from `develop`, label it `trivial`, open with `tools/pipe/pr-open`, and merge with `tools/pipe/pr-merge` — the reviewer's trivial fast-path is still the gate (the verb refuses a PR with no `VERDICT: APPROVE` comment), and merges stay serialized with the rest of the run (D6). When the discovery is a **code defect**, the regression rider is unchanged: a test that fails before the fix and passes after, committed before it ([ADR-0067](../../../decisions/0067-regression-memory.md) D2/D3). On merge, append `fixed_in_run` with the handle and the PR number.
+
+Fix work emits **no `item_start`/`item_done`** — a fix is not a queue item and has no `triaged` record, so an `item_start` for one is a DRAIN-LEDGER FAIL, and it does not consume a concurrency slot.
+
+**4 — Or defer it, visibly.** If the run reaches its terminal record with the fix unlanded, capture it **then** as a `captured`-labeled issue and append a **second** `fix_queued` record carrying the same handle plus `captured_ref` (e.g. `"issue:1400"`) — the ledger is append-only, so a second record is how a field arrives late. Both steps happen **before** `run_end`; a fix that reaches the terminal with neither `fixed_in_run` nor `captured_ref` FAILs DRAIN-LEDGER, which is the point: no silent loss. On a park it is instead named in the `parked` record's remaining list (D8).
 
 ### D8. Ledger write protocol
 

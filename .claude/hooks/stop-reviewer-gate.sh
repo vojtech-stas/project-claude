@@ -6,6 +6,10 @@
 # allows the stop AND emits ERROR beacon (fail-open + fail-loud).
 # #846: added emit_ok_beacon at every non-error success terminal path so HOOK-INTEGRITY
 # no longer false-flags stop-reviewer-gate as dead (was: 0/N ratio).
+# ADR-0083 D1/D2/D5: the blocking path (exit 2) was the last silent terminal — it now
+# emits status:"ok" + outcome:"deny" (a policy decision is a completion, not a crash),
+# and its message states the observation plus the states consistent with it instead of
+# asserting a single cause the gate cannot distinguish.
 set -uo pipefail
 
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
@@ -48,6 +52,18 @@ emit_ok_beacon() {
     "$(date -u -Iseconds 2>/dev/null)" "$_SRG_SID" \
     >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
   exit 0
+}
+
+# emit_deny_beacon: the blocking terminal (ADR-0083 D1/D2). Blocking the stop is a
+# deliberate policy decision the gate completed successfully — NOT an internal
+# failure — so `status` stays in the closed lifecycle set {attempt, ok, ERROR} and
+# the decision is recorded additively in `outcome`. Reporting a DENY as ERROR would
+# forge a crash signature and make HOOK-INTEGRITY read a working gate as a broken one.
+emit_deny_beacon() {
+  printf '{"hook":"stop-reviewer-gate","status":"ok","ts":"%s","session_id":"%s","outcome":"deny"}\n' \
+    "$(date -u -Iseconds 2>/dev/null)" "$_SRG_SID" \
+    >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+  exit 2
 }
 
 # emit_error_beacon: allow the stop + emit ERROR beacon (ADR-0057 D1b/D2 fail-open).
@@ -102,9 +118,13 @@ for N in $PRS; do
 done
 
 if [ -n "$UNSIGNED" ]; then
-  echo "stop-reviewer-gate: in-flight PR(s) lacking reviewer subagent VERDICT: APPROVE:$UNSIGNED" >&2
-  echo "stop-reviewer-gate: dispatch reviewer subagent before declaring done, OR set STOP_GATE_BYPASS=1 if reviewing manually." >&2
-  exit 2
+  # ADR-0083 D5: report the observation and the states consistent with it. This gate
+  # sees the ABSENCE of an APPROVE comment; it cannot see why it is absent, so it
+  # must not name one cause as though it had.
+  echo "stop-reviewer-gate: OBSERVED — open PR(s) authored by @me with no comment matching 'VERDICT: APPROVE':$UNSIGNED" >&2
+  echo "stop-reviewer-gate: states consistent with that observation: (a) the reviewer subagent has not been dispatched for these PR(s) yet; (b) a PR is the closing slice of its PRD and is correctly awaiting its prerequisite codebase-critic pass, which runs BEFORE the reviewer pass (PIP-013), so the missing verdict is expected rather than skipped." >&2
+  echo "stop-reviewer-gate: if (a), dispatch the reviewer subagent; if (b) or you are reviewing manually, set STOP_GATE_BYPASS=1 to record that and stop." >&2
+  emit_deny_beacon
 fi
 
 emit_ok_beacon  # all in-flight PRs have reviewer APPROVE

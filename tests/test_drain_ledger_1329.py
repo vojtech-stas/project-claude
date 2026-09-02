@@ -18,8 +18,10 @@ slices that ship the emitting protocols. The exceptions are the malformed-shape
 regression legs below: they do not test the parked *protocol*, they pin that a
 value violating the documented record schema reports a named FAIL instead of
 crashing the row or passing it vacuously. Three of them cover `remaining` — a
-list holding objects (#1335), or a value that is not a list at all (#1339). The
-fourth walks that same class one layer deeper, over every required field the
+list holding objects (#1335), or a value that is not a list at all (#1339) —
+and a fourth pins that the FAIL quotes such a value in BOUNDED form (#1342):
+naming the malformed shape is the observation, pasting all of it is noise.
+The last walks that same class one layer deeper, over every required field the
 row consumes as a hash key: `kind`, `item` on all six kinds that carry it, and
 `escalated`'s `label`.
 
@@ -164,6 +166,33 @@ def test_drain_ledger_fails_on_bare_string_remaining_field(tmp_path):
     assert result["result"] == "FAIL", result["detail"]
     assert "non-list remaining field" in result["detail"]
     assert "issue:1338" in result["detail"]
+
+
+def test_drain_ledger_bounds_the_quoted_malformed_value(tmp_path):
+    """#1342: the FAIL quotes a malformed value without pasting all of it.
+
+    A guard states its observation (VER-009 / ADR-0083 D5), and the whole of
+    an arbitrarily large malformed value is not the observation — it is the
+    finding's own noise, drowning the four other failures the detail string
+    can carry. The row already bounds the sibling list-entry guard to the
+    first offender; every malformed value it quotes owes the same restraint.
+    """
+    records = _valid_run()[:-1]   # park is this run's terminal, not run_end
+    records.append({
+        "kind": "parked", "ts": "2026-09-02T10:20:01Z",
+        "remaining": {f"key{n}": f"issue:{2000 + n}" for n in range(40)},
+    })
+    _write_ledger(tmp_path, "drain-test-1.jsonl", records)
+
+    result = health.check_drain_ledger(ledger_dir=str(tmp_path))
+
+    assert result["result"] == "FAIL", result["detail"]
+    # The observation still lands, and the first of the payload identifies it.
+    assert "non-list remaining field" in result["detail"]
+    assert "issue:2000" in result["detail"]
+    # ...but the tail of a ~1000-char malformed value never reaches the row.
+    assert "issue:2039" not in result["detail"], result["detail"]
+    assert len(result["detail"]) < 300, len(result["detail"])
 
 
 def _identity_cases() -> list:

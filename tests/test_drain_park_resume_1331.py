@@ -28,6 +28,11 @@ concurrency condition is what makes that instruction load-bearing rather than
 decorative — parked-open `item_start` records that are never closed stack on
 top of the resumed run's fresh starts.
 
+The single-emission leg (#1342) guards the seam between the two: a park whose
+`remaining` could not be read owes the schema FAIL, and owes NOTHING about
+condition 6 — a parity claim derived from a value the row could not parse is
+an assertion it cannot make (VER-009 / ADR-0083 D5). One defect, one finding.
+
 The DRAIN-LEDGER condition set is NOT extended by this slice: ADR-0085 D6
 enumerates what the ledger owes, both conditions already exist in
 `dashboard/health.py`, and a check may only FAIL a subject on an invariant
@@ -113,6 +118,28 @@ def test_drain_ledger_fails_when_fix_escapes_through_the_park(tmp_path):
     assert result["result"] == "FAIL", result["detail"]
     assert FIX in result["detail"]
     assert "no place in the remaining list" in result["detail"]
+
+
+def test_drain_ledger_reports_an_unreadable_park_once(tmp_path):
+    """#1342: one malformed record, one finding — not two.
+
+    A truthy non-list `remaining` earns its own schema FAIL. Falling through
+    to the fix-queued parity comparison afterwards compares against an EMPTY
+    set, so the same record also convicts every queued fix of having "no place
+    in the remaining list" — a claim the row cannot make about a value it
+    could not read. The shape FAIL stands; the derived parity claim does not.
+    """
+    records = _prefix() + [
+        {"kind": "parked", "ts": "2026-09-02T14:30:00Z",
+         "remaining": {"next": ITEM}},
+    ]
+
+    result = _check(tmp_path, records)
+
+    assert result["result"] == "FAIL", result["detail"]
+    assert "non-list remaining field" in result["detail"]
+    assert "no place in the remaining list" not in result["detail"]
+    assert FIX not in result["detail"], result["detail"]
 
 
 def test_drain_ledger_passes_when_park_names_the_unlanded_fix(tmp_path):

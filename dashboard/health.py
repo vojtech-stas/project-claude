@@ -6791,10 +6791,15 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
     # --- conditions 3-7: sequence semantics over the well-formed records ---
     triaged_items: set = set()
+    # `open_items` is a SET of item ids, so a repeated `item_start` for one
+    # already-open item counts once — the cap bounds distinct items in flight,
+    # which is what D3 bounds.  A duplicate-lifecycle condition, if one is ever
+    # owed, belongs to the slices that add park/resume semantics.
     open_items: set = set()
     max_concurrent = 0
     fix_queued: dict = {}      # item -> True when a captured_ref was recorded
     fixed_items: set = set()
+    reported_unresolved: set = set()   # report each escaping fix once, not per terminal
     terminal_seen = False
 
     for rec in records:
@@ -6848,6 +6853,9 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             for fq_item, has_ref in fix_queued.items():
                 if fq_item in fixed_items or has_ref or fq_item in remaining_set:
                     continue
+                if fq_item in reported_unresolved:
+                    continue
+                reported_unresolved.add(fq_item)
                 failures.append(
                     f"fix_queued {fq_item!r} reached the {kind} terminal with "
                     "no fixed_in_run, no captured_ref"

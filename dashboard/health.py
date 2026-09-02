@@ -6849,6 +6849,14 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                     "parked record carries an empty remaining-items list; a "
                     "park must name the resume order (ADR-0085 D4)"
                 )
+            if isinstance(remaining, list):
+                bad = [e for e in remaining if not isinstance(e, str)]
+                if bad:
+                    failures.append(
+                        f"parked record carries non-string remaining entries "
+                        f"(first: {bad[0]!r}); remaining must hold item ids"
+                    )
+                remaining = [e for e in remaining if isinstance(e, str)]
             remaining_set = set(remaining) if isinstance(remaining, list) else set()
             for fq_item, has_ref in fix_queued.items():
                 if fq_item in fixed_items or has_ref or fq_item in remaining_set:

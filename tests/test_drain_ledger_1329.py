@@ -14,7 +14,9 @@ no-ledger WARN leg that also proves the ledger path is genuinely injectable.
 
 PRD §2 criterion 15's remaining FAIL legs (fix-queued parity, parked) are
 deliberately NOT here — the slicer-critic assigned them to the follow-up
-slices that ship the emitting protocols.
+slices that ship the emitting protocols. The one exception is the #1335
+regression leg below: it does not test the parked *protocol*, it pins that a
+malformed `remaining` list reports a named FAIL instead of crashing the row.
 
 Rule #21 / CRI-004: every ledger in this file is written under pytest's
 `tmp_path`, never into `.claude/logs/drain/`. That is the reason
@@ -87,6 +89,31 @@ def test_drain_ledger_fails_on_unknown_record_kind(tmp_path):
     assert result["result"] == "FAIL", result["detail"]
     assert "'lane'" in result["detail"]
     assert "outside the closed set" in result["detail"]
+
+
+def test_drain_ledger_fails_on_object_shaped_remaining_entry(tmp_path):
+    """FAIL leg (#1335 regression rider): `remaining` holding an object.
+
+    The ledger schema documents `remaining` as a list of item ids. A
+    malformed writer emitting objects there used to reach `set(remaining)`
+    and raise an uncaught `TypeError: unhashable type: 'dict'`, so the row
+    returned a traceback instead of a verdict. A guard states its
+    observation rather than crashing (ADR-0083 D5 / VER-009), so the honest
+    result is a named schema FAIL.
+    """
+    records = _valid_run()[:-1]   # park is this run's terminal, not run_end
+    records.append({
+        "kind": "parked", "ts": "2026-09-02T10:20:01Z",
+        "remaining": [{"item": "issue:1338"}, "issue:1339"],
+    })
+    _write_ledger(tmp_path, "drain-test-1.jsonl", records)
+
+    result = health.check_drain_ledger(ledger_dir=str(tmp_path))
+
+    assert result["result"] == "FAIL", result["detail"]
+    assert "non-string remaining entries" in result["detail"]
+    # The FAIL names the offending entry, not merely the record kind.
+    assert "issue:1338" in result["detail"]
 
 
 def test_drain_ledger_warns_when_no_ledger_present(tmp_path):

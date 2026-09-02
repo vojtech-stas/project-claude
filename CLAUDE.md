@@ -21,7 +21,7 @@ This file is auto-loaded by Claude Code on every session in this repo. It contai
 ### Capture discipline
 
 11. **Surface deferred work as captured issues — rule #11.** Every deferred or follow-up item becomes a `captured`-labeled issue; `backlog-critic` filters `captured` → `backlog`. Details: CAP-001..004. (CAPTURE-SHAPE health row.)
-13. **Root-cause workflow capture — rule #13.** Every workflow mistake becomes a `captured`+`root-cause` issue naming symptom, root cause and proposed workflow change — never a symptom-only fix. Details: CAP-005..008. (CAPTURE-SHAPE health row.) **Regression rider (ADR-0067 D3):** when the capture documents a CODE defect, the fixing PR MUST include a regression test that fails before and passes after the fix, committed in that order. (TEST-ORDERING health row.)
+13. **Root-cause workflow capture — rule #13.** Every workflow mistake becomes a `captured`+`root-cause` issue naming symptom, root cause and proposed workflow change — never a symptom-only fix. Details: CAP-005..008. (CAPTURE-SHAPE health row.) **Regression rider (ADR-0067 D3):** when a root-cause capture documents a CODE defect, the fixing PR MUST include a regression test that fails before and passes after the fix, committed in that order. (TEST-ORDERING health row.)
 
 12. **Claude Code hooks have five authorized categories — rule #12.** See `.claude/rules/hooks.md` (HOK-001..009): logging, validation, notification (ADR-0015 D2), tooling-spawn (ADR-0033 D1), context injection (ADR-0057 D4). Hooks may NOT auto-invoke skills or subagents — that hard line is preserved across all five categories. (Mechanized by HOOK-INTEGRITY health row.)
 

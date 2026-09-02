@@ -1494,6 +1494,7 @@ _CHECK_GROUP_MAP: dict = {
     "MERGE-INTEGRITY": "Verification integrity",
     "CAPTURE-SHAPE": "Verification integrity",
     "GREEN-MAIN": "Verification integrity",
+    "DRAIN-LEDGER": "Verification integrity",
     # Release gates — promotion topology, lag, release-readiness
     "BRANCH-TOPOLOGY": "Release gates",
     "PROMOTION-LAG": "Release gates",
@@ -6627,6 +6628,256 @@ def check_deploy_handshake() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# DRAIN-LEDGER (ADR-0085 D6 / PRD #1326 §2 criterion 14 — slice #1329)
+#
+# Validates the newest `/ship` queue-drain run ledger.  Evaluated from the
+# LEDGER FILE ALONE — it never queries GitHub.  That is the whole point: a
+# live-parity predicate (escalated ⇒ currently-open labeled artifact) inverts
+# on the operator's success path, which is the class ADR-0083 D3 names — a
+# check may only assert an invariant its subjects are contractually obliged
+# to satisfy, and current GitHub label state is not one a historical ledger
+# owes.  Consequence: no network-degradation mode exists here (contrast
+# check_record_vs_gh's "unverifiable — gh unavailable" path).
+# ---------------------------------------------------------------------------
+
+# Closed record-kind set (ADR-0085 D4).  Adding a kind requires a superseding
+# ADR — an unknown kind is FAIL condition 1, never a silent pass-through.
+_DRAIN_KINDS = frozenset({
+    "run_start", "triaged", "item_start", "item_done", "escalated",
+    "fix_queued", "fixed_in_run", "parked", "resumed", "run_end",
+})
+
+# Per-kind required fields beyond the universal `kind` (FAIL condition 2).
+# `run_start`'s list encodes PRD #1326 §2 criterion 3's pinned field names.
+_DRAIN_REQUIRED_FIELDS: dict = {
+    "run_start":    ["counts", "open_prs"],
+    "triaged":      ["item", "bucket", "lane"],
+    "item_start":   ["item"],
+    "item_done":    ["item"],
+    "escalated":    ["item", "label", "label_applied"],
+    "fix_queued":   ["item"],
+    "fixed_in_run": ["item", "pr"],
+    "parked":       ["remaining"],
+    "resumed":      [],
+    "run_end":      [],
+}
+
+_DRAIN_RUN_START_COUNTS = ("prd", "slice", "backlog", "captured")
+_DRAIN_ESCALATION_LABELS = frozenset({"needs-human-check", "needs-human"})
+_DRAIN_CONCURRENCY_CAP = 3
+
+
+def _drain_ledger_dir(explicit: str | None = None) -> Path:
+    """Resolve the drain-ledger directory.
+
+    Injection order (slicer-critic finding 5 / rule #21): explicit argument →
+    `DRAIN_LEDGER_DIR_OVERRIDE` env var → default.  The default copies the
+    git-common-dir resolution `tools/trace.py` uses for trace-v3, so every
+    worktree of the repo shares ONE ledger directory rather than writing a
+    private one per worktree.  Tests always inject; nothing under
+    `.claude/logs/` is ever written by a test.
+    """
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get("DRAIN_LEDGER_DIR_OVERRIDE")
+    if env:
+        return Path(env)
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        root = Path(os.path.dirname(os.path.abspath(out)))
+    except Exception:
+        root = _HEALTH_REPO_ROOT
+    return root / ".claude" / "logs" / "drain"
+
+
+def check_drain_ledger(ledger_dir: str | None = None) -> dict:
+    """DRAIN-LEDGER: the newest queue-drain run ledger is well-formed.
+
+    Implements ADR-0085 D6 / PRD #1326 §2 criterion 14 in full — all seven
+    FAIL conditions, decidable offline from the ledger file alone:
+
+      1. a record kind outside the closed set (or malformed JSONL)
+      2. missing required fields (run_start's count fields included)
+      3. an `escalated` record missing its recorded applied-label evidence
+         (`label` in {needs-human-check, needs-human} + `label_applied: true`)
+      4. an `item_start` without a prior `triaged` record for that item
+      5. more than 3 concurrently-open `item_start` records
+      6. a `fix_queued` still unresolved at the run's terminal record — no
+         `fixed_in_run`, no `captured_ref`, and (when the terminal is
+         `parked`) not named in its remaining-items list.  The parity window
+         closes at `run_end` OR `parked` because a run that parks and dies
+         never writes `run_end`, and a fix must not escape through that gap
+         (ADR-0085 D4/D5, applying the adr-critic's park-path finding).
+         Because the ledger is append-only, a later `fix_queued` record for
+         the same item is the sanctioned way to attach a `captured_ref`.
+      7. a `parked` record with an empty remaining-items list
+
+    No ledger present → WARN (a drain may simply never have run here).
+
+    What to do on FAIL: read the named record in the ledger file and fix the
+    emitting protocol in `.claude/skills/ship/SKILL.md`'s Queue-drain entry
+    mode — the ledger is the run's durable state, and a malformed one means a
+    resumed session cannot trust it.
+    """
+    import json as _json
+
+    ledger_root = _drain_ledger_dir(ledger_dir)
+    if not ledger_root.is_dir():
+        return {"id": "DRAIN-LEDGER", "result": "WARN",
+                "detail": f"no drain ledger directory at {ledger_root} — "
+                          "no drain run has been recorded in this environment"}
+
+    files = sorted(ledger_root.glob("*.jsonl"))
+    if not files:
+        return {"id": "DRAIN-LEDGER", "result": "WARN",
+                "detail": f"no *.jsonl ledger in {ledger_root} — "
+                          "no drain run has been recorded in this environment"}
+
+    # Newest run = most recently modified, name as deterministic tiebreak.
+    newest = max(files, key=lambda p: (p.stat().st_mtime, p.name))
+
+    try:
+        raw = newest.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {"id": "DRAIN-LEDGER", "result": "FAIL",
+                "detail": f"{newest.name}: unreadable ({exc})"}
+
+    failures: list[str] = []
+    records: list[dict] = []
+
+    # --- conditions 1 + 2: parse, kind membership, required fields ---
+    for lineno, line in enumerate(raw.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            rec = _json.loads(line)
+        except ValueError as exc:
+            failures.append(f"line {lineno}: malformed JSON ({exc})")
+            continue
+        if not isinstance(rec, dict):
+            failures.append(f"line {lineno}: record is not a JSON object")
+            continue
+        kind = rec.get("kind")
+        if kind not in _DRAIN_KINDS:
+            failures.append(
+                f"line {lineno}: record kind {kind!r} is outside the closed "
+                "set (ADR-0085 D4)"
+            )
+            continue
+        missing = [f for f in _DRAIN_REQUIRED_FIELDS[kind] if f not in rec]
+        if missing:
+            failures.append(
+                f"line {lineno}: {kind} record missing required field(s) "
+                f"{', '.join(missing)}"
+            )
+            continue
+        if kind == "run_start":
+            counts = rec.get("counts")
+            if not isinstance(counts, dict):
+                failures.append(f"line {lineno}: run_start `counts` is not an object")
+                continue
+            missing_counts = [c for c in _DRAIN_RUN_START_COUNTS if c not in counts]
+            if missing_counts:
+                failures.append(
+                    f"line {lineno}: run_start `counts` missing "
+                    f"{', '.join(missing_counts)}"
+                )
+                continue
+        records.append(rec)
+
+    # --- conditions 3-7: sequence semantics over the well-formed records ---
+    triaged_items: set = set()
+    open_items: set = set()
+    max_concurrent = 0
+    fix_queued: dict = {}      # item -> True when a captured_ref was recorded
+    fixed_items: set = set()
+    terminal_seen = False
+
+    for rec in records:
+        kind = rec["kind"]
+        item = rec.get("item")
+
+        if kind == "escalated":
+            label = rec.get("label")
+            if label not in _DRAIN_ESCALATION_LABELS:
+                failures.append(
+                    f"escalated record for {item!r} carries label {label!r}; "
+                    "expected needs-human-check or needs-human"
+                )
+            if rec.get("label_applied") is not True:
+                failures.append(
+                    f"escalated record for {item!r} lacks "
+                    "`label_applied: true` write-time evidence"
+                )
+
+        elif kind == "triaged":
+            triaged_items.add(item)
+
+        elif kind == "item_start":
+            if item not in triaged_items:
+                failures.append(
+                    f"item_start for {item!r} has no prior triaged record"
+                )
+            open_items.add(item)
+            max_concurrent = max(max_concurrent, len(open_items))
+
+        elif kind == "item_done":
+            open_items.discard(item)
+
+        elif kind == "fix_queued":
+            if rec.get("captured_ref"):
+                fix_queued[item] = True
+            else:
+                fix_queued.setdefault(item, False)
+
+        elif kind == "fixed_in_run":
+            fixed_items.add(item)
+
+        elif kind in ("parked", "run_end"):
+            remaining = rec.get("remaining") if kind == "parked" else None
+            if kind == "parked" and not remaining:
+                failures.append(
+                    "parked record carries an empty remaining-items list; a "
+                    "park must name the resume order (ADR-0085 D4)"
+                )
+            remaining_set = set(remaining) if isinstance(remaining, list) else set()
+            for fq_item, has_ref in fix_queued.items():
+                if fq_item in fixed_items or has_ref or fq_item in remaining_set:
+                    continue
+                failures.append(
+                    f"fix_queued {fq_item!r} reached the {kind} terminal with "
+                    "no fixed_in_run, no captured_ref"
+                    + (", and no place in the remaining list" if kind == "parked" else "")
+                )
+            terminal_seen = True
+
+    if max_concurrent > _DRAIN_CONCURRENCY_CAP:
+        failures.append(
+            f"{max_concurrent} item_start records concurrently open; the "
+            f"cap is {_DRAIN_CONCURRENCY_CAP} (ADR-0085 D3)"
+        )
+
+    if failures:
+        shown = "; ".join(failures[:5])
+        more = f" (+{len(failures) - 5} more)" if len(failures) > 5 else ""
+        return {"id": "DRAIN-LEDGER", "result": "FAIL",
+                "detail": f"{newest.name}: {shown}{more}"}
+
+    terminal_note = "" if terminal_seen else ", run still in flight"
+    return {
+        "id": "DRAIN-LEDGER", "result": "PASS",
+        "detail": (
+            f"{newest.name}: {len(records)} records valid, "
+            f"{len(triaged_items)} triaged, peak concurrency "
+            f"{max_concurrent}/{_DRAIN_CONCURRENCY_CAP}{terminal_note}"
+        ),
+    }
+
+
 CHECK_REGISTRY: dict[str, callable] = {
     "DOCS-1":  check_docs1_adr_index_forward,
     "DOCS-2":  check_docs2_adr_index_reverse,
@@ -6690,6 +6941,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "STALE-SERVER": check_stale_server,
     # Audit-subagents aggregate check (PRD #919 slice #921 — replaces /audit-subagents skill)
     "AS-AUDIT": check_audit_subagents,
+    # Queue-drain run-ledger integrity (ADR-0085 D6 — PRD #1326 slice #1329)
+    "DRAIN-LEDGER": check_drain_ledger,
 }
 
 

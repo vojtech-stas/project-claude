@@ -204,11 +204,11 @@ class TestHookTrioComposite:
 
 
 # ---------------------------------------------------------------------------
-# AC4: --list count invariant (must equal 46)
+# AC4: --list count invariant (currently 51)
 # ---------------------------------------------------------------------------
 class TestListCountInvariant:
-    def test_list_count_is_50(self):
-        """python dashboard/health.py --list | wc -l must stay 50.
+    def test_list_count_is_51(self):
+        """python dashboard/health.py --list | wc -l must stay 51.
 
         Bumped from 47 to 50 by slice #1085 (PRD #1075 criteria 8/10c/10d),
         which legitimately registers THREE new checks: STREAM-LIVENESS,
@@ -220,11 +220,12 @@ class TestListCountInvariant:
         CLOSED-PRD-VS-QA. Moved back from 53 to 50 by slice #1240 (PRD
         #1236 §2 criterion 7c / ADR-0081 D3), which deliberately REMOVES
         three checks: EVAL-REVIEWER, EVAL-PRD-CRITIC, EVAL-SLICER-CRITIC,
-        retired together with the golden-set eval harness. This invariant
-        guards against ACCIDENTAL registry drift (duplicate/dropped IDs) —
-        deliberate additions and removals bump the literal in the same PR
-        that adds or deletes the check, per the established pattern for
-        this test.
+        retired together with the golden-set eval harness. Bumped from 50 to
+        51 by slice #1329 (PRD #1326 §2 criterion 14 / ADR-0085 D6), which
+        registers ONE new check: DRAIN-LEDGER. This invariant guards against
+        ACCIDENTAL registry drift (duplicate/dropped IDs) — deliberate
+        additions and removals bump the literal in the same PR that adds or
+        deletes the check, per the established pattern for this test.
         """
         result = subprocess.run(
             [sys.executable, os.path.join(HEALTH_DIR, "health.py"), "--list"],
@@ -234,10 +235,10 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 50, (
-            f"--list count changed! Expected 50, got {count}. "
+        assert count == 51, (
+            f"--list count changed! Expected 51, got {count}. "
             "Conservation violated (slice #968 §2 #8 / bumped by slice #1085, "
-            "#1136; moved to 50 by slice #1240)."
+            "#1136; moved to 50 by slice #1240; moved to 51 by slice #1329)."
         )
 
 

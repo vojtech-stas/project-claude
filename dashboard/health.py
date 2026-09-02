@@ -6663,6 +6663,29 @@ _DRAIN_REQUIRED_FIELDS: dict = {
     "run_end":      [],
 }
 
+# The subset of the required fields above that the row consumes as an
+# IDENTITY — a set member, a dict key, or a closed-set lookup.  A non-string
+# value there is not merely odd: it makes the record's identity undecidable
+# and, unguarded, raises `TypeError: unhashable type` mid-check, replacing the
+# row's verdict with a traceback and an empty stdout — so the CI check that
+# delegates here reds with nothing naming the offending record.  Validating
+# them is part of implementing conditions 2-6, exactly as the `remaining`
+# shape guard is, not an eighth condition.
+#
+# Required fields absent from this table — `run_start`'s `open_prs`,
+# `triaged`'s `bucket` and `lane`, `fixed_in_run`'s `pr` — are checked for
+# presence only and never reach such an operation, so the row is owed nothing
+# about their shape (VER-009 / ADR-0083 D3).  `run_start`'s `counts` and
+# `parked`'s `remaining` carry their own shape guards inline, below.
+_DRAIN_IDENTITY_FIELDS: dict = {
+    "triaged":      ("item",),
+    "item_start":   ("item",),
+    "item_done":    ("item",),
+    "escalated":    ("item", "label"),
+    "fix_queued":   ("item",),
+    "fixed_in_run": ("item",),
+}
+
 _DRAIN_RUN_START_COUNTS = ("prd", "slice", "backlog", "captured")
 _DRAIN_ESCALATION_LABELS = frozenset({"needs-human-check", "needs-human"})
 _DRAIN_CONCURRENCY_CAP = 3
@@ -6700,9 +6723,13 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     Implements ADR-0085 D6 / PRD #1326 §2 criterion 14 in full — the seven
     FAIL conditions below, decidable offline from the ledger file alone.
     Their fields are read strictly: a value whose shape violates the
-    documented record schema (a `remaining` that is not a list of item ids)
-    is a named FAIL too, never read vacuously — that is part of implementing
-    these conditions, not an eighth one:
+    documented record schema — a `remaining` that is not a list of item ids,
+    or an identity field (`kind`, `item`, `escalated`'s `label`) that is not
+    a non-empty string — is a named FAIL too, never read vacuously and never
+    allowed to reach the set/dict operation that would raise `TypeError:
+    unhashable type` and hand the caller a traceback in place of a verdict.
+    That strictness is part of implementing these conditions, not an eighth
+    one:
 
       1. a record kind outside the closed set (or malformed JSONL)
       2. missing required fields (run_start's count fields included)
@@ -6766,7 +6793,9 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             failures.append(f"line {lineno}: record is not a JSON object")
             continue
         kind = rec.get("kind")
-        if kind not in _DRAIN_KINDS:
+        # `isinstance` first: a structured `kind` would otherwise be hashed
+        # against the closed set and raise instead of being reported.
+        if not isinstance(kind, str) or kind not in _DRAIN_KINDS:
             failures.append(
                 f"line {lineno}: record kind {kind!r} is outside the closed "
                 "set (ADR-0085 D4)"
@@ -6777,6 +6806,17 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             failures.append(
                 f"line {lineno}: {kind} record missing required field(s) "
                 f"{', '.join(missing)}"
+            )
+            continue
+        bad_ids = [
+            f for f in _DRAIN_IDENTITY_FIELDS.get(kind, ())
+            if not (isinstance(rec[f], str) and rec[f].strip())
+        ]
+        if bad_ids:
+            failures.append(
+                f"line {lineno}: {kind} record identity field(s) "
+                + ", ".join(f"`{f}` = {rec[f]!r}" for f in bad_ids)
+                + " must be a non-empty string"
             )
             continue
         if kind == "run_start":

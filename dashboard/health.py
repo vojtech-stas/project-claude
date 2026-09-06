@@ -1961,6 +1961,57 @@ def check_capture_slo() -> dict:
 _HOOK_INTEGRITY_WINDOW_DAYS = 7
 
 
+def _hook_integrity_subjects(settings_path: Path) -> dict:
+    """Map every beacon `hook` label HOOK-INTEGRITY scores to its subject label.
+
+    The subject set is the hook scripts registered in `.claude/settings.json`,
+    mirroring discover_hooks()'s own key selection: an `auto`-mode registration
+    is scored under the argv label `auto` — `log-tool-event.sh`'s stream
+    identity — with every runtime-derived terminal key
+    `discovery._auto_mode_derived_keys(event, matcher)` can produce folded onto
+    it; any other registration is scored under its own literal event-type
+    argument or filename stem.  A label absent from the returned mapping is not
+    a subject and is not scored.
+
+    Returns {} (never raises) when the registration set cannot be read — the
+    caller degrades to WARN rather than scoring against an assumed subject set.
+    """
+    import json as _json
+    try:
+        _insert_dashboard_sys_path()
+        from discovery import (  # noqa: PLC0415
+            _auto_mode_derived_keys,
+            _event_type_from_cmd,
+            _read_hook_name,
+        )
+    except Exception:
+        return {}
+    if not settings_path.exists():
+        return {}
+    subjects: dict = {}
+    try:
+        data = _json.loads(settings_path.read_text(encoding="utf-8"))
+        for event, entries in data.get("hooks", {}).items():
+            for entry in entries:
+                matcher = entry.get("matcher", "")
+                for hook in entry.get("hooks", []):
+                    cmd = hook.get("command", "")
+                    event_type_arg = _event_type_from_cmd(cmd)
+                    if event_type_arg == "auto":
+                        subjects["auto"] = "auto"
+                        for key in _auto_mode_derived_keys(event, matcher):
+                            subjects.setdefault(key, "auto")
+                    elif event_type_arg:
+                        subjects.setdefault(event_type_arg, event_type_arg)
+                    else:
+                        stem = _read_hook_name(cmd)
+                        if stem:
+                            subjects.setdefault(stem, stem)
+    except Exception:
+        return {}
+    return subjects
+
+
 def check_hook_integrity() -> dict:
     """HOOK-INTEGRITY: attempt-vs-ok beacon ratio per hook + ERROR beacon count.
 
@@ -1968,14 +2019,38 @@ def check_hook_integrity() -> dict:
     _HOOK_INTEGRITY_WINDOW_DAYS so stale pre-fix history never causes a
     permanent FAIL.
 
+    Invariant (ADR-0083 D3 and its corollary — *a check's subject set is
+    defined, not assumed, and every registered subject is scored under exactly
+    one named label*): the subjects are the hook scripts registered in
+    `.claude/settings.json` plus their declared stream identities, resolved by
+    _hook_integrity_subjects().  A record whose `hook` label is outside that set
+    — a runtime-derived event-type key standing alone, or any other label — owes
+    this check nothing and is scored by neither term of the verdict: it enters
+    no ratio, no drift entry, and no ERROR count.  `auto` is
+    `log-tool-event.sh`'s stream identity, so its attempts and the derived
+    terminals that pair with them fold onto one label and a complete pair is not
+    drift.
+
     Semantics:
-    - hook with recent attempts but missing ok → FAIL (genuine drift)
-    - hook with NO recent beacons → not counted (dark-detection = HOOK-LIVENESS)
+    - subject with recent attempts but missing ok → FAIL (genuine drift)
+    - subject with NO recent beacons → not counted (dark-detection = HOOK-LIVENESS)
     - all recent attempts have matching ok → PASS
-    - ERROR beacons in any window → FAIL
+    - ERROR beacons attributed to a subject in any window → FAIL, and the detail
+      names the subject each was attributed to
     """
     import json as _json
     from datetime import datetime, timezone, timedelta
+
+    subjects = _hook_integrity_subjects(_HEALTH_REPO_ROOT / ".claude" / "settings.json")
+    if not subjects:
+        return {
+            "id": "HOOK-INTEGRITY",
+            "result": "WARN",
+            "detail": (
+                "hook subject set unreadable (.claude/settings.json) — not scoring; "
+                "per ADR-0083 D3 a check with no defined subject set asserts nothing"
+            ),
+        }
 
     fires_log = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
     if not fires_log.exists():
@@ -1990,7 +2065,7 @@ def check_hook_integrity() -> dict:
     try:
         attempts: dict[str, int] = {}
         oks: dict[str, int] = {}
-        error_count = 0
+        errors: dict[str, int] = {}
         with fires_log.open(encoding="utf-8", errors="replace") as fh:
             for raw in fh:
                 raw = raw.strip()
@@ -2004,6 +2079,12 @@ def check_hook_integrity() -> dict:
                 status = obj.get("status", "")
                 if not hook:
                     continue
+                # Registered-subject fold: score the record under the registered
+                # hook (or declared stream identity) it belongs to, and skip any
+                # label that owes this check nothing (ADR-0083 D3 corollary).
+                subject = subjects.get(hook)
+                if subject is None:
+                    continue
                 # Rolling-window filter: skip beacons older than _HOOK_INTEGRITY_WINDOW_DAYS.
                 ts_str = obj.get("ts", "")
                 if ts_str:
@@ -2014,17 +2095,17 @@ def check_hook_integrity() -> dict:
                     except Exception:
                         pass  # unparseable ts: include conservatively
                 if status == "attempt":
-                    attempts[hook] = attempts.get(hook, 0) + 1
+                    attempts[subject] = attempts.get(subject, 0) + 1
                 elif status == "ok":
-                    oks[hook] = oks.get(hook, 0) + 1
+                    oks[subject] = oks.get(subject, 0) + 1
                 elif status in ("ERROR", "error"):
-                    error_count += 1
+                    errors[subject] = errors.get(subject, 0) + 1
     except Exception as exc:
         return {"id": "HOOK-INTEGRITY", "result": "WARN",
                 "detail": f"read error: {exc}"}
 
     # If no beacons at all in the rolling window, defer to HOOK-LIVENESS.
-    if not attempts and not error_count:
+    if not attempts and not errors:
         return {
             "id": "HOOK-INTEGRITY",
             "result": "WARN",
@@ -2034,25 +2115,28 @@ def check_hook_integrity() -> dict:
             ),
         }
 
-    # Compute per-hook ratios (only hooks that have attempt beacons in window)
+    # Per-subject ratios (only subjects that have attempt beacons in window)
     drift_hooks = []
     ratio_parts = []
-    for hook, att in sorted(attempts.items()):
-        ok = oks.get(hook, 0)
-        ratio_parts.append(f"{hook}:{ok}/{att}")
+    for subject, att in sorted(attempts.items()):
+        ok = oks.get(subject, 0)
+        ratio_parts.append(f"{subject}:{ok}/{att}")
         if ok < att:
-            drift_hooks.append(f"{hook}({ok}/{att})")
+            drift_hooks.append(f"{subject}({ok}/{att})")
 
     detail_parts = [f"window={_HOOK_INTEGRITY_WINDOW_DAYS}d"]
     if ratio_parts:
         detail_parts.append("ratios: " + ", ".join(ratio_parts))
-    if error_count:
-        detail_parts.append(f"ERROR beacons: {error_count}")
+    if errors:
+        # Name the subject each ERROR was attributed to — a verdict term a
+        # reader cannot trace to a subject is the defect D3 names.
+        attributed = ", ".join(f"{s}:{n}" for s, n in sorted(errors.items()))
+        detail_parts.append(f"ERROR beacons: {attributed}")
     if drift_hooks:
         detail_parts.append(f"drift: {', '.join(drift_hooks)}")
 
     detail = " | ".join(detail_parts)
-    result = "FAIL" if (drift_hooks or error_count > 0) else "PASS"
+    result = "FAIL" if (drift_hooks or errors) else "PASS"
     return {"id": "HOOK-INTEGRITY", "result": result, "detail": detail}
 
 

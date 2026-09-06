@@ -383,10 +383,16 @@ class TestHookIntegrityRollingWindow(unittest.TestCase):
         mirroring the logic after the rolling-window fix. We test the logic
         by calling a helper script that imports health.py and runs the internal
         logic with a patched log reader.
+
+        Slice #1311: the fixture tree also carries a copy of the real
+        `.claude/settings.json`, because the check now resolves its subject set
+        from the registered hooks there (ADR-0083 D3) and declines to score at
+        all without one. The entries below therefore use a registered hook label
+        — the window semantics under test are unchanged.
         """
         entries_json = json.dumps(entries)
         script = f"""
-import sys, json, tempfile, os
+import sys, json, shutil, tempfile, os
 from pathlib import Path
 sys.path.insert(0, r'{REPO_ROOT / "dashboard"}')
 
@@ -404,6 +410,12 @@ with tempfile.TemporaryDirectory() as tmp:
     with log_path.open("w") as fh:
         for e in entries:
             fh.write(json.dumps(e) + "\\n")
+
+    # Subject set (ADR-0083 D3): the check scores only registered hooks.
+    shutil.copyfile(
+        r'{REPO_ROOT / ".claude" / "settings.json"}',
+        str(Path(tmp) / ".claude" / "settings.json"),
+    )
 
     # Patch the repo root used by check_hook_integrity
     _orig_root = _health_mod._HEALTH_REPO_ROOT
@@ -427,8 +439,8 @@ with tempfile.TemporaryDirectory() as tmp:
     def test_fail_on_recent_attempt_without_ok(self):
         """Recent attempt beacons with no matching ok → FAIL (genuine drift)."""
         entries = [
-            {"ts": self._ts(0.1), "hook": "log-tool-event.sh", "status": "attempt"},
-            {"ts": self._ts(0.2), "hook": "log-tool-event.sh", "status": "attempt"},
+            {"ts": self._ts(0.1), "hook": "session-start", "status": "attempt"},
+            {"ts": self._ts(0.2), "hook": "session-start", "status": "attempt"},
             # NO ok beacon → drift within window
         ]
         result = self._run_check_with_fixture_entries(entries)
@@ -449,8 +461,8 @@ with tempfile.TemporaryDirectory() as tmp:
         old_days = self.WINDOW_DAYS + 2
         entries = [
             # Old attempts with no ok — but OUTSIDE the rolling window
-            {"ts": self._ts(old_days), "hook": "log-tool-event.sh", "status": "attempt"},
-            {"ts": self._ts(old_days + 0.1), "hook": "log-tool-event.sh", "status": "attempt"},
+            {"ts": self._ts(old_days), "hook": "session-start", "status": "attempt"},
+            {"ts": self._ts(old_days + 0.1), "hook": "session-start", "status": "attempt"},
         ]
         result = self._run_check_with_fixture_entries(entries)
         self.assertNotEqual(
@@ -467,10 +479,10 @@ with tempfile.TemporaryDirectory() as tmp:
     def test_pass_on_recent_ok_matches_attempt(self):
         """Recent attempts all have matching ok beacons → PASS."""
         entries = [
-            {"ts": self._ts(0.1), "hook": "log-tool-event.sh", "status": "attempt"},
-            {"ts": self._ts(0.1), "hook": "log-tool-event.sh", "status": "ok"},
-            {"ts": self._ts(0.5), "hook": "log-tool-event.sh", "status": "attempt"},
-            {"ts": self._ts(0.5), "hook": "log-tool-event.sh", "status": "ok"},
+            {"ts": self._ts(0.1), "hook": "session-start", "status": "attempt"},
+            {"ts": self._ts(0.1), "hook": "session-start", "status": "ok"},
+            {"ts": self._ts(0.5), "hook": "session-start", "status": "attempt"},
+            {"ts": self._ts(0.5), "hook": "session-start", "status": "ok"},
         ]
         result = self._run_check_with_fixture_entries(entries)
         self.assertEqual(
@@ -487,10 +499,10 @@ with tempfile.TemporaryDirectory() as tmp:
         old_days = self.WINDOW_DAYS + 2
         entries = [
             # Old: attempt without ok (pre-fix history) — must be ignored
-            {"ts": self._ts(old_days), "hook": "log-tool-event.sh", "status": "attempt"},
+            {"ts": self._ts(old_days), "hook": "session-start", "status": "attempt"},
             # Recent: clean
-            {"ts": self._ts(0.5), "hook": "log-tool-event.sh", "status": "attempt"},
-            {"ts": self._ts(0.5), "hook": "log-tool-event.sh", "status": "ok"},
+            {"ts": self._ts(0.5), "hook": "session-start", "status": "attempt"},
+            {"ts": self._ts(0.5), "hook": "session-start", "status": "ok"},
         ]
         result = self._run_check_with_fixture_entries(entries)
         self.assertEqual(

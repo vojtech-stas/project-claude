@@ -6677,6 +6677,15 @@ _DRAIN_REQUIRED_FIELDS: dict = {
 # presence only and never reach such an operation, so the row is owed nothing
 # about their shape (VER-009 / ADR-0083 D3).  `run_start`'s `counts` and
 # `parked`'s `remaining` carry their own shape guards inline, below.
+#
+# `escalated`'s `item` is the one entry held on a SECOND rationale rather
+# than the hash one: the sequence pass only FORMATS it, into the two
+# escalated failures below, where it is the sole thing naming WHICH item
+# escalated.  Unvalidated it fails two ways — it garbles that finding, or,
+# paired with a well-formed `label`, it raises nothing at all and the row
+# certifies an item id no resume path can read.  Validating it buys the
+# named line number instead; stating that here is the discipline VER-009
+# asks of the guard itself (#1356).
 _DRAIN_IDENTITY_FIELDS: dict = {
     "triaged":      ("item",),
     "item_start":   ("item",),
@@ -6869,12 +6878,13 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             label = rec.get("label")
             if label not in _DRAIN_ESCALATION_LABELS:
                 failures.append(
-                    f"escalated record for {item!r} carries label {label!r}; "
-                    "expected needs-human-check or needs-human"
+                    f"escalated record for {_drain_repr(item)} carries label "
+                    f"{_drain_repr(label)}; expected needs-human-check or "
+                    "needs-human"
                 )
             if rec.get("label_applied") is not True:
                 failures.append(
-                    f"escalated record for {item!r} lacks "
+                    f"escalated record for {_drain_repr(item)} lacks "
                     "`label_applied: true` write-time evidence"
                 )
 
@@ -6924,7 +6934,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 # One defect, one finding: the parity comparison below would
                 # run against an empty set and convict every queued fix on a
                 # value this record never made readable (VER-009).
-                terminal_seen = True
+                terminal_seen = True   # defensive only; the FAIL above wins
                 continue
             remaining_set = set(remaining) if isinstance(remaining, list) else set()
             for fq_item, has_ref in fix_queued.items():
@@ -6942,7 +6952,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
     if max_concurrent > _DRAIN_CONCURRENCY_CAP:
         failures.append(
-            f"{max_concurrent} item_start records concurrently open; the "
+            f"{max_concurrent} distinct items concurrently in flight; the "
             f"cap is {_DRAIN_CONCURRENCY_CAP} (ADR-0085 D3)"
         )
 

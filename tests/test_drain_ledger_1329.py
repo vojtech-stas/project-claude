@@ -22,8 +22,18 @@ list holding objects (#1335), or a value that is not a list at all (#1339) —
 and a fourth pins that the FAIL quotes such a value in BOUNDED form (#1342):
 naming the malformed shape is the observation, pasting all of it is noise.
 The last walks that same class one layer deeper, over every required field the
-row consumes as a hash key: `kind`, `item` on all six kinds that carry it, and
-`escalated`'s `label`.
+row consumes as an IDENTITY: `kind`, `item` on all six kinds that carry it, and
+`escalated`'s `label`. All but one of those are identities because they are
+hashed; `escalated`'s `item` rides a second rationale — it is the sole thing
+naming WHICH item escalated in that condition's two FAIL messages, so an
+unvalidated one garbles the finding rather than crashing the row (#1356).
+
+A final table (#1372) drives the four sequence-pass messages that name an item
+id — condition 3's two escalated legs, which had no covering test at all, plus
+the triage-precedence and fix-queued messages, which still quoted their
+identifier unbounded — asserting the message lands and the identifier arrives
+in `_drain_repr` form. Like the legs above it, it exercises those messages,
+not the emitting protocols the follow-up slices own.
 
 Rule #21 / CRI-004: every ledger in this file is written under pytest's
 `tmp_path`, never into `.claude/logs/drain/`. That is the reason
@@ -33,6 +43,11 @@ Rule #21 / CRI-004: every ledger in this file is written under pytest's
 import json
 import sys
 from pathlib import Path
+
+try:
+    import pytest
+except ImportError:  # CI runs stdlib unittest without pytest (CHECK 12 / #985)
+    pytest = None
 
 REPO_ROOT = Path(__file__).parent.parent
 _DASHBOARD_DIR = str(REPO_ROOT / "dashboard")
@@ -318,3 +333,116 @@ def test_drain_ledger_warns_when_no_ledger_present(tmp_path):
     # Proof the injected path was the one consulted (rule #21: not .claude/logs).
     assert str(empty) in result["detail"]
     assert ".claude" not in result["detail"]
+
+
+# ---------------------------------------------------------------------------
+# #1372: every identifier the sequence pass quotes, quoted in BOUNDED form
+# ---------------------------------------------------------------------------
+_TAIL_MARKER = "-tail-that-must-not-survive"
+
+
+def _overlong(prefix: str) -> str:
+    """A value whose `repr` exceeds `_drain_repr`'s limit, ending in a marker.
+
+    The marker is what makes the bound checkable without restating the limit
+    here: if the row pastes the whole value, the marker reaches the detail
+    string; if it bounds the value, the marker cannot. The self-check pins
+    that the value really is over-long, so a later limit change surfaces as a
+    loud failure rather than a silently vacuous assertion.
+    """
+    value = prefix + "x" * 90 + _TAIL_MARKER
+    assert health._drain_repr(value) != repr(value), (
+        f"{prefix!r} case is too short to exercise the bound")
+    return value
+
+
+def _bounded_message_cases() -> list:
+    """(id, records, fragments, over-long value) per identifier-quoting FAIL.
+
+    One case per sequence-pass FAIL message that names an item id, so the
+    class is covered rather than its first member. Two duties meet here.
+    Condition 3's two `escalated` legs — a `label` outside the closed set, a
+    `label_applied` that is not true — had no covering test at all, so
+    ADR-0085 D6's recorded-escalation condition was enforced only in
+    principle, and the bound already on those two messages was never
+    exercised. The triage-precedence and fix-queued legs are the #1342
+    bound's remaining gaps: they quoted their identifier with a bare `!r`,
+    pasting an arbitrarily large one whole into the operator-facing detail.
+
+    The expected label set and the expected rendering are re-derived from the
+    module under test, never restated, so this table cannot drift away from
+    the code the way a copied constant would.
+    """
+    long_label = _overlong("not-a-real-escalation-label")
+    assert long_label not in health._DRAIN_ESCALATION_LABELS, (
+        "the bad-label case must sit OUTSIDE the closed set it probes")
+    allowed_label = sorted(health._DRAIN_ESCALATION_LABELS)[0]
+
+    escalated_item = _overlong("issue:1372-escalated-")
+    orphan_item = _overlong("issue:1372-orphan-")
+    queued_fix = _overlong("fix:1372-unlanded-")
+
+    def before_terminal(rec) -> list:
+        """`_valid_run()` with `rec` spliced in ahead of its `run_end`."""
+        records = _valid_run()
+        records.insert(len(records) - 1, rec)
+        return records
+
+    return [
+        ("escalated-label-outside-closed-set",
+         before_terminal({"kind": "escalated", "ts": "2026-09-02T10:10:00Z",
+                          "item": "issue:1372", "label": long_label,
+                          "label_applied": True}),
+         ("escalated record for", "issue:1372", "carries label"),
+         long_label),
+        ("escalated-label-applied-not-true",
+         before_terminal({"kind": "escalated", "ts": "2026-09-02T10:10:00Z",
+                          "item": escalated_item, "label": allowed_label,
+                          "label_applied": False}),
+         ("escalated record for", "label_applied", "evidence"),
+         escalated_item),
+        ("item-start-without-prior-triaged",
+         before_terminal({"kind": "item_start", "ts": "2026-09-02T10:10:00Z",
+                          "item": orphan_item}),
+         ("has no prior triaged record",),
+         orphan_item),
+        ("fix-queued-unresolved-at-run-end",
+         before_terminal({"kind": "fix_queued", "ts": "2026-09-02T10:10:00Z",
+                          "item": queued_fix}),
+         ("reached the run_end terminal", "no fixed_in_run"),
+         queued_fix),
+    ]
+
+
+# Parametrized only when pytest is present — CHECK 12 falls back to stdlib
+# unittest, which collects no module-level function in this file anyway.
+if pytest is not None:
+    _BOUNDED_CASES = _bounded_message_cases()
+
+    @pytest.mark.parametrize(
+        "records,fragments,overlong",
+        [case[1:] for case in _BOUNDED_CASES],
+        ids=[case[0] for case in _BOUNDED_CASES],
+    )
+    def test_drain_ledger_bounds_every_quoted_identifier(
+            records, fragments, overlong, tmp_path):
+        """FAIL legs: each message lands, and quotes its identifier bounded.
+
+        A guard states its observation (VER-009 / ADR-0083 D5): WHICH item
+        escalated, started untriaged, or escaped as an unlanded fix is the
+        observation; the whole of an arbitrarily large id is the finding's
+        own noise, and the detail string carries at most five findings. The
+        two escalated messages additionally get their first execution here —
+        an enumerated ADR-0085 D6 FAIL condition the suite had never run.
+        """
+        _write_ledger(tmp_path, "drain-test-1.jsonl", records)
+
+        result = health.check_drain_ledger(ledger_dir=str(tmp_path))
+
+        assert result["result"] == "FAIL", result["detail"]
+        for fragment in fragments:
+            assert fragment in result["detail"], result["detail"]
+        # The bounded rendering the row owes, re-derived from the row itself...
+        assert health._drain_repr(overlong) in result["detail"], result["detail"]
+        # ...and not one character of the unbounded value's tail.
+        assert _TAIL_MARKER not in result["detail"], result["detail"]

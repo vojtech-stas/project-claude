@@ -6894,7 +6894,8 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
         elif kind == "item_start":
             if item not in triaged_items:
                 failures.append(
-                    f"item_start for {item!r} has no prior triaged record"
+                    f"item_start for {_drain_repr(item)} has no prior "
+                    "triaged record"
                 )
             open_items.add(item)
             max_concurrent = max(max_concurrent, len(open_items))
@@ -6944,8 +6945,8 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                     continue
                 reported_unresolved.add(fq_item)
                 failures.append(
-                    f"fix_queued {fq_item!r} reached the {kind} terminal with "
-                    "no fixed_in_run, no captured_ref"
+                    f"fix_queued {_drain_repr(fq_item)} reached the {kind} "
+                    "terminal with no fixed_in_run, no captured_ref"
                     + (", and no place in the remaining list" if kind == "parked" else "")
                 )
             terminal_seen = True
